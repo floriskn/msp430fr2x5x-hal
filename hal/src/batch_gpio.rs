@@ -107,24 +107,34 @@ macro_rules! pinproxy_transition {
 
 // GPIO to alternates
 pinproxy_transition!(DIR: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(DIR: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(DIR: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
 // Alternates to GPIO
 pinproxy_transition!(Alternate1<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate2<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate3<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
 
 // Alternate 1 to other alternates
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate1<DIR>: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate1<DIR>: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
 // Alternate 2 to other alternates
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate2<DIR>: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate2<DIR>: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
 // Alternate 3 to other alternates
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate3<DIR>: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
+#[cfg(feature = "port_sel2bit")]
 pinproxy_transition!(Alternate3<DIR>: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
 
 // To and from ADCPCTL mode
@@ -225,15 +235,18 @@ impl<T: Pxsel0On> WritePxsel0 for T {
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 trait WritePxsel1 {
     fn pxsel1_on(&self) -> bool;
 }
+#[cfg(feature = "port_sel2bit")]
 impl<T> WritePxsel1 for T {
     #[inline(always)]
     default fn pxsel1_on(&self) -> bool {
         false
     }
 }
+#[cfg(feature = "port_sel2bit")]
 impl<T: Pxsel1On> WritePxsel1 for T {
     #[inline(always)]
     fn pxsel1_on(&self) -> bool {
@@ -244,32 +257,45 @@ impl<T: Pxsel1On> WritePxsel1 for T {
 // Register marker trait implementations
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Output> {}
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate1<Output>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate2<Output>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate3<Output>> {}
 
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Input<Pullup>> {}
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Input<Pulldown>> {}
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate1<Input<Pullup>>> {}
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate1<Input<Pulldown>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate2<Input<Pullup>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate2<Input<Pulldown>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate3<Input<Pullup>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxrenOn for PinProxy<PORT, PIN, Alternate3<Input<Pulldown>>> {}
 
 impl<PORT: PortNum, PIN: PinNum> PxoutSet for PinProxy<PORT, PIN, Input<Pullup>> {}
 impl<PORT: PortNum, PIN: PinNum> PxoutSet for PinProxy<PORT, PIN, Alternate1<Input<Pullup>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxoutSet for PinProxy<PORT, PIN, Alternate2<Input<Pullup>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxoutSet for PinProxy<PORT, PIN, Alternate3<Input<Pullup>>> {}
 
 impl<PORT: PortNum, PIN: PinNum> PxoutClr for PinProxy<PORT, PIN, Input<Pulldown>> {}
 impl<PORT: PortNum, PIN: PinNum> PxoutClr for PinProxy<PORT, PIN, Alternate1<Input<Pulldown>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxoutClr for PinProxy<PORT, PIN, Alternate2<Input<Pulldown>>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum> PxoutClr for PinProxy<PORT, PIN, Alternate3<Input<Pulldown>>> {}
 
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel0On for PinProxy<PORT, PIN, Alternate1<DIR>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel0On for PinProxy<PORT, PIN, Alternate3<DIR>> {}
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel1On for PinProxy<PORT, PIN, Alternate2<DIR>> {}
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel1On for PinProxy<PORT, PIN, Alternate3<DIR>> {}
 
 // Derive bitmasks for different GPIO registers from pin numbers and register trait implementations
@@ -279,6 +305,7 @@ trait MaskRegisters {
     fn pxdir_mask(&self) -> u8;
     fn pxren_mask(&self) -> u8;
     fn pxsel0_mask(&self) -> u8;
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_mask(&self) -> u8;
 }
 
@@ -309,6 +336,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> MaskRegisters for PinProxy<PORT, PIN, DIR>
     }
 
     #[inline(always)]
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_mask(&self) -> u8 {
         (self.pxsel1_on() as u8) << PIN::NUM
     }
@@ -420,6 +448,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
             .set_mask(self.pin6.pxsel0_mask())
             .set_mask(self.pin7.pxsel0_mask());
 
+        #[cfg(feature = "port_sel2bit")]
         let pxsel1 = 0u8
             .set_mask(self.pin0.pxsel1_mask())
             .set_mask(self.pin1.pxsel1_mask())
@@ -434,6 +463,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         // Turn off interrupts first so nothing fires during subsequent register writes
         p.maybe_set_pxie(0);
         p.pxsel0_wr(pxsel0);
+        
+        #[cfg(feature = "port_sel2bit")]
         p.pxsel1_wr(pxsel1);
 
         // Only write to PxOUT if we need to match the pull resistor state to the typestate,

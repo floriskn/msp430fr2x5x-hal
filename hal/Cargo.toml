@@ -11,7 +11,7 @@ documentation = "https://docs.rs/msp430fr2x5x-hal"
 readme = "../README.md"
 
 [features]
-default = []
+default = ["msp430fr4133"]
 embedded-hal-02 = ["dep:embedded-hal-02", "dep:void"]
 
 # Device features. Provide exactly one of these.
@@ -22,18 +22,24 @@ msp430fr2153 = ["2x5x"]           # 16kB FRAM
 msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b", "info_mem"]
 msp430fr2475 = ["247x"]           # 6kB RAM
 msp430fr2476 = ["247x"]           # 8kB RAM
+msp430fr4133 = ["413x"]           # 2kB RAM
+msp430fr4132 = ["413x"]           # 1kB RAM
+msp430fr4131 = ["413x"]           # 0.5kB RAM
 
 # Derived features. Do not provide these.
-2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source"]
-247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source"]
+2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "port_sel2bit"]
+247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "port_sel2bit"]
+413x = ["dep:msp430fr413x", "eusci_modclk", "info_mem", "adc", "adcpctl", "eusci_b", "capacitive"]
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
 eusci_modclk = [] # eUSCI peripherals can source from MODCLK
 adc12bit = ["adc"]
 adcpctl = [] # ADC functionality controlled via ADCPCTLx
 adc = []
+capacitive = []
 ecomp = []
 enhanced_ref = []
 eusci_b = []
+port_sel2bit = []
 sac_l3 = ["sac"]
 sac_l1 = ["sac"]
 sac = []
@@ -44,8 +50,9 @@ vloclk_source = []
 [dependencies]
 msp430 = "0.4.0"
 msp430fr2355 = { version = "0.6", features = ["rt", "critical-section"], optional = true }
-msp430fr2433 = { version = "0.2", features = ["rt", "critical-section"], optional = true }
 msp430fr247x = { version = "0.3.1", features = ["rt", "critical-section"], optional = true }
+msp430fr413x = { path = "../../msp430fr413x", features = ["rt", "critical-section"], optional = true }
+msp430fr2433 = { version = "0.2", features = ["rt", "critical-section"], optional = true }
 nb = "1.1"
 void = { version = "1.0.2", default-features = false, optional = true }
 embedded-hal-02 = { package = 'embedded-hal', version = "0.2.7", features = ["unproven"], optional = true }

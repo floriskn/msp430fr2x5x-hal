@@ -5,7 +5,9 @@ pub use crate::capture::CapturePin as _msp430fr2x5x_hal_CapturePin;
 pub use crate::clock::Clock as _msp430fr2x5x_hal_Clock;
 pub use crate::clock::SmclkState as _msp430fr2x5x_hal_SmclkState;
 pub use crate::gpio::Alternate1 as _msp430fr2x5x_hal_Alternate1;
+#[cfg(feature = "port_sel2bit")]
 pub use crate::gpio::Alternate2 as _msp430fr2x5x_hal_Alternate2;
+#[cfg(feature = "port_sel2bit")]
 pub use crate::gpio::Alternate3 as _msp430fr2x5x_hal_Alternate3;
 pub use crate::gpio::GpioFunction as _msp430fr2x5x_hal_GpioFunction;
 pub use crate::gpio::PinNum as _msp430fr2x5x_hal_PinNum;

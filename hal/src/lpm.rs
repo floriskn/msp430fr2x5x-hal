@@ -140,19 +140,80 @@ fn lpm3_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, svs: SvsState) -> ! {
     let regs = unsafe { _pac::Peripherals::steal() };
 
     // If LF XT crystal is not in use, reset everything, otherwise reset everything but XIN, XOUT
-    const MASK: u8 = (1 << 6) | (1 << 7);
-    let lfxt_in_use =
-        (regs.p2.p2sel1().read().bits() & MASK == MASK) && (regs.p2.p2sel0().read().bits() & MASK == 0);
-    if lfxt_in_use {
-        // Reset everything except for XIN and XOUT
-        unsafe {
-            regs.p2.p2sel1().clear_bits(|w| w.bits(MASK));
-            regs.p2.p2sel0().clear_bits(|w| w.bits(MASK));
+    // TODO: make device specific
+    // P2 On 247x and P4 243x: (1 << 0) | (1 << 1) 
+    // 2x5x
+
+    #[cfg(feature = "2x5x")]
+    {
+        const MASK: u8 = (1 << 6) | (1 << 7); // P2.6, P2.7
+
+        let lfxt_in_use =
+            (regs.p2.p2sel1().read().bits() & MASK == MASK) && (regs.p2.p2sel0().read().bits() & MASK == 0);
+        if lfxt_in_use {
+            // Reset everything except for XIN and XOUT
+            unsafe {
+                regs.p2.p2sel1().clear_bits(|w| w.bits(MASK));
+                regs.p2.p2sel0().clear_bits(|w| w.bits(MASK));
+            }
+        } else {
+            // Reset everything
+            regs.p2.p2sel0().reset();
+            regs.p2.p2sel0().reset();
         }
-    } else {
-        // Reset everything
-        regs.p2.p2sel0().reset();
-        regs.p2.p2sel0().reset();
+    }
+
+    #[cfg(feature = "247x")]
+    {
+        const MASK: u8 = (1 << 0) | (1 << 1); // P2.0, P2.1
+
+        let lfxt_in_use =
+            (regs.p2.p2sel1().read().bits() & MASK == 0) && (regs.p2.p2sel0().read().bits() & MASK == MASK);
+        if lfxt_in_use {
+            // Reset everything except for XIN and XOUT
+            unsafe {
+                regs.p2.p2sel1().clear_bits(|w| w.bits(MASK));
+                regs.p2.p2sel0().clear_bits(|w| w.bits(MASK));
+            }
+        } else {
+            // Reset everything
+            regs.p2.p2sel0().reset();
+            regs.p2.p2sel0().reset();
+        }
+    }
+
+    #[cfg(feature = "msp430fr2433")]
+    {
+        const MASK: u8 = (1 << 0) | (1 << 1); // P2.0, P2.1
+
+        let lfxt_in_use =
+            (regs.p2.p2sel1().read().bits() & MASK == 0) && (regs.p2.p2sel0().read().bits() & MASK == MASK);
+        if lfxt_in_use {
+            // Reset everything except for XIN and XOUT
+            unsafe {
+                regs.p2.p2sel1().clear_bits(|w| w.bits(MASK));
+                regs.p2.p2sel0().clear_bits(|w| w.bits(MASK));
+            }
+        } else {
+            // Reset everything
+            regs.p2.p2sel0().reset();
+            regs.p2.p2sel0().reset();
+        }
+    }
+
+    #[cfg(feature = "413x")]
+    {
+        const MASK: u8 = (1 << 1) | (1 << 2); // P4.1, P4.2
+
+        let lfxt_in_use = (regs.p4.p4sel0().read().bits() & MASK) != 0;
+
+        if lfxt_in_use {
+            unsafe { 
+                regs.p4.p4sel0().clear_bits(|w| w.bits(MASK))
+            };
+        } else {
+            regs.p4.p4sel0().reset();
+        }
     }
 
     enter_lpmx_5(wdt, svs, regs)
@@ -176,8 +237,15 @@ pub fn enter_lpm4_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, rtc_reg: _pac::Rtc, sv
     let regs = unsafe { crate::pac::Peripherals::steal() };
 
     // Reset P2SEL, including XIN and XOUT
+    #[cfg(any(feature = "2x5x", feature = "247x", feature = "msp430fr2433"))]
+    {
+        regs.p2.p2sel0().reset();
+        regs.p2.p2sel1().reset();
+    }
+
+    #[cfg(feature = "413x")]
     regs.p2.p2sel0().reset();
-    regs.p2.p2sel1().reset();
+
 
     enter_lpmx_5(wdt, svs, regs)
 }
@@ -188,20 +256,36 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState, regs: _
     wdt.pause();
 
     // Reset PxSEL
-    regs.p1.p1sel0().reset();
-    regs.p1.p1sel1().reset();
-    /* P2 reset by 4.5 and 3.5 fns */
-    regs.p3.p3sel0().reset();
-    regs.p3.p3sel1().reset();
-
-    #[cfg(any(feature = "2x5x", feature = "247x"))]
+    #[cfg(any(feature = "2x5x", feature = "247x", feature = "msp430fr2433"))]
     {
-        regs.p4.p4sel0().reset();
-        regs.p4.p4sel1().reset();
+        regs.p1.p1sel0().reset();
+        regs.p1.p1sel1().reset();
+        /* P2 reset by 4.5 and 3.5 fns */
+        regs.p3.p3sel0().reset();
+        regs.p3.p3sel1().reset();
+
+        #[cfg(any(feature = "2x5x", feature = "247x"))]
+        {
+            regs.p4.p4sel0().reset();
+            regs.p4.p4sel1().reset();
+            regs.p5.p5sel0().reset();
+            regs.p5.p5sel1().reset();
+            regs.p6.p6sel0().reset();
+            regs.p6.p6sel1().reset();
+        }
+    }
+
+    #[cfg(feature = "413x")]
+    {
+        regs.p1.p1sel0().reset();
+        regs.p2.p2sel0().reset();
+        regs.p3.p3sel0().reset();
+        /* P4 reset by 4.5 and 3.5 fns */
         regs.p5.p5sel0().reset();
-        regs.p5.p5sel1().reset();
         regs.p6.p6sel0().reset();
-        regs.p6.p6sel1().reset();
+        regs.p7.p7sel0().reset();
+        regs.p8.p8sel0().reset();
+
     }
 
     let interrupts_were_enabled = msp430::register::sr::read().gie();

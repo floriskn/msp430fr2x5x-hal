@@ -20,6 +20,7 @@ pub use crate::timer::{
 #[doc(hidden)]
 pub enum Alt {
     Alt1,
+    #[cfg(feature = "port_sel2bit")]
     Alt2,
 }
 
@@ -35,6 +36,7 @@ pub trait PwmPeriph<C>: CapCmp<C> + CapCmp<CCR0> {
     fn to_alt(pin: &mut Self::Gpio) {
         match Self::ALT {
             Alt::Alt1 => pin.set_sel0(),
+            #[cfg(feature = "port_sel2bit")]
             Alt::Alt2 => pin.set_sel1(),
         }
     }
@@ -43,6 +45,7 @@ pub trait PwmPeriph<C>: CapCmp<C> + CapCmp<CCR0> {
     fn to_gpio(pin: &mut Self::Gpio) {
         match Self::ALT {
             Alt::Alt1 => pin.clear_sel0(),
+            #[cfg(feature = "port_sel2bit")]
             Alt::Alt2 => pin.clear_sel1(),
         }
     }

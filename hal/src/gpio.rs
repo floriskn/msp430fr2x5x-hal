@@ -394,9 +394,12 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
 #[doc(hidden)]
 pub trait ChangeSelectBits {
     fn set_sel0(&mut self);
+    #[cfg(feature = "port_sel2bit")]
     fn set_sel1(&mut self);
     fn clear_sel0(&mut self);
+    #[cfg(feature = "port_sel2bit")]
     fn clear_sel1(&mut self);
+    #[cfg(feature = "port_sel2bit")]
     fn flip_selc(&mut self);
     #[cfg(feature = "adcpctl")]
     fn set_adcpctl(&mut self, mask: u16);
@@ -413,6 +416,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
     }
 
     #[inline]
+    #[cfg(feature = "port_sel2bit")]
     fn set_sel1(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel1_set(PIN::SET_MASK);
@@ -425,12 +429,14 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
     }
 
     #[inline]
+    #[cfg(feature = "port_sel2bit")]
     fn clear_sel1(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel1_clear(PIN::CLR_MASK);
     }
 
     #[inline]
+    #[cfg(feature = "port_sel2bit")]
     fn flip_selc(&mut self) {
         let p = unsafe { PORT::steal() };
         // Change both sel0 and sel1 bits at once
@@ -456,9 +462,11 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
 pub struct Alternate1<DIR>(PhantomData<DIR>);
 
 /// Typestate for GPIO alternate function 2
+#[cfg(feature = "port_sel2bit")]
 pub struct Alternate2<DIR>(PhantomData<DIR>);
 
 /// Typestate for GPIO alternate function 3
+#[cfg(feature = "port_sel2bit")]
 pub struct Alternate3<DIR>(PhantomData<DIR>);
 
 #[cfg(feature = "adcpctl")]
@@ -470,8 +478,10 @@ pub struct AdcMode<DIR>(PhantomData<DIR>);
 /// Marker trait for all Pins that have alternate function 1 available
 pub trait ToAlternate1 {}
 /// Marker trait for all Pins that have alternate function 2 available
+#[cfg(feature = "port_sel2bit")]
 pub trait ToAlternate2 {}
 /// Marker trait for all Pins that have alternate function 3 available
+#[cfg(feature = "port_sel2bit")]
 pub trait ToAlternate3 {}
 
 #[cfg(feature = "adcpctl")]
@@ -495,6 +505,7 @@ where
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where
     Self: ToAlternate2,
@@ -507,6 +518,7 @@ where
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where
     Self: ToAlternate3,
@@ -529,6 +541,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>> {
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>>
 where
     Self: ToAlternate2,
@@ -541,6 +554,7 @@ where
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>>
 where
     Self: ToAlternate3,
@@ -554,6 +568,7 @@ where
 }
 
 // sel0 = 0, sel1 = 1
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>> {
     /// Convert pin to GPIO function
     #[inline]
@@ -563,6 +578,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>> {
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>>
 where
     Self: ToAlternate1,
@@ -575,6 +591,7 @@ where
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>>
 where
     Self: ToAlternate3,
@@ -588,6 +605,7 @@ where
 }
 
 // sel0 = 1, sel1 = 1
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>> {
     /// Convert pin to GPIO function
     #[inline]
@@ -597,6 +615,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>> {
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>>
 where
     Self: ToAlternate1,
@@ -609,6 +628,7 @@ where
     }
 }
 
+#[cfg(feature = "port_sel2bit")]
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>>
 where
     Self: ToAlternate2,

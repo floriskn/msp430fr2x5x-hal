@@ -19,6 +19,7 @@ pub trait GpioPeriph: Steal {
     fn pxren_set(&self, bits: u8);
     fn pxren_clear(&self, bits: u8);
 
+    #[cfg(feature = "port_sel2bit")]
     fn pxselc_wr(&self, bits: u8);
 
     fn pxsel0_rd(&self) -> u8;
@@ -26,9 +27,13 @@ pub trait GpioPeriph: Steal {
     fn pxsel0_set(&self, bits: u8);
     fn pxsel0_clear(&self, bits: u8);
 
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_rd(&self) -> u8;
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_wr(&self, bits: u8);
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_set(&self, bits: u8);
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_clear(&self, bits: u8);
 
     #[cfg(not(feature = "sac"))]
@@ -86,55 +91,70 @@ macro_rules! reg_methods {
 pub(crate) use reg_methods;
 
 macro_rules! gpio_impl {
+    (@impl $Px:ident => 
+     $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxsel0:ident
+     $(, $pxselc:ident, $pxsel1:ident)? 
+     $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
+    ) => {
+        impl Steal for pac::$Px {
+            #[inline(always)]
+            unsafe fn steal() -> Self { pac::$Px::steal() }
+        }
+
+        impl GpioPeriph for pac::$Px {
+            #[inline(always)]
+            fn pxin_rd(&self) -> u8 { self.$pxin().read().bits() }
+
+            #[inline(always)]
+            fn pxout_toggle(&self, bits: u8) {
+                unsafe { self.$pxout().toggle_bits(|w| w.bits(bits)) };
+            }
+
+            $(
+                #[inline(always)]
+                fn pxselc_wr(&self, bits: u8) {
+                    self.$pxselc().write(|w| unsafe { w.bits(bits) });
+                }
+            )?
+
+            reg_methods!($pxout, pxout_rd, pxout_wr, pxout_set, pxout_clear);
+            reg_methods!($pxdir, pxdir_rd, pxdir_wr, pxdir_set, pxdir_clear);
+            reg_methods!($pxren, pxren_rd, pxren_wr, pxren_set, pxren_clear);
+            reg_methods!($pxsel0, pxsel0_rd, pxsel0_wr, pxsel0_set, pxsel0_clear);
+            
+            $( reg_methods!($pxsel1, pxsel1_rd, pxsel1_wr, pxsel1_set, pxsel1_clear); )?
+        }
+
+        $(
+            impl IntrPeriph for pac::$Px {
+                reg_methods!($pxies, pxies_rd, pxies_wr, pxies_set, pxies_clear);
+                reg_methods!($pxie, pxie_rd, pxie_wr, pxie_set, pxie_clear);
+                reg_methods!($pxifg, pxifg_rd, pxifg_wr, pxifg_set, pxifg_clear);
+                #[inline(always)]
+                fn pxiv_rd(&self) -> u16 { self.$pxiv().read().bits() }
+            }
+        )?
+    };
+
+    // --- 2-bit selection ---
     ($px:ident: $Px:ident =>
      $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxselc:ident, $pxsel0:ident, $pxsel1:ident
      $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
     ) => {
         mod $px {
             use crate::{pac, gpio::*, hw_traits::{Steal, gpio::*}};
+            gpio_impl!(@impl $Px => $pxin, $pxout, $pxdir, $pxren, $pxsel0, $pxselc, $pxsel1 $(, [$pxies, $pxie, $pxifg, $pxiv])?);
+        }
+    };
 
-            impl Steal for pac::$Px {
-                #[inline(always)]
-                unsafe fn steal() -> Self {
-                    $Px::steal()
-                }
-            }
-
-            impl GpioPeriph for pac::$Px {
-                #[inline(always)]
-                fn pxin_rd(&self) -> u8 {
-                    self.$pxin().read().bits()
-                }
-
-                #[inline(always)]
-                fn pxselc_wr(&self, bits: u8) {
-                    self.$pxselc().write(|w| unsafe { w.bits(bits) });
-                }
-
-                #[inline(always)]
-                fn pxout_toggle(&self, bits: u8) {
-                    unsafe { self.$pxout().toggle_bits(|w| w.bits(bits)) };
-                }
-
-                reg_methods!($pxout, pxout_rd, pxout_wr, pxout_set, pxout_clear);
-                reg_methods!($pxdir, pxdir_rd, pxdir_wr, pxdir_set, pxdir_clear);
-                reg_methods!($pxren, pxren_rd, pxren_wr, pxren_set, pxren_clear);
-                reg_methods!($pxsel0, pxsel0_rd, pxsel0_wr, pxsel0_set, pxsel0_clear);
-                reg_methods!($pxsel1, pxsel1_rd, pxsel1_wr, pxsel1_set, pxsel1_clear);
-            }
-
-            $(
-                impl IntrPeriph for pac::$Px {
-                    reg_methods!($pxies, pxies_rd, pxies_wr, pxies_set, pxies_clear);
-                    reg_methods!($pxie, pxie_rd, pxie_wr, pxie_set, pxie_clear);
-                    reg_methods!($pxifg, pxifg_rd, pxifg_wr, pxifg_set, pxifg_clear);
-
-                    #[inline(always)]
-                    fn pxiv_rd(&self) -> u16 {
-                        self.$pxiv().read().bits()
-                    }
-                }
-            )?
+    // --- 1-bit selection ---
+    ($px:ident: $Px:ident =>
+     $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxsel0:ident
+     $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
+    ) => {
+        mod $px {
+            use crate::{pac, hw_traits::{Steal, gpio::*}};
+            gpio_impl!(@impl $Px => $pxin, $pxout, $pxdir, $pxren, $pxsel0 $(, [$pxies, $pxie, $pxifg, $pxiv])?);
         }
     };
 }
