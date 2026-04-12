@@ -44,7 +44,9 @@ mod sealed {
     impl<PULL> SealedGpioFunction for Input<PULL> {}
 
     impl<DIR> SealedAlternate for Alternate1<DIR> {}
+    #[cfg(feature = "port_sel2bit")]
     impl<DIR> SealedAlternate for Alternate2<DIR> {}
+    #[cfg(feature = "port_sel2bit")]
     impl<DIR> SealedAlternate for Alternate3<DIR> {}
 }
 
@@ -67,8 +69,10 @@ pub enum Alternate {
     /// PxSEL1 = 0, PxSEL0 = 1
     Alternate1,
     /// PxSEL1 = 1, PxSEL0 = 0
+    #[cfg(feature = "port_sel2bit")]
     Alternate2,
     /// PxSEL1 = 1, PxSEL0 = 1
+    #[cfg(feature = "port_sel2bit")]
     Alternate3,
 }
 
@@ -488,6 +492,7 @@ impl<DIR> AlternateMode for Alternate1<DIR> {
 /// Typestate for GPIO alternate function 2
 #[cfg(feature = "port_sel2bit")]
 pub struct Alternate2<DIR>(PhantomData<DIR>);
+#[cfg(feature = "port_sel2bit")]
 impl<DIR> AlternateMode for Alternate2<DIR> {
     const MODE: Alternate = Alternate::Alternate2;
 }
@@ -495,6 +500,7 @@ impl<DIR> AlternateMode for Alternate2<DIR> {
 /// Typestate for GPIO alternate function 3
 #[cfg(feature = "port_sel2bit")]
 pub struct Alternate3<DIR>(PhantomData<DIR>);
+#[cfg(feature = "port_sel2bit")]
 impl<DIR> AlternateMode for Alternate3<DIR> {
     const MODE: Alternate = Alternate::Alternate3;
 }

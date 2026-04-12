@@ -363,3 +363,20 @@ mod timer {
     }
     impl CapCmpTimer3 for Timer1A3 {}
 }
+
+pub mod clock {
+    use crate::{gpio::*, hw_traits::gpio::GpioPeriph, clock::*};
+
+    pub struct Xt1clk;
+    impl_xt1_clk!(
+        Xt1clk,
+        P4, Pin1, Alternate1,
+        P4, Pin2, Alternate1,
+    );
+}
+
+pub mod lpm {
+    use crate::{gpio::*, hw_traits::gpio::GpioPeriph, lpm::*};
+
+    impl_lpm_purge!([P1, P2, P3, P5, P6, P7, P8]);
+}

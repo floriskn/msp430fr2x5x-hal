@@ -509,12 +509,23 @@ macro_rules! impl_xt1_clk {
                 const MASK_A: u8 = $pin_a::SET_MASK;
                 const MASK_B: u8 = $pin_b::SET_MASK;
 
+                
+                #[cfg(feature = "port_sel2bit")]
                 macro_rules! check_logic {
                     ($p:expr, $mask:expr, $alt:ident) => {
                         match $alt::<()>::MODE {
                             Alternate::Alternate1 => ($p.pxsel1_rd() & $mask == 0) && ($p.pxsel0_rd() & $mask == $mask),
                             Alternate::Alternate2 => ($p.pxsel1_rd() & $mask == $mask) && ($p.pxsel0_rd() & $mask == 0),
                             Alternate::Alternate3 => ($p.pxsel1_rd() & $mask == $mask) && ($p.pxsel0_rd() & $mask == $mask),
+                        }
+                    };
+                }
+                
+                #[cfg(not(feature = "port_sel2bit"))]
+                macro_rules! check_logic {
+                    ($p:expr, $mask:expr, $alt:ident) => {
+                        match $alt::<()>::MODE {
+                            Alternate::Alternate1 => $p.pxsel0_rd() & $mask != 0,
                         }
                     };
                 }
@@ -541,6 +552,7 @@ macro_rules! impl_xt1_clk {
             fn reset_ports() {
                 let pa = unsafe { $port_a::steal() };
                 pa.pxsel0_reset();
+                #[cfg(feature = "port_sel2bit")]
                 pa.pxsel1_reset();
 
                 macro_rules! dispatch_port_logic {
@@ -549,6 +561,7 @@ macro_rules! impl_xt1_clk {
                         {
                             let pb = unsafe { $p_b::steal() };
                             pb.pxsel0_reset();
+                            #[cfg(feature = "port_sel2bit")]
                             pb.pxsel1_reset();
                         }
                     };
@@ -568,15 +581,18 @@ macro_rules! impl_xt1_clk {
                         {
                             let combined = MASK_A | MASK_B;
                             pa.pxsel0_clear(combined);
+                            #[cfg(feature = "port_sel2bit")]
                             pa.pxsel1_clear(combined);
                         }
                     };
                     ($port_a, $port_b) => { 
                         {
                             pa.pxsel0_clear(MASK_A);
+                            #[cfg(feature = "port_sel2bit")]
                             pa.pxsel1_clear(MASK_A);
                             let pb = unsafe { $p_b::steal() };
                             pb.pxsel0_clear(MASK_B);
+                            #[cfg(feature = "port_sel2bit")]
                             pb.pxsel1_clear(MASK_B);
                         }
                     };

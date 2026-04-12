@@ -16,7 +16,7 @@ use panic_msp430 as _;
 // Red LED should blink 1 second on, 1 second off
 #[entry]
 fn main() -> ! {
-    let periph = msp430fr2355::Peripherals::take().unwrap();
+    let periph = msp430fr413x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
     let wdt = Wdt::constrain(periph.wdt_a);

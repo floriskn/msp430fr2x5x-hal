@@ -19,7 +19,7 @@ use panic_never as _;
 // Serial settings are listed in the code
 #[entry]
 fn main() -> ! {
-    if let Some(periph) = msp430fr247x::Peripherals::take() {
+    if let Some(periph) = msp430fr413x::Peripherals::take() {
         let mut fram = Fram::new(periph.frctl);
         let _wdt = Wdt::constrain(periph.wdt_a);
 

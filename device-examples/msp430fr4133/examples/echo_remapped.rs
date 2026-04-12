@@ -5,7 +5,7 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal_nb::serial::{Read, Write};
 use msp430_rt::entry;
 use msp430fr2x5x_hal::{
-    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv}, fram::Fram, gpio::Batch, pin_mapping::DefaultMapping, pmm::Pmm, serial::*, watchdog::Wdt
+    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv}, fram::Fram, gpio::Batch, pin_mapping::{DefaultMapping, RemappedMapping}, pmm::Pmm, serial::*, watchdog::Wdt
 };
 
 use nb::block;
@@ -19,7 +19,7 @@ use panic_never as _;
 // Serial settings are listed in the code
 #[entry]
 fn main() -> ! {
-    if let Some(periph) = msp430fr247x::Peripherals::take() {
+    if let Some(periph) = msp430fr413x::Peripherals::take() {
         let mut fram = Fram::new(periph.frctl);
         let _wdt = Wdt::constrain(periph.wdt_a);
 
@@ -30,37 +30,64 @@ fn main() -> ! {
             .freeze(&mut fram);
 
         let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+
         let p1 = Batch::new(periph.p1).split(&pmm);
+        let p5 = Batch::new(periph.p5).split(&pmm);
 
         let mut led = p1.pin0.to_output();
-
         led.set_low().ok();
 
-        let (mut tx, mut rx) = SerialConfig::<_, _, DefaultMapping>::new(
-            periph.e_usci_a0,
+        let mut e_usci_a0 = periph.e_usci_a0;
+
+        // FIRST: Default UART mapping (P1.4 TX / P1.5 RX)
+        {
+            let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
+                e_usci_a0,
+                BitOrder::LsbFirst,
+                BitCount::EightBits,
+                StopBits::OneStopBit,
+                Parity::NoParity,
+                Loopback::NoLoop,
+                9600,
+            )
+            .use_aclk(&aclk).tx_only(p1.pin4.to_alternate1());
+
+            embedded_io::Write::write_all(&mut tx, b"HELLO DEFAULT\n").ok();
+        }
+
+        unsafe {
+            e_usci_a0 = msp430fr413x::Peripherals::steal().e_usci_a0;
+        }
+
+        // SECOND: Remap UART to P5.2 TX / P5.1 RX
+        let serial = SerialConfig::<_, _, RemappedMapping>::new(
+            e_usci_a0,
             BitOrder::LsbFirst,
             BitCount::EightBits,
             StopBits::OneStopBit,
-            // Launchpad UART-to-USB converter doesn't handle parity, so we don't use it
             Parity::NoParity,
             Loopback::NoLoop,
             9600,
         )
-        .use_aclk(&aclk)
-        .split(p1.pin4.to_alternate1(), p1.pin5.to_alternate1());
+        .use_aclk(&aclk);
+
+        let (mut tx, mut rx) =
+            serial.split(p5.pin2.to_alternate1(), p5.pin1.to_alternate1());
 
         led.set_high().ok();
-        // embedded_io contains methods for writing with buffers
-        embedded_io::Write::write_all(&mut tx, b"HELLO\n").ok();
+
+        embedded_io::Write::write_all(&mut tx, b"HELLO REMAPPED\n").ok();
+
+        // Echo loop on remapped UART
         loop {
-            // embedded_hal_nb contains non-blocking methods for writing single bytes
             let ch: u8 = match block!(rx.read()) {
                 Ok(c) => c,
-                Err(RecvError::Parity)      => b'!',
-                Err(RecvError::Overrun(_))  => b'}',
-                Err(RecvError::Framing)     => b'?',
+                Err(RecvError::Parity) => b'!',
+                Err(RecvError::Overrun(_)) => b'}',
+                Err(RecvError::Framing) => b'?',
             };
-            block!(tx.write(ch)).unwrap();
+
+            block!(tx.write(ch)).ok();
         }
     } else {
         loop {}

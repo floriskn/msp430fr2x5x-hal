@@ -36,6 +36,7 @@ pub trait GpioPeriph: Steal {
     fn pxsel1_set(&self, bits: u8);
     #[cfg(feature = "port_sel2bit")]
     fn pxsel1_clear(&self, bits: u8);
+    #[cfg(feature = "port_sel2bit")]
     fn pxsel1_reset(&self);
 
     #[cfg(not(feature = "sac"))]

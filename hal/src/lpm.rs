@@ -223,6 +223,7 @@ macro_rules! impl_lpm_purge {
                 {
                     let p = unsafe { $bulk_port::steal() };
                     p.pxsel0_reset();
+                    #[cfg(feature = "port_sel2bit")]
                     p.pxsel1_reset();
                 }
             )*
