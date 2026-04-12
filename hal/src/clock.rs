@@ -9,6 +9,7 @@
 //! the DCO requires complex calibration routines not supported by the HAL.
 
 use core::arch::asm;
+use core::marker::PhantomData;
 
 use crate::delay::SysDelay;
 use crate::fram::{Fram, WaitStates};
@@ -20,6 +21,10 @@ pub const REFOCLK_FREQ_HZ: u16 = 32768;
 /// VLOCLK frequency
 pub const VLOCLK_FREQ_HZ: u16 = 10000;
 pub use crate::device_specific::MODCLK_FREQ_HZ;
+
+// Make PAC CLOCK peripherals available as a re-export
+#[cfg(feature = "xt1clk_source")]
+pub(crate) use crate::device_specific::clock::*;
 
 enum MclkSel {
     Refoclk,
@@ -52,7 +57,8 @@ enum AclkSel {
     #[cfg(feature = "vloclk_source")]
     Vloclk,
     Refoclk,
-    // TODO: XT1CLK
+    #[cfg(feature = "xt1clk_source")]
+    Xt1clk(u16),
 }
 
 impl AclkSel {
@@ -62,6 +68,8 @@ impl AclkSel {
             #[cfg(feature = "vloclk_source")]
             AclkSel::Vloclk => Sela::Vloclk,
             AclkSel::Refoclk => Sela::Refoclk,
+            #[cfg(feature = "xt1clk_source")]
+            AclkSel::Xt1clk(_) => Sela::Xt1clk,
         }
     }
 
@@ -70,7 +78,9 @@ impl AclkSel {
         match self {
             #[cfg(feature = "vloclk_source")]
             AclkSel::Vloclk => VLOCLK_FREQ_HZ,
-            AclkSel::Refoclk => REFOCLK_FREQ_HZ,
+            AclkSel::Refoclk => REFOCLK_FREQ_HZ,            
+            #[cfg(feature = "xt1clk_source")]
+            AclkSel::Xt1clk(freq) => freq,
         }
     }
 }
@@ -169,16 +179,25 @@ impl SmclkState for SmclkDisabled {
     }
 }
 
+/// Associates an external crystal oscillator with its respective input and output pins.
+pub trait Xt1Oscillator {
+    /// The crystal's output pin (typically XOUT).
+    type XoutPin;
+    /// The crystal's input pin (typically XIN).
+    type XinPin;
+}
+
 /// Builder object that configures system clocks
 ///
 /// Can only commit configurations to hardware if both MCLK and SMCLK settings have been
 /// configured. ACLK configurations are optional, with its default source being REFOCLK.
-pub struct ClockConfig<MCLK, SMCLK> {
+pub struct ClockConfig<MCLK, SMCLK, OSCILLATOR> {
     periph: _pac::Cs,
     mclk: MCLK,
     mclk_div: MclkDiv,
     aclk_sel: AclkSel,
     smclk: SMCLK,
+    _osc: PhantomData<OSCILLATOR>,
 }
 
 macro_rules! make_clkconf {
@@ -189,11 +208,26 @@ macro_rules! make_clkconf {
             mclk_div: $conf.mclk_div,
             aclk_sel: $conf.aclk_sel,
             smclk: $smclk,
+            _osc: PhantomData,
         }
     };
 }
 
-impl ClockConfig<NoClockDefined, NoClockDefined> {
+#[cfg(feature = "xt1clk_source")]
+/// Target oscillator type for XT1 clock configurations.
+pub type DefaultOsc = Xt1clk;
+
+#[cfg(not(feature = "xt1clk_source"))]
+/// Placeholder type when external crystal sources are disabled.
+pub type DefaultOsc = NoClockDefined;
+
+#[cfg(not(feature = "xt1clk_source"))]
+impl Xt1Oscillator for NoClockDefined {
+    type XoutPin = ();
+    type XinPin  = ();
+}
+
+impl ClockConfig<NoClockDefined, NoClockDefined, DefaultOsc> {
     /// Converts CS into a fresh, unconfigured clock builder object
     pub fn new(cs: _pac::Cs) -> Self {
         ClockConfig {
@@ -202,11 +236,15 @@ impl ClockConfig<NoClockDefined, NoClockDefined> {
             mclk: NoClockDefined,
             mclk_div: MclkDiv::_1,
             aclk_sel: AclkSel::Refoclk,
+            _osc: PhantomData,
         }
     }
 }
 
-impl<MCLK, SMCLK> ClockConfig<MCLK, SMCLK> {
+impl<MCLK, SMCLK, OSCILLATOR> ClockConfig<MCLK, SMCLK, OSCILLATOR>
+where 
+    OSCILLATOR: Xt1Oscillator 
+{
     /// Select REFOCLK for ACLK
     #[inline]
     pub fn aclk_refoclk(mut self) -> Self {
@@ -222,9 +260,17 @@ impl<MCLK, SMCLK> ClockConfig<MCLK, SMCLK> {
         self
     }
 
+    #[cfg(feature = "xt1clk_source")]
+    /// Select XT1CLK for ACLK
+    #[inline]
+    pub fn aclk_xt1clk<T: Into<OSCILLATOR::XoutPin>, R: Into<OSCILLATOR::XinPin>>(mut self, freq: u16, _xout: T, _xin: R) -> Self {
+        self.aclk_sel = AclkSel::Xt1clk(freq);
+        self
+    }
+
     /// Select REFOCLK for MCLK and set the MCLK divider. Frequency is `32_768 / mclk_div` Hz.
     #[inline]
-    pub fn mclk_refoclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK> {
+    pub fn mclk_refoclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
             ..make_clkconf!(self, MclkDefined(MclkSel::Refoclk), self.smclk)
@@ -233,7 +279,7 @@ impl<MCLK, SMCLK> ClockConfig<MCLK, SMCLK> {
 
     /// Select VLOCLK for MCLK and set the MCLK divider. Frequency is `10_000 / mclk_div` Hz.
     #[inline]
-    pub fn mclk_vloclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK> {
+    pub fn mclk_vloclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
             ..make_clkconf!(self, MclkDefined(MclkSel::Vloclk), self.smclk)
@@ -248,7 +294,7 @@ impl<MCLK, SMCLK> ClockConfig<MCLK, SMCLK> {
         self,
         target_freq: DcoclkFreqSel,
         mclk_div: MclkDiv,
-    ) -> ClockConfig<MclkDefined, SMCLK> {
+    ) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
             ..make_clkconf!(self, MclkDefined(MclkSel::Dcoclk(target_freq)), self.smclk)
@@ -257,13 +303,13 @@ impl<MCLK, SMCLK> ClockConfig<MCLK, SMCLK> {
 
     /// Enable SMCLK and set SMCLK divider, which divides the MCLK frequency
     #[inline]
-    pub fn smclk_on(self, div: SmclkDiv) -> ClockConfig<MCLK, SmclkDefined> {
+    pub fn smclk_on(self, div: SmclkDiv) -> ClockConfig<MCLK, SmclkDefined, OSCILLATOR> {
         make_clkconf!(self, self.mclk, SmclkDefined(div))
     }
 
     /// Disable SMCLK
     #[inline]
-    pub fn smclk_off(self) -> ClockConfig<MCLK, SmclkDisabled> {
+    pub fn smclk_off(self) -> ClockConfig<MCLK, SmclkDisabled, OSCILLATOR> {
         make_clkconf!(self, self.mclk, SmclkDisabled)
     }
 }
@@ -280,14 +326,23 @@ fn fll_on() {
     unsafe { asm!("bic.b #64, SR", options(nomem, nostack)) };
 }
 
-impl<SMCLK: SmclkState> ClockConfig<MclkDefined, SMCLK> {
+impl<SMCLK: SmclkState, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
     #[inline]
     fn configure_dco_fll(&self) {
         // Run FLL configuration procedure from the user's guide if we are using DCO
         if let MclkSel::Dcoclk(target_freq) = self.mclk.0 {
             fll_off();
 
-            self.periph.csctl3().write(|w| w.selref().refoclk());
+            let is_xt1 = self.aclk_sel.sela() == Sela::Xt1clk;
+
+            self.periph.csctl3().write(|w| {
+                if is_xt1 { w.selref().xt1clk() } else { w.selref().refoclk() }
+            });
+            
+            if is_xt1 {
+                self.stabilize_xt1();
+            }
+
             self.periph.csctl0().write(|w| unsafe { w.bits(0) });
             self.periph
                 .csctl1()
@@ -337,9 +392,29 @@ impl<SMCLK: SmclkState> ClockConfig<MclkDefined, SMCLK> {
             fram.set_wait_states(WaitStates::Wait0);
         }
     }
+
+    #[inline(always)]
+    fn stabilize_xt1(&self) {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+        loop {
+            unsafe {
+                // self.periph.csctl7().read();
+                self.periph.csctl7().clear_bits(|w| 
+                    w.xt1offg().clear_bit()
+                      .dcoffg().clear_bit()
+                );
+                // sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
+            }
+
+            // Poll global fault flag
+            if sfr.sfrifg1().read().ofifg().is_ofifg_0() {
+                break;
+            }
+        }
+    }
 }
 
-impl ClockConfig<MclkDefined, SmclkDefined> {
+impl<OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SmclkDefined, OSCILLATOR> {
     /// Apply clock configuration to hardware and return SMCLK and ACLK clock objects.
     /// Also returns delay provider
     #[inline]
@@ -356,7 +431,7 @@ impl ClockConfig<MclkDefined, SmclkDefined> {
     }
 }
 
-impl ClockConfig<MclkDefined, SmclkDisabled> {
+impl<OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SmclkDisabled, OSCILLATOR> {
     /// Apply clock configuration to hardware and return ACLK clock object, as SMCLK is disabled.
     /// Also returns delay provider.
     #[inline]
@@ -404,3 +479,112 @@ impl Clock for Aclk {
         self.0
     }
 }
+
+/// Manages the GPIO multiplexing state for the XT1 crystal.
+pub trait Xt1ClockState {
+    /// Checks if the pins are currently in XT1 mode.
+    fn is_active() -> bool;
+
+    /// Resets the associated port selection registers.
+    fn reset_ports();
+
+    /// Clears only the XT1-specific bits from the registers.
+    fn clear_bits();
+}
+
+macro_rules! impl_xt1_clk {
+    (
+        $target_struct:ident,
+        $port_a:ident, $pin_a:ident, $alt_a:ident,
+        $port_b:ident, $pin_b:ident, $alt_b:ident,
+    ) => {
+        impl $crate::clock::Xt1Oscillator for $target_struct {
+            type XoutPin = Pin<$port_a, $pin_a, $alt_a<Input<Floating>>>;
+            type XinPin  = Pin<$port_b, $pin_b, $alt_b<Input<Floating>>>;
+        }
+
+        impl $crate::clock::Xt1ClockState for $target_struct {
+            fn is_active() -> bool {
+                let pa = unsafe { $port_a::steal() };
+                const MASK_A: u8 = $pin_a::SET_MASK;
+                const MASK_B: u8 = $pin_b::SET_MASK;
+
+                macro_rules! check_logic {
+                    ($p:expr, $mask:expr, $alt:ident) => {
+                        match $alt::<()>::MODE {
+                            Alternate::Alternate1 => ($p.pxsel1_rd() & $mask == 0) && ($p.pxsel0_rd() & $mask == $mask),
+                            Alternate::Alternate2 => ($p.pxsel1_rd() & $mask == $mask) && ($p.pxsel0_rd() & $mask == 0),
+                            Alternate::Alternate3 => ($p.pxsel1_rd() & $mask == $mask) && ($p.pxsel0_rd() & $mask == $mask),
+                        }
+                    };
+                }
+
+                macro_rules! dispatch_port_logic {
+                    ($port_a, $port_a, $alt_a, $alt_a) => {
+                        {
+                            let combined_mask = MASK_A | MASK_B;
+                            check_logic!(pa, combined_mask, $alt_a)
+                        }
+                    };
+                    ($port_a, $port_b, $alt_a, $alt_b) => {
+                        {
+                            let pb = unsafe { $p_b::steal() };
+                            check_logic!(pa, MASK_A, $alt_a) && check_logic!(pb, MASK_B, $alt_b)
+                        }
+                    };
+                }
+
+                dispatch_port_logic!($port_a, $port_b, $alt_a, $alt_b)
+            }
+
+            /// Resets the selection registers for the crystal ports
+            fn reset_ports() {
+                let pa = unsafe { $port_a::steal() };
+                pa.pxsel0_reset();
+                pa.pxsel1_reset();
+
+                macro_rules! dispatch_port_logic {
+                    ($port_a, $port_a) => { {} };
+                    ($port_a, $port_b) => {
+                        {
+                            let pb = unsafe { $p_b::steal() };
+                            pb.pxsel0_reset();
+                            pb.pxsel1_reset();
+                        }
+                    };
+                }
+
+                dispatch_port_logic!($port_a, $port_b);
+            }
+
+            /// Clears the specific pin masks from the selection registers
+            fn clear_bits() {
+                let pa = unsafe { $port_a::steal() };
+                const MASK_A: u8 = $pin_a::SET_MASK;
+                const MASK_B: u8 = $pin_b::SET_MASK;
+
+                macro_rules! dispatch_port_logic {
+                    ($port_a, $port_a) => {
+                        {
+                            let combined = MASK_A | MASK_B;
+                            pa.pxsel0_clear(combined);
+                            pa.pxsel1_clear(combined);
+                        }
+                    };
+                    ($port_a, $port_b) => { 
+                        {
+                            pa.pxsel0_clear(MASK_A);
+                            pa.pxsel1_clear(MASK_A);
+                            let pb = unsafe { $p_b::steal() };
+                            pb.pxsel0_clear(MASK_B);
+                            pb.pxsel1_clear(MASK_B);
+                        }
+                    };
+                }
+
+                dispatch_port_logic!($port_a, $port_b);
+            }
+        }
+    };
+}
+pub(crate) use impl_xt1_clk;
