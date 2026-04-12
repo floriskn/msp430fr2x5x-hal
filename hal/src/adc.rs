@@ -22,7 +22,7 @@
 //! reference to [`InternalVRef`] or [`InternalTempSensor`] respectively. Channels 14 and 15 require no prior
 //! configuration, so the two functions below provide a reference that can be used to read from these channels.
 
-use crate::{clock::{Aclk, Smclk}, pmm::{InternalTempSensor, InternalVRef}};
+use crate::{clock::{Aclk, AclkSource, Smclk}, pmm::{InternalTempSensor, InternalVRef}};
 use core::convert::Infallible;
 use crate::_pac;
 
@@ -347,7 +347,7 @@ impl AdcConfig<NoClockSet> {
         }
     }
     /// Configure the ADC to use ACLK
-    pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
+    pub fn use_aclk<S: AclkSource>(self, _aclk: &Aclk<S>) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::AClk),
             clock_divider: self.clock_divider,

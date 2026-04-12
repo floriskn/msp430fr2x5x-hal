@@ -22,10 +22,6 @@ pub const REFOCLK_FREQ_HZ: u16 = 32768;
 pub const VLOCLK_FREQ_HZ: u16 = 10000;
 pub use crate::device_specific::MODCLK_FREQ_HZ;
 
-// Make PAC CLOCK peripherals available as a re-export
-#[cfg(feature = "xt1clk_source")]
-pub(crate) use crate::device_specific::clock::*;
-
 enum MclkSel {
     Refoclk,
     Vloclk,
@@ -57,8 +53,7 @@ enum AclkSel {
     #[cfg(feature = "vloclk_source")]
     Vloclk,
     Refoclk,
-    #[cfg(feature = "xt1clk_source")]
-    Xt1clk(u16),
+    Xt1clkSource(u16),
 }
 
 impl AclkSel {
@@ -68,8 +63,7 @@ impl AclkSel {
             #[cfg(feature = "vloclk_source")]
             AclkSel::Vloclk => Sela::Vloclk,
             AclkSel::Refoclk => Sela::Refoclk,
-            #[cfg(feature = "xt1clk_source")]
-            AclkSel::Xt1clk(_) => Sela::Xt1clk,
+            AclkSel::Xt1clkSource(_) => Sela::Xt1clk,
         }
     }
 
@@ -78,9 +72,8 @@ impl AclkSel {
         match self {
             #[cfg(feature = "vloclk_source")]
             AclkSel::Vloclk => VLOCLK_FREQ_HZ,
-            AclkSel::Refoclk => REFOCLK_FREQ_HZ,            
-            #[cfg(feature = "xt1clk_source")]
-            AclkSel::Xt1clk(freq) => freq,
+            AclkSel::Refoclk => REFOCLK_FREQ_HZ,
+            AclkSel::Xt1clkSource(freq) => freq,
         }
     }
 }
@@ -153,6 +146,8 @@ impl DcoclkFreqSel {
 pub struct NoClockDefined;
 /// Typestate for `ClockConfig` that represents a configured MCLK
 pub struct MclkDefined(MclkSel);
+/// Typestate for `ClockConfig` that represents a configured MCLK
+pub struct AclkDefined(AclkSel);
 /// Typestate for `ClockConfig` that represents a configured SMCLK
 pub struct SmclkDefined(SmclkDiv);
 /// Typestate for `ClockConfig` that represents disabled SMCLK
@@ -191,43 +186,29 @@ pub trait Xt1Oscillator {
 ///
 /// Can only commit configurations to hardware if both MCLK and SMCLK settings have been
 /// configured. ACLK configurations are optional, with its default source being REFOCLK.
-pub struct ClockConfig<MCLK, SMCLK, OSCILLATOR> {
+pub struct ClockConfig<MCLK, ACLK: AclkSource, SMCLK, OSCILLATOR: Xt1Oscillator> {
     periph: _pac::Cs,
     mclk: MCLK,
     mclk_div: MclkDiv,
-    aclk_sel: AclkSel,
+    aclk: AclkDefined,
     smclk: SMCLK,
-    _osc: PhantomData<OSCILLATOR>,
+    _state: PhantomData<(OSCILLATOR, ACLK)>,
 }
 
 macro_rules! make_clkconf {
-    ($conf:expr, $mclk:expr, $smclk:expr) => {
+    ($conf:expr, $aclk:expr, $mclk:expr, $smclk:expr) => {
         ClockConfig {
             periph: $conf.periph,
             mclk: $mclk,
             mclk_div: $conf.mclk_div,
-            aclk_sel: $conf.aclk_sel,
+            aclk: $aclk,
             smclk: $smclk,
-            _osc: PhantomData,
+            _state: PhantomData,
         }
     };
 }
 
-#[cfg(feature = "xt1clk_source")]
-/// Target oscillator type for XT1 clock configurations.
-pub type DefaultOsc = Xt1clk;
-
-#[cfg(not(feature = "xt1clk_source"))]
-/// Placeholder type when external crystal sources are disabled.
-pub type DefaultOsc = NoClockDefined;
-
-#[cfg(not(feature = "xt1clk_source"))]
-impl Xt1Oscillator for NoClockDefined {
-    type XoutPin = ();
-    type XinPin  = ();
-}
-
-impl ClockConfig<NoClockDefined, NoClockDefined, DefaultOsc> {
+impl ClockConfig<NoClockDefined, RefoclkSource, NoClockDefined, Xt1clkSource> {
     /// Converts CS into a fresh, unconfigured clock builder object
     pub fn new(cs: _pac::Cs) -> Self {
         ClockConfig {
@@ -235,54 +216,50 @@ impl ClockConfig<NoClockDefined, NoClockDefined, DefaultOsc> {
             smclk: NoClockDefined,
             mclk: NoClockDefined,
             mclk_div: MclkDiv::_1,
-            aclk_sel: AclkSel::Refoclk,
-            _osc: PhantomData,
+            aclk: AclkDefined(AclkSel::Refoclk),
+            _state: PhantomData,
         }
     }
 }
 
-impl<MCLK, SMCLK, OSCILLATOR> ClockConfig<MCLK, SMCLK, OSCILLATOR>
+impl<MCLK, ACLK: AclkSource, SMCLK, OSCILLATOR> ClockConfig<MCLK, ACLK, SMCLK, OSCILLATOR>
 where 
-    OSCILLATOR: Xt1Oscillator 
+    OSCILLATOR: Xt1Oscillator
 {
     /// Select REFOCLK for ACLK
     #[inline]
-    pub fn aclk_refoclk(mut self) -> Self {
-        self.aclk_sel = AclkSel::Refoclk;
-        self
+    pub fn aclk_refoclk(self) -> ClockConfig<MCLK, RefoclkSource, SMCLK, OSCILLATOR> {
+        make_clkconf!(self, AclkDefined(AclkSel::Refoclk), self.mclk, self.smclk)
     }
 
     #[cfg(feature = "vloclk_source")]
     /// Select VLOCLK for ACLK
     #[inline]
-    pub fn aclk_vloclk(mut self) -> Self {
-        self.aclk_sel = AclkSel::Vloclk;
-        self
+    pub fn aclk_vloclk(mut self) -> ClockConfig<MCLK, VloclkSource, SMCLK, OSCILLATOR> {
+        make_clkconf!(self, AclkDefined(AclkSel::Vloclk), self.mclk, self.smclk)
     }
 
-    #[cfg(feature = "xt1clk_source")]
     /// Select XT1CLK for ACLK
     #[inline]
-    pub fn aclk_xt1clk<T: Into<OSCILLATOR::XoutPin>, R: Into<OSCILLATOR::XinPin>>(mut self, freq: u16, _xout: T, _xin: R) -> Self {
-        self.aclk_sel = AclkSel::Xt1clk(freq);
-        self
+    pub fn aclk_xt1clk<T: Into<OSCILLATOR::XoutPin>, R: Into<OSCILLATOR::XinPin>>(self, freq: u16, _xout: T, _xin: R) -> ClockConfig<MCLK, Xt1clkSource, SMCLK, OSCILLATOR> {
+        make_clkconf!(self, AclkDefined(AclkSel::Xt1clkSource(freq)), self.mclk, self.smclk)
     }
 
     /// Select REFOCLK for MCLK and set the MCLK divider. Frequency is `32_768 / mclk_div` Hz.
     #[inline]
-    pub fn mclk_refoclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
+    pub fn mclk_refoclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, ACLK, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
-            ..make_clkconf!(self, MclkDefined(MclkSel::Refoclk), self.smclk)
+            ..make_clkconf!(self, self.aclk, MclkDefined(MclkSel::Refoclk), self.smclk)
         }
     }
 
     /// Select VLOCLK for MCLK and set the MCLK divider. Frequency is `10_000 / mclk_div` Hz.
     #[inline]
-    pub fn mclk_vloclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
+    pub fn mclk_vloclk(self, mclk_div: MclkDiv) -> ClockConfig<MclkDefined, ACLK, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
-            ..make_clkconf!(self, MclkDefined(MclkSel::Vloclk), self.smclk)
+            ..make_clkconf!(self, self.aclk, MclkDefined(MclkSel::Vloclk), self.smclk)
         }
     }
 
@@ -294,23 +271,23 @@ where
         self,
         target_freq: DcoclkFreqSel,
         mclk_div: MclkDiv,
-    ) -> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
+    ) -> ClockConfig<MclkDefined, ACLK, SMCLK, OSCILLATOR> {
         ClockConfig {
             mclk_div,
-            ..make_clkconf!(self, MclkDefined(MclkSel::Dcoclk(target_freq)), self.smclk)
+            ..make_clkconf!(self, self.aclk, MclkDefined(MclkSel::Dcoclk(target_freq)), self.smclk)
         }
     }
 
     /// Enable SMCLK and set SMCLK divider, which divides the MCLK frequency
     #[inline]
-    pub fn smclk_on(self, div: SmclkDiv) -> ClockConfig<MCLK, SmclkDefined, OSCILLATOR> {
-        make_clkconf!(self, self.mclk, SmclkDefined(div))
+    pub fn smclk_on(self, div: SmclkDiv) -> ClockConfig<MCLK, ACLK, SmclkDefined, OSCILLATOR> {
+        make_clkconf!(self, self.aclk, self.mclk, SmclkDefined(div))
     }
 
     /// Disable SMCLK
     #[inline]
-    pub fn smclk_off(self) -> ClockConfig<MCLK, SmclkDisabled, OSCILLATOR> {
-        make_clkconf!(self, self.mclk, SmclkDisabled)
+    pub fn smclk_off(self) -> ClockConfig<MCLK, ACLK, SmclkDisabled, OSCILLATOR> {
+        make_clkconf!(self, self.aclk, self.mclk, SmclkDisabled)
     }
 }
 
@@ -326,22 +303,22 @@ fn fll_on() {
     unsafe { asm!("bic.b #64, SR", options(nomem, nostack)) };
 }
 
-impl<SMCLK: SmclkState, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SMCLK, OSCILLATOR> {
+impl<SMCLK: SmclkState, ACLK: AclkSource, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, ACLK, SMCLK, OSCILLATOR> {
     #[inline]
     fn configure_dco_fll(&self) {
         // Run FLL configuration procedure from the user's guide if we are using DCO
         if let MclkSel::Dcoclk(target_freq) = self.mclk.0 {
-            fll_off();
-
-            let is_xt1 = self.aclk_sel.sela() == Sela::Xt1clk;
-
-            self.periph.csctl3().write(|w| {
-                if is_xt1 { w.selref().xt1clk() } else { w.selref().refoclk() }
-            });
+            let is_xt1 = self.aclk.0.sela() == Sela::Xt1clk;
             
             if is_xt1 {
                 self.stabilize_xt1();
             }
+
+            fll_off();
+
+            self.periph.csctl3().write(|w| {
+                if is_xt1 { w.selref().xt1clk() } else { w.selref().refoclk() }
+            });
 
             self.periph.csctl0().write(|w| unsafe { w.bits(0) });
             self.periph
@@ -368,7 +345,7 @@ impl<SMCLK: SmclkState, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SMCL
         // Configure clock selector and divisors
         self.periph.csctl4().write(|w| {
             w.sela()
-                .variant(self.aclk_sel.sela())
+                .variant(self.aclk.0.sela())
                 .selms()
                 .variant(self.mclk.0.selms())
         });
@@ -398,12 +375,11 @@ impl<SMCLK: SmclkState, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SMCL
         let sfr = unsafe { &*_pac::Sfr::ptr() };
         loop {
             unsafe {
-                // self.periph.csctl7().read();
                 self.periph.csctl7().clear_bits(|w| 
                     w.xt1offg().clear_bit()
                       .dcoffg().clear_bit()
                 );
-                // sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
+                sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
             }
 
             // Poll global fault flag
@@ -414,40 +390,64 @@ impl<SMCLK: SmclkState, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SMCL
     }
 }
 
-impl<OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SmclkDefined, OSCILLATOR> {
+impl<ACLK: AclkSource, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, ACLK, SmclkDefined, OSCILLATOR> {
     /// Apply clock configuration to hardware and return SMCLK and ACLK clock objects.
     /// Also returns delay provider
     #[inline]
-    pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk, SysDelay) {
+    pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk<ACLK>, SysDelay) {
         let mclk_freq = self.mclk.0.freq() >> (self.mclk_div as u32);
         unsafe { Self::configure_fram(fram, mclk_freq) };
         self.configure_dco_fll();
         self.configure_cs();
         (
             Smclk(mclk_freq >> (self.smclk.0 as u32)),
-            Aclk(self.aclk_sel.freq()),
+            Aclk { freq: self.aclk.0.freq(), _source: PhantomData },
             SysDelay::new(mclk_freq),
         )
     }
 }
 
-impl<OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, SmclkDisabled, OSCILLATOR> {
+impl<ACLK: AclkSource, OSCILLATOR: Xt1Oscillator> ClockConfig<MclkDefined, ACLK, SmclkDisabled, OSCILLATOR> {
     /// Apply clock configuration to hardware and return ACLK clock object, as SMCLK is disabled.
     /// Also returns delay provider.
     #[inline]
-    pub fn freeze(self, fram: &mut Fram) -> (Aclk, SysDelay) {
+    pub fn freeze(self, fram: &mut Fram) -> (Aclk<ACLK>, SysDelay) {
         let mclk_freq = self.mclk.0.freq() >> (self.mclk_div as u32);
         unsafe { Self::configure_fram(fram, mclk_freq) };
         self.configure_dco_fll();
         self.configure_cs();
-        (Aclk(self.aclk_sel.freq()), SysDelay::new(mclk_freq))
+        (
+            Aclk { freq: self.aclk.0.freq(), _source: PhantomData },
+            SysDelay::new(mclk_freq)
+        )
     }
 }
 
+/// Marker trait for types that can serve as a source for the ACLK
+pub trait AclkSource {}
+
 /// SMCLK clock object
 pub struct Smclk(u32);
+
+/// REFO clock object
+pub struct RefoclkSource;
+impl AclkSource for RefoclkSource {}
+
+/// VLO clock object
+#[cfg(feature = "vloclk_source")]
+pub struct VloclkSource;
+#[cfg(feature = "vloclk_source")]
+impl AclkSource for VloclkSource {}
+
+/// XT1CLK clock object
+pub struct Xt1clkSource;
+impl AclkSource for Xt1clkSource {}
+
 /// ACLK clock object
-pub struct Aclk(u16);
+pub struct Aclk<S: AclkSource> {
+    freq: u16,
+    _source: PhantomData<S>,
+}
 
 /// Trait for configured clock objects
 pub trait Clock {
@@ -471,12 +471,12 @@ impl Clock for Smclk {
     }
 }
 
-impl Clock for Aclk {
+impl<S: AclkSource> Clock for Aclk<S> {
     type Freq = u16;
 
     #[inline]
     fn freq(&self) -> u16 {
-        self.0
+        self.freq
     }
 }
 
@@ -494,16 +494,15 @@ pub trait Xt1ClockState {
 
 macro_rules! impl_xt1_clk {
     (
-        $target_struct:ident,
         $port_a:ident, $pin_a:ident, $alt_a:ident,
         $port_b:ident, $pin_b:ident, $alt_b:ident,
     ) => {
-        impl $crate::clock::Xt1Oscillator for $target_struct {
+        impl $crate::clock::Xt1Oscillator for Xt1clkSource {
             type XoutPin = Pin<$port_a, $pin_a, $alt_a<Input<Floating>>>;
             type XinPin  = Pin<$port_b, $pin_b, $alt_b<Input<Floating>>>;
         }
 
-        impl $crate::clock::Xt1ClockState for $target_struct {
+        impl $crate::clock::Xt1ClockState for Xt1clkSource {
             fn is_active() -> bool {
                 let pa = unsafe { $port_a::steal() };
                 const MASK_A: u8 = $pin_a::SET_MASK;

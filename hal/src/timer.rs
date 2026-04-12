@@ -7,7 +7,7 @@
 //! This module also contains traits used by other HAL modules that depend on TimerB, such as
 //! `Capture` and `Pwm`.
 
-use crate::clock::{Aclk, Smclk};
+use crate::clock::{Aclk, AclkSource, Smclk};
 use crate::hw_traits::timer_base::{CCRn, RunningMode, Tbssel, TimerBase};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
@@ -70,7 +70,7 @@ where
 {
     /// Configure timer clock source to ACLK
     #[inline]
-    pub fn aclk(_aclk: &Aclk) -> Self {
+    pub fn aclk<S: AclkSource>(_aclk: &Aclk<S>) -> Self {
         TimerConfig {
             _timer: PhantomData,
             sel: Tbssel::Aclk,

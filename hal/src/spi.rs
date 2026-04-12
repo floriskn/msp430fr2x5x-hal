@@ -38,6 +38,8 @@
 //! | eUSCI_A1 | `P4.2` | `P4.3` | `P4.1` | `P4.0`|
 //! | eUSCI_B0 | `P1.3` | `P1.2` | `P1.1` | `P1.0`|
 //! | eUSCI_B1 | `P4.7` | `P4.6` | `P4.5` | `P4.4`|
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::AclkSource;
 use crate::{
     clock::{Aclk, Smclk},
     hw_traits::eusci::{EusciSPI, Ucmode, Ucssel, UcxSpiCtw0}, pin_mapping::*,
@@ -138,7 +140,7 @@ where
     }
     #[cfg(feature = "eusci_aclk")]
     /// This device will act as a master on the SPI bus, deriving SCLK from ACLK.
-    pub fn to_master_using_aclk(mut self, _aclk: &Aclk, clk_div: u16) -> SpiConfig<USCI, Master, M> {
+    pub fn to_master_using_aclk<S: AclkSource>(mut self, _aclk: &Aclk<S>, clk_div: u16) -> SpiConfig<USCI, Master, M> {
         self.ctlw0.ucmst = true;
         self.ctlw0.ucssel = Ucssel::DeviceSpecific;
         self.prescaler = clk_div;

@@ -20,10 +20,10 @@ use panic_never as _;
 #[entry]
 fn main() -> ! {
     if let Some(periph) = msp430fr413x::Peripherals::take() {
-        let mut fram = Fram::new(periph.frctl);
-        let _wdt = Wdt::constrain(periph.wdt_a);
+        let mut fram = Fram::new(periph.fram);
+        let _wdt = Wdt::constrain(periph.watchdog_timer);
 
-        let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
+        let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
             .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
             .smclk_on(SmclkDiv::_2)
             .aclk_refoclk()
@@ -31,13 +31,14 @@ fn main() -> ! {
 
         let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
         let p1 = Batch::new(periph.p1).split(&pmm);
+        let p4 = Batch::new(periph.p4).split(&pmm);
 
-        let mut led = p1.pin0.to_output();
+        let mut led = p4.pin0.to_output();
 
         led.set_low().ok();
 
         let (mut tx, mut rx) = SerialConfig::<_, _, DefaultMapping>::new(
-            periph.e_usci_a0,
+            periph.usci_a0_uart_mode,
             BitOrder::LsbFirst,
             BitCount::EightBits,
             StopBits::OneStopBit,
@@ -46,8 +47,8 @@ fn main() -> ! {
             Loopback::NoLoop,
             9600,
         )
-        .use_aclk(&aclk)
-        .split(p1.pin4.to_alternate1(), p1.pin5.to_alternate1());
+        .use_smclk(&smclk)
+        .split(p1.pin0.to_alternate1(), p1.pin1.to_alternate1());
 
         led.set_high().ok();
         // embedded_io contains methods for writing with buffers

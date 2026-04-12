@@ -4,7 +4,7 @@
 //! ms interval (roughly). If this is undesirable, call `Wdt::constrain()` as soon in the
 //! application as possible to stop the watchdog.
 
-use crate::clock::{Aclk, Smclk};
+use crate::clock::{Aclk, AclkSource, Smclk};
 use core::{convert::Infallible, marker::PhantomData};
 use crate::_pac::{self, wdt_a::wdtctl::Wdtssel};
 
@@ -104,7 +104,7 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
 
     /// Set watchdog clock source to ACLK and halt timer.
     #[inline]
-    pub fn set_aclk(&mut self, _clks: &Aclk) -> &mut Self {
+    pub fn set_aclk<S: AclkSource>(&mut self, _clks: &Aclk<S>) -> &mut Self {
         self.set_clk(Wdtssel::Aclk)
     }
 

@@ -19,25 +19,26 @@ use panic_msp430 as _;
 fn main() -> ! {
     let periph = msp430fr413x::Peripherals::take().unwrap();
 
-    Wdt::constrain(periph.wdt_a);
+    Wdt::constrain(periph.watchdog_timer);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
+        .config_pin2(|p| p.pullup())
         .split(&pmm);
-    let p2 = Batch::new(periph.p2)
-        .config_pin3(|p| p.pullup())
+    let p4 = Batch::new(periph.p4)
         .split(&pmm);
     let mut led = p1.pin0;
-    let mut button = p2.pin3;
+    let mut button = p1.pin2;
 
-    let (_smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
+    let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_refoclk(MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
-        .freeze(&mut Fram::new(periph.frctl));
+        .aclk_refoclk()
+        .aclk_xt1clk(32768, p4.pin1.to_alternate1(), p4.pin2.to_alternate1())
+        .freeze(&mut Fram::new(periph.fram));
 
-    let mut rtc = Rtc::new(periph.rtc).use_vloclk();
+    let mut rtc = Rtc::new(periph.real_time_clock).use_xt1clk(&aclk);
     rtc.set_clk_div(RtcDiv::_10);
 
     button.select_falling_edge_trigger();

@@ -20,6 +20,8 @@
 //! [`Read::read_exact`](embedded_io::Read::read_exact) methods are useful.
 //!
 
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::AclkSource;
 use crate::clock::{Aclk, Clock, Smclk};
 use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel};
 use crate::pin_mapping::*;
@@ -254,7 +256,7 @@ where
     #[cfg(feature = "eusci_aclk")]
     /// Configure serial UART to use ACLK.
     #[inline(always)]
-    pub fn use_aclk(self, aclk: &Aclk) -> SerialConfig<USCI, ClockSet, M> {
+    pub fn use_aclk<S: AclkSource>(self, aclk: &Aclk<S>) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
             self,
             ClockSet {

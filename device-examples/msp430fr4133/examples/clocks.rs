@@ -18,27 +18,29 @@ use panic_msp430 as _;
 fn main() -> ! {
     let periph = msp430fr413x::Peripherals::take().unwrap();
 
-    let mut fram = Fram::new(periph.frctl);
-    let wdt = Wdt::constrain(periph.wdt_a);
+    let mut fram = Fram::new(periph.fram);
+    let wdt = Wdt::constrain(periph.watchdog_timer);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
     let mut p1_0 = p1.pin0;
+    let p4 = Batch::new(periph.p4)
+        .split(&pmm);
 
-    let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
+    let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
+        .aclk_xt1clk(32_768, p4.pin1.to_alternate1(), p4.pin2.to_alternate1())
         .freeze(&mut fram);
 
-    const DELAY: WdtClkPeriods = WdtClkPeriods::_8192k;
+    const DELAY: WdtClkPeriods = WdtClkPeriods::_32k;
 
     // blinks should be 1 second on, 1 second off
     let mut wdt = wdt.to_interval();
     p1_0.set_high().ok();
-    wdt.set_smclk(&smclk).set_interval_and_start(DELAY);
+    wdt.set_aclk(&aclk).set_interval_and_start(DELAY);
 
     block!(wdt.wait()).ok();
     p1_0.set_low().ok();

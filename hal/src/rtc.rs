@@ -4,7 +4,7 @@
 //! 
 //! Supports using SMCLK or VLOCLK as clock sources (ACLK and XT1CLK not yet supported).
 
-use crate::clock::Smclk;
+use crate::clock::{Aclk, Smclk, Xt1clkSource};
 use core::{convert::Infallible, marker::PhantomData};
 use crate::_pac::{self, rtc::rtcctl::Rtcss};
 
@@ -15,6 +15,7 @@ mod sealed {
 
     impl SealedRtcClockSrc for RtcSmclk {}
     impl SealedRtcClockSrc for RtcVloclk {}
+    impl SealedRtcClockSrc for RtcXt1clk {}
 }
 
 /// Marker trait for RTC clock sources
@@ -35,6 +36,13 @@ pub struct RtcVloclk;
 
 impl RtcClockSrc for RtcVloclk {
     const CLK_SRC: Rtcss = Rtcss::Vloclk;
+}
+
+/// Typestate representing the VLOCLK clock source for RTC
+pub struct RtcXt1clk;
+
+impl RtcClockSrc for RtcXt1clk {
+    const CLK_SRC: Rtcss = Rtcss::Xt1clk;
 }
 
 /// 16-bit real-time counter
@@ -70,6 +78,16 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     /// is started.
     #[inline]
     pub fn use_vloclk(self) -> Rtc<RtcVloclk> {
+        Rtc {
+            periph: self.periph,
+            _src: PhantomData,
+        }
+    }
+
+    /// Configure the RTC to use XT1CLK as clock source. Setting comes in effect the next time RTC
+    /// is started.
+    #[inline]
+    pub fn use_xt1clk(self, _smclk: &Aclk<Xt1clkSource>) -> Rtc<RtcXt1clk> {
         Rtc {
             periph: self.periph,
             _src: PhantomData,

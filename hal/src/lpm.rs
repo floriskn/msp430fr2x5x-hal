@@ -50,8 +50,7 @@
 use core::arch::asm;
 use crate::_pac;
 
-#[cfg(feature = "xt1clk_source")]
-use crate::clock::{Xt1ClockState, Xt1clk};
+use crate::clock::{Xt1ClockState, Xt1clkSource};
 
 use crate::device_specific::lpm;
 use crate::{
@@ -141,13 +140,12 @@ pub unsafe fn enter_lpm3_5_unchecked<MODE: WatchdogSelect>(wdt: Wdt<MODE>, svs: 
 
 fn lpm3_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // If LF XT crystal is not in use, reset everything, otherwise reset everything but XIN, XOUT
-    #[cfg(feature = "xt1clk_source")]
-    if Xt1clk::is_active() {
+    if Xt1clkSource::is_active() {
         // Reset everything except for XIN and XOUT
-        Xt1clk::clear_bits()
+        Xt1clkSource::clear_bits()
     } else {
         // Reset everything
-        Xt1clk::reset_ports()
+        Xt1clkSource::reset_ports()
     }
 
     enter_lpmx_5(wdt, svs)
@@ -168,8 +166,7 @@ pub fn enter_lpm4_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, rtc_reg: _pac::Rtc, sv
     unsafe { rtc_reg.rtcctl().clear_bits(|w| w.rtcss().disabled()) };
 
     // Reset P2SEL, including XIN and XOUT
-    #[cfg(feature = "xt1clk_source")]
-    Xt1clk::reset_ports();
+    Xt1clkSource::reset_ports();
 
     enter_lpmx_5(wdt, svs)
 }

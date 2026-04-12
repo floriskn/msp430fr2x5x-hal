@@ -367,9 +367,7 @@ mod timer {
 pub mod clock {
     use crate::{gpio::*, hw_traits::gpio::GpioPeriph, clock::*};
 
-    pub struct Xt1clk;
     impl_xt1_clk!(
-        Xt1clk,
         P4, Pin1, Alternate1,
         P4, Pin2, Alternate1,
     );

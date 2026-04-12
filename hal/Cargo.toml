@@ -19,7 +19,7 @@ msp430fr2355 = ["2x5x", "sac_l3"] # 32kB FRAM + SAC unit
 msp430fr2353 = ["2x5x", "sac_l3"] # 16kB FRAM + SAC unit
 msp430fr2155 = ["2x5x"]           # 32kB FRAM
 msp430fr2153 = ["2x5x"]           # 16kB FRAM
-msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b", "info_mem", "xt1clk_source"]
+msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b", "info_mem"]
 msp430fr2475 = ["247x"]           # 6kB RAM
 msp430fr2476 = ["247x"]           # 8kB RAM
 msp430fr4133 = ["413x"]           # 2kB RAM
@@ -27,9 +27,9 @@ msp430fr4132 = ["413x"]           # 1kB RAM
 msp430fr4131 = ["413x"]           # 0.5kB RAM
 
 # Derived features. Do not provide these.
-2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1clk_source", "port_sel2bit"]
-247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1clk_source", "port_sel2bit"]
-413x = ["dep:msp430fr413x", "eusci_modclk", "info_mem", "adc", "adcpctl", "eusci_b", "capacitive", "xt1clk_source"]
+2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "port_sel2bit"]
+247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "port_sel2bit"]
+413x = ["dep:msp430fr413x", "eusci_modclk", "info_mem", "adc", "adcpctl", "eusci_b", "capacitive"]
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
 eusci_modclk = [] # eUSCI peripherals can source from MODCLK
 adc12bit = ["adc"]

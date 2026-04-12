@@ -69,6 +69,8 @@
 
 use core::convert::Infallible;
 
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::AclkSource;
 use crate::clock::{Aclk, Smclk};
 use crate::hw_traits::eusci::{EUsciI2C, I2CUcbIfgOut, UcbCtlw0, UcbCtlw1, UcbI2coa, Ucmode, Ucssel};
 use crate::pin_mapping::*;
@@ -322,7 +324,7 @@ where
     #[cfg(feature = "eusci_aclk")]
     /// Configures this peripheral to use ACLK
     #[inline]
-    pub fn use_aclk(mut self, _aclk: &Aclk, clk_divisor: u16) -> I2cConfig<USCI, ClockSet, ROLE, M> {
+    pub fn use_aclk<S: AclkSource>(mut self, _aclk: &Aclk<S>, clk_divisor: u16) -> I2cConfig<USCI, ClockSet, ROLE, M> {
         self.ctlw0.ucssel = Ucssel::DeviceSpecific;
         self.divisor = clk_divisor;
         return_self_config!(self)
