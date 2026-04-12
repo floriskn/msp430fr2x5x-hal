@@ -26,11 +26,13 @@ fn main() -> ! {
         .config_pin0(|p| p.to_output())
         .split(&pmm);
     let mut p1_0 = p1.pin0;
+    let p2 = Batch::new(periph.p2)
+        .split(&pmm);
 
     let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
+        .aclk_xt1clk(32_768, p2.pin6.to_alternate2(), p2.pin7.to_alternate2())
         .freeze(&mut fram);
 
     const DELAY: WdtClkPeriods = WdtClkPeriods::_8192k;

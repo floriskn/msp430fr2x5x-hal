@@ -29,6 +29,7 @@ mod sealed {
 
     pub trait SealedPinNum {}
     pub trait SealedGpioFunction {}
+    pub trait SealedAlternate {}
 
     impl SealedPinNum for Pin0 {}
     impl SealedPinNum for Pin1 {}
@@ -41,6 +42,10 @@ mod sealed {
 
     impl SealedGpioFunction for Output {}
     impl<PULL> SealedGpioFunction for Input<PULL> {}
+
+    impl<DIR> SealedAlternate for Alternate1<DIR> {}
+    impl<DIR> SealedAlternate for Alternate2<DIR> {}
+    impl<DIR> SealedAlternate for Alternate3<DIR> {}
 }
 
 /// Trait that encompasses all `Pinx` types for specifying a pin number.
@@ -55,6 +60,22 @@ pub trait PinNum: sealed::SealedPinNum {
     // Bitmask with all ones except for the bit corresponding to the pin.
     #[doc(hidden)]
     const CLR_MASK: u8 = !Self::SET_MASK;
+}
+
+#[doc(hidden)]
+pub enum Alternate {
+    /// PxSEL1 = 0, PxSEL0 = 1
+    Alternate1,
+    /// PxSEL1 = 1, PxSEL0 = 0
+    Alternate2,
+    /// PxSEL1 = 1, PxSEL0 = 1
+    Alternate3,
+}
+
+/// Trait for alternate function typestates.
+pub trait AlternateMode: sealed::SealedAlternate {
+    #[doc(hidden)]
+    const MODE: Alternate;
 }
 
 // Don't need to seal, since GpioPeriph is private
@@ -454,12 +475,21 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
 
 /// Typestate for GPIO alternate function 1
 pub struct Alternate1<DIR>(PhantomData<DIR>);
+impl<DIR> AlternateMode for Alternate1<DIR> {
+    const MODE: Alternate = Alternate::Alternate1;
+}
 
 /// Typestate for GPIO alternate function 2
 pub struct Alternate2<DIR>(PhantomData<DIR>);
+impl<DIR> AlternateMode for Alternate2<DIR> {
+    const MODE: Alternate = Alternate::Alternate2;
+}
 
 /// Typestate for GPIO alternate function 3
 pub struct Alternate3<DIR>(PhantomData<DIR>);
+impl<DIR> AlternateMode for Alternate3<DIR> {
+    const MODE: Alternate = Alternate::Alternate3;
+}
 
 #[cfg(feature = "adcpctl")]
 /// Typestate for GPIO ADC mode (for devices that use ADCPCTLx)

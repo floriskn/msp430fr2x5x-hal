@@ -25,11 +25,13 @@ pub trait GpioPeriph: Steal {
     fn pxsel0_wr(&self, bits: u8);
     fn pxsel0_set(&self, bits: u8);
     fn pxsel0_clear(&self, bits: u8);
+    fn pxsel0_reset(&self);
 
     fn pxsel1_rd(&self) -> u8;
     fn pxsel1_wr(&self, bits: u8);
     fn pxsel1_set(&self, bits: u8);
     fn pxsel1_clear(&self, bits: u8);
+    fn pxsel1_reset(&self);
 
     #[cfg(not(feature = "sac"))]
     fn adcpctl_set(&self, mask: u16) {
@@ -61,7 +63,7 @@ pub trait IntrPeriph: GpioPeriph {
 }
 
 macro_rules! reg_methods {
-    ($reg:ident, $rd:ident, $wr:ident, $set:ident, $clear:ident) => {
+    ($reg:ident, $rd:ident, $wr:ident, $set:ident, $clear:ident $(, $reset:ident)?) => {
         #[inline(always)]
         fn $rd(&self) -> u8 {
             self.$reg().read().bits()
@@ -81,6 +83,13 @@ macro_rules! reg_methods {
         fn $clear(&self, bits: u8) {
             unsafe { self.$reg().clear_bits(|w| w.bits(bits)) }
         }
+
+        $(
+            #[inline(always)]
+            fn $reset(&self) {
+                self.$reg().reset()
+            }
+        )?
     };
 }
 pub(crate) use reg_methods;
@@ -119,8 +128,8 @@ macro_rules! gpio_impl {
                 reg_methods!($pxout, pxout_rd, pxout_wr, pxout_set, pxout_clear);
                 reg_methods!($pxdir, pxdir_rd, pxdir_wr, pxdir_set, pxdir_clear);
                 reg_methods!($pxren, pxren_rd, pxren_wr, pxren_set, pxren_clear);
-                reg_methods!($pxsel0, pxsel0_rd, pxsel0_wr, pxsel0_set, pxsel0_clear);
-                reg_methods!($pxsel1, pxsel1_rd, pxsel1_wr, pxsel1_set, pxsel1_clear);
+                reg_methods!($pxsel0, pxsel0_rd, pxsel0_wr, pxsel0_set, pxsel0_clear, pxsel0_reset);
+                reg_methods!($pxsel1, pxsel1_rd, pxsel1_wr, pxsel1_set, pxsel1_clear, pxsel1_reset);
             }
 
             $(

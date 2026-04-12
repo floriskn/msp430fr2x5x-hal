@@ -23,7 +23,7 @@ fn main() -> ! {
         let mut fram = Fram::new(periph.frctl);
         let _wdt = Wdt::constrain(periph.wdt_a);
 
-        let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
+        let (smclk, aclk, _delay) = ClockConfig::new(periph.cs)
             .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
             .smclk_on(SmclkDiv::_2)
             .aclk_refoclk()
