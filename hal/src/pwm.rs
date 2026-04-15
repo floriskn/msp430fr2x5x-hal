@@ -17,6 +17,8 @@ pub use crate::timer::{
     CCR6,
 };
 
+// TODO: M = DefaultMapping??
+
 #[doc(hidden)]
 pub enum Alt {
     Alt1,

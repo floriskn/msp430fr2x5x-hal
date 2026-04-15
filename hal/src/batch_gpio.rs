@@ -10,7 +10,7 @@
 //! configuration to the hardware in a single set of writes.
 
 use crate::gpio::*;
-use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph};
+use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph, PortNum};
 use crate::pmm::Pmm;
 use crate::util::BitsExt;
 use core::marker::PhantomData;

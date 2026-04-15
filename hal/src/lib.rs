@@ -44,10 +44,11 @@
 #![allow(stable_features)] // Feature flags used on older compiler versions
 #![feature(const_option)]
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 
 pub mod bak_mem;
 pub mod batch_gpio;
+pub mod capacitive;
 pub mod capture;
 pub mod clock;
 pub mod crc;

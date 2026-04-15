@@ -370,6 +370,7 @@ impl<SMCLK: SmclkState, ACLK: AclkSource, OSCILLATOR: Xt1Oscillator> ClockConfig
         }
     }
 
+    // TODO: check docs
     #[inline(always)]
     fn stabilize_xt1(&self) {
         let sfr = unsafe { &*_pac::Sfr::ptr() };
@@ -383,7 +384,7 @@ impl<SMCLK: SmclkState, ACLK: AclkSource, OSCILLATOR: Xt1Oscillator> ClockConfig
             }
 
             // Poll global fault flag
-            if sfr.sfrifg1().read().ofifg().is_ofifg_0() {
+            if sfr.sfrifg1().read().ofifg().bit_is_clear() {
                 break;
             }
         }

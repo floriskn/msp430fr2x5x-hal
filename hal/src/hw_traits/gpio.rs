@@ -1,5 +1,13 @@
 use super::Steal;
 
+// Don't need to seal, since GpioPeriph is private
+/// Marker trait that encompasses all GPIO port types
+pub trait PortNum: GpioPeriph {
+    // Port number
+    #[doc(hidden)]
+    const NUM: u8;
+}
+
 pub trait GpioPeriph: Steal {
     fn pxin_rd(&self) -> u8;
 
@@ -101,7 +109,7 @@ macro_rules! reg_methods {
 pub(crate) use reg_methods;
 
 macro_rules! gpio_impl {
-    (@impl $Px:ident => 
+    (@impl $px: literal, $Px:ident => 
      $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxsel0:ident
      $(, $pxselc:ident, $pxsel1:ident)? 
      $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
@@ -109,6 +117,10 @@ macro_rules! gpio_impl {
         impl Steal for pac::$Px {
             #[inline(always)]
             unsafe fn steal() -> Self { pac::$Px::steal() }
+        }
+
+        impl PortNum for pac::$Px {
+            const NUM: u8 = $px;
         }
 
         impl GpioPeriph for pac::$Px {
@@ -147,7 +159,7 @@ macro_rules! gpio_impl {
     };
 
     // --- 2-bit selection ---
-    ($px:ident: $Px:ident =>
+    ($pxnum: literal, $px:ident: $Px:ident =>
      $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxselc:ident, $pxsel0:ident, $pxsel1:ident
      $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
     ) => {
@@ -158,13 +170,13 @@ macro_rules! gpio_impl {
     };
 
     // --- 1-bit selection ---
-    ($px:ident: $Px:ident =>
+    ($pxnum: literal, $px:ident: $Px:ident =>
      $pxin:ident, $pxout:ident, $pxdir:ident, $pxren:ident, $pxsel0:ident
      $(, [$pxies:ident, $pxie:ident, $pxifg:ident, $pxiv:ident])?
     ) => {
         mod $px {
             use crate::{pac, hw_traits::{Steal, gpio::*}};
-            gpio_impl!(@impl $Px => $pxin, $pxout, $pxdir, $pxren, $pxsel0 $(, [$pxies, $pxie, $pxifg, $pxiv])?);
+            gpio_impl!(@impl $pxnum, $Px => $pxin, $pxout, $pxdir, $pxren, $pxsel0 $(, [$pxies, $pxie, $pxifg, $pxiv])?);
         }
     };
 }

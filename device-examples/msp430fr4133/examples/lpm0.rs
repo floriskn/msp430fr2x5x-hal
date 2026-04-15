@@ -7,7 +7,7 @@
 // after the interrupt returns. This depends on Rust 1.88+. For a version compatible with the MSRV of this crate see lpm0_msrv.rs
 
 use critical_section::with;
-use msp430fr413x::{interrupt, P2, P3, P4, P5, P6};
+use msp430fr247x::{interrupt, P2, P3, P4, P5, P6};
 
 use core::cell::RefCell;
 use embedded_hal::digital::*;
@@ -25,7 +25,7 @@ static P2IV: Mutex<RefCell<Option< PxIV<P2> >>> = Mutex::new(RefCell::new(None))
 fn main() -> ! {
     let periph = msp430fr413x::Peripherals::take().unwrap();
 
-    let _wdt = Wdt::constrain(periph.wdt_a);
+    let _wdt = Wdt::constrain(periph.watchdog_timer);
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).

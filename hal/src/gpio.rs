@@ -16,7 +16,7 @@
 //! [`datasheet`]: http://www.ti.com/lit/ds/symlink/msp430fr2355.pdf
 
 pub use crate::batch_gpio::*;
-use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph};
+use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph, PortNum};
 use crate::util::BitsExt;
 use core::convert::Infallible;
 use core::marker::PhantomData;
@@ -84,8 +84,8 @@ pub trait AlternateMode: sealed::SealedAlternate {
 
 // Don't need to seal, since GpioPeriph is private
 /// Marker trait that encompasses all GPIO port types
-pub trait PortNum: GpioPeriph {}
-impl<PORT: GpioPeriph> PortNum for PORT {}
+// pub trait PortNum: GpioPeriph {}
+// impl<PORT: GpioPeriph> PortNum for PORT {}
 
 // Don't need to seal, since PortNum is already sealed
 /// Marker trait for all Ports that support interrupts
@@ -218,7 +218,7 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     }
 }
 
-impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
+impl<PORT: IntrPortNum + PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     /// Set interrupt trigger to rising edge and clear interrupt flag.
     #[inline]
     pub fn select_rising_edge_trigger(&mut self) -> &mut Self {
@@ -287,7 +287,7 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
 /// Interrupt vector register used to determine which pin caused a port ISR
 pub struct PxIV<PORT: PortNum>(PhantomData<PORT>);
 
-impl<PORT: IntrPortNum> PxIV<PORT> {
+impl<PORT: IntrPortNum + PortNum> PxIV<PORT> {
     /// When called inside an ISR, returns the pin number of the highest priority interrupt flag
     /// that's currently enabled. Automatically clears the same flag. For a given port, the lowest
     /// numbered pin has the highest interrupt priority.

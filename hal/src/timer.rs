@@ -48,9 +48,12 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
 {
 }
 
+// TODO: add trait for inclk so impl if has
+
 /// Configuration object for the TimerB peripheral
 ///
 /// Used to configure `Timer`, `Capture`, and `Pwm`, which all use the TimerB peripheral.
+#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
 pub struct TimerConfig<T, M = DefaultMapping>
 where
     T: TimerPeriph<M>,
@@ -98,6 +101,19 @@ where
         TimerConfig {
             _timer: PhantomData,
             sel: Tbssel::Tbxclk,
+            div: TimerDiv::_1,
+            ex_div: TimerExDiv::_1,
+            _pin_map: PhantomData,
+        }
+    }
+
+    // TODO: dep on type
+    /// Configure timer clock source to INCLK
+    #[inline]
+    pub fn inclk() -> Self {
+        TimerConfig {
+            _timer: PhantomData,
+            sel: Tbssel::Inclk,
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
             _pin_map: PhantomData,

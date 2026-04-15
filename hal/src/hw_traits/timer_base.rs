@@ -2,6 +2,7 @@
 
 use super::Steal;
 
+#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
 pub enum Tbssel {
     Tbxclk,
     Aclk,
@@ -9,6 +10,7 @@ pub enum Tbssel {
     Inclk,
 }
 
+#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
 /// Timer clock divider
 pub enum TimerDiv {
     /// No division
@@ -21,6 +23,7 @@ pub enum TimerDiv {
     _8,
 }
 
+#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
 /// Timer expansion clock divider, applied on top of the normal clock divider
 pub enum TimerExDiv {
     /// No division
@@ -103,7 +106,10 @@ pub trait TimerBase: Steal {
     fn tbxiv_rd(&self) -> u16;
 
     /// Get the current timer value.
-    fn get_tbxr(&self) -> u16;
+    fn get_tbxr(&self) -> u16;    
+    
+    fn get_ctl(&self) -> u16;
+    fn set_ctl(&self, bits: u16);
 }
 
 #[repr(u8)]
@@ -135,6 +141,9 @@ pub trait CCRn<C>: Steal {
 
     fn cov_ccifg_rd(&self) -> (bool, bool);
     fn cov_ccifg_clr(&self);
+
+    fn get_cctln(&self) -> u16; 
+    fn set_cctln(&self, bits: u16);
 }
 
 /// Label for capture-compare register 0
@@ -212,6 +221,16 @@ macro_rules! ccrn_impl {
                     self.$tbxcctln()
                         .clear_bits(|w| w.ccifg().clear_bit().cov().clear_bit())
                 };
+            }
+
+            #[inline(always)]
+            fn get_cctln(&self) -> u16 {
+                self.$tbxcctln().read().bits()
+            }
+
+            #[inline(always)]
+            fn set_cctln(&self, bits: u16) {
+                self.$tbxcctln().write(|w| unsafe { w.bits(bits) });
             }
         }
     };
@@ -321,6 +340,16 @@ macro_rules! timer_base_impl {
             #[inline(always)]
             fn get_tbxr(&self) -> u16 {
                 self.$tbxr().read().bits()
+            }
+
+            #[inline(always)]
+            fn get_ctl(&self) -> u16 {
+                self.$tbxctl().read().bits()
+            }
+
+            #[inline(always)]
+            fn set_ctl(&self, bits: u16) {
+                self.$tbxctl().write(|w| unsafe { w.bits(bits) });
             }
         }
 

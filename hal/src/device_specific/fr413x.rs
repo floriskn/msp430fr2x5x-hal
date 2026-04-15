@@ -46,18 +46,18 @@ pub mod gpio {
     impl<DIR> ToAdcPctl for Pin<P8, Pin3, DIR> where Self: adc::AdcPctlCapable {}
 
     // GPIO port impls, PAC register methods, and marking ports as interrupt-capable
-    gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1sel0, [p1ies, p1ie, p1ifg, p1iv]);
+    gpio_impl!(1, p1: P1 => p1in, p1out, p1dir, p1ren, p1sel0, [p1ies, p1ie, p1ifg, p1iv]);
     // Selection register does not feature any valid bits. P2SEL0 presents for 16-bit Port A operation with P1SEL0
-    gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2sel0, [p2ies, p2ie, p2ifg, p2iv]);
+    gpio_impl!(2, p2: P2 => p2in, p2out, p2dir, p2ren, p2sel0, [p2ies, p2ie, p2ifg, p2iv]);
     // Selection register does not feature any valid bits. P3SEL0 presents for 16-bit Port B operation with P4SEL0.
-    gpio_impl!(p3: P3 => p3in, p3out, p3dir, p3ren, p3sel0);
-    gpio_impl!(p4: P4 => p4in, p4out, p4dir, p4ren, p4sel0);
-    gpio_impl!(p5: P5 => p5in, p5out, p5dir, p5ren, p5sel0);
+    gpio_impl!(3, p3: P3 => p3in, p3out, p3dir, p3ren, p3sel0);
+    gpio_impl!(4, p4: P4 => p4in, p4out, p4dir, p4ren, p4sel0);
+    gpio_impl!(5, p5: P5 => p5in, p5out, p5dir, p5ren, p5sel0);
     // Selection register does not feature any valid bits. P6SEL0 presents for 16-bit Port C operation with P5SEL0.
-    gpio_impl!(p6: P6 => p6in, p6out, p6dir, p6ren, p6sel0);
+    gpio_impl!(6, p6: P6 => p6in, p6out, p6dir, p6ren, p6sel0);
     // Selection register does not feature any valid bits. P7SEL0 presents for 16-bit Port D operation with P8SEL0
-    gpio_impl!(p7: P7 => p7in, p7out, p7dir, p7ren, p7sel0);
-    gpio_impl!(p8: P8 => p8in, p8out, p8dir, p8ren, p8sel0);
+    gpio_impl!(7, p7: P7 => p7in, p7out, p7dir, p7ren, p7sel0);
+    gpio_impl!(8, p8: P8 => p8in, p8out, p8dir, p8ren, p8sel0);
 }
 
 /* ADC */
@@ -364,8 +364,21 @@ mod timer {
     impl CapCmpTimer3 for Timer1A3 {}
 }
 
+mod capacitive {
+    use crate::{capacitive::*, gpio::*, hw_traits::{Steal, capacitive::*, gpio::PortNum}, pac::*};
+
+    impl CaptivateIoTimer for Timer0A3 {}
+    
+    impl<PORT: PortNum, PIN: PinNum, DIR> CapacitiveCapable for Pin<PORT, PIN, DIR> {
+        const CHANNEL_SELECT: u16 = ((PIN::NUM as u16) << 1) | ((PORT::NUM as u16) << 4);
+    }
+
+    capacitive_impl!(CapacitiveTouchIo0, captio0ctl);
+}
+
+/* Clock */
 pub mod clock {
-    use crate::{gpio::*, hw_traits::gpio::GpioPeriph, clock::*};
+    use crate::{gpio::*, hw_traits::gpio::*, clock::*};
 
     impl_xt1_clk!(
         P4, Pin1, Alternate1,
@@ -373,8 +386,9 @@ pub mod clock {
     );
 }
 
+/* LPM */
 pub mod lpm {
-    use crate::{gpio::*, hw_traits::gpio::GpioPeriph, lpm::*};
+    use crate::{gpio::*, hw_traits::gpio::*, lpm::*};
 
     impl_lpm_purge!([P1, P2, P3, P5, P6, P7, P8]);
 }
