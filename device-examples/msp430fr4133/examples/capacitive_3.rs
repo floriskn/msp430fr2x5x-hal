@@ -43,7 +43,7 @@ static LED: Mutex<UnsafeCell<Option<Pin<P4, Pin0, Output>>>> = Mutex::new(Unsafe
 // Red onboard LED should blink at a steady period.
 #[entry]
 fn main() -> ! {
-    let periph = msp430fr413x::Peripherals::take().unwrap();
+    let periph = unsafe { msp430fr413x::Peripherals::steal() };
     let mut fram = Fram::new(periph.fram);
     let mut wdt = Wdt::constrain(periph.watchdog_timer).to_interval();
 
@@ -86,18 +86,22 @@ fn main() -> ! {
     // 1. Counting hardware
     let capacitive = CapacitiveParts3::new(periph.timer_0_a3);
 
-    let el5 = CapacitiveElement { pin: p1.pin6, threshold: 100, max_response: 500 };
-    let el6 = CapacitiveElement { pin: p1.pin7, threshold: 100, max_response: 500 };
+    let el5 = CapacitiveElement::new::<_, 100, 500>(p1.pin6);
+    let el6 = CapacitiveElement::new::<_, 100, 500>(p1.pin7);
 
     // FIX: Bind the WDT gate to a variable too
     let sw_gate = SwGate::new();
 
     let mut s3 = CapacitiveSensor::new_fro(
         &capacitive,
-        [&el5, &el6],
+        [el5, el6],
         &sw_gate, // Use the named variable
         &periph.capacitive_touch_io_0,
         1000,
+        TrackingRate::Fast,
+        DriftRate::Slow,
+        DirectionOfInterest::Increment,
+        Button::new()
     );
 
     // --- Now the group works ---
@@ -109,7 +113,7 @@ fn main() -> ! {
     s3.update(5);
     
     loop {
-        let button = s3.buttons();
+        let button = s3.sensor();
         if let Some(button) = button {
             p1.pin3.set_high();
 
