@@ -2,7 +2,8 @@
 
 use super::Steal;
 
-#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Tbssel {
     Tbxclk,
     Aclk,
@@ -10,7 +11,8 @@ pub enum Tbssel {
     Inclk,
 }
 
-#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 /// Timer clock divider
 pub enum TimerDiv {
     /// No division
@@ -23,7 +25,8 @@ pub enum TimerDiv {
     _8,
 }
 
-#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 /// Timer expansion clock divider, applied on top of the normal clock divider
 pub enum TimerExDiv {
     /// No division
@@ -144,6 +147,8 @@ pub trait CCRn<C>: Steal {
 
     fn get_cctln(&self) -> u16; 
     fn set_cctln(&self, bits: u16);
+
+    fn trigger_sw(&self);
 }
 
 /// Label for capture-compare register 0
@@ -231,6 +236,11 @@ macro_rules! ccrn_impl {
             #[inline(always)]
             fn set_cctln(&self, bits: u16) {
                 self.$tbxcctln().write(|w| unsafe { w.bits(bits) });
+            }
+
+            #[inline(always)]
+            fn trigger_sw(&self) {
+                self.$tbxcctln().modify(|r, w| unsafe { w.ccis().bits(r.ccis().bits() ^ 0b01) });
             }
         }
     };

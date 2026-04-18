@@ -73,7 +73,7 @@ type WdtWriter = _pac::wdt_a::wdtctl::W;
 
 impl<MODE: WatchdogSelect> Wdt<MODE> {
     #[inline(always)]
-    fn prewrite(w: &mut WdtWriter, bits: u16) -> &mut WdtWriter {
+    pub(crate) fn prewrite(w: &mut WdtWriter, bits: u16) -> &mut WdtWriter {
         // Write argument bits, password, and correct mode bit to the watchdog write proxy
         unsafe { w.bits(bits).wdtpw().bits(PASSWORD) }
             .wdttmsel()

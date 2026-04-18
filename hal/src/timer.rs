@@ -53,7 +53,6 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
 /// Configuration object for the TimerB peripheral
 ///
 /// Used to configure `Timer`, `Capture`, and `Pwm`, which all use the TimerB peripheral.
-#[derive(Clone, Copy)] // Added Clone/Copy so multiple sensors can use the same config
 pub struct TimerConfig<T, M = DefaultMapping>
 where
     T: TimerPeriph<M>,

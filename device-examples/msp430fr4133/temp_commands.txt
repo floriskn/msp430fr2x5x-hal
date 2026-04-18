@@ -1,2 +1,2 @@
-prog target\msp430-none-elf\release\examples\capacitive_3 
+prog target\msp430-none-elf\debug\examples\capacitive_3 
 run 

@@ -1,17 +1,20 @@
 //! Capacitive Touch implementation for MSP430FR4133
 
+pub use crate::_pac::rtc::rtcctl::Rtcps as RtcDiv;
+pub use crate::_pac::wdt_a::wdtctl::Wdtis as WdtClkPeriods;
 use crate::{
-    _pac,
-    hw_traits::{
-        capacitive::*,
-        timer_a::{CCRn, Tbssel},
-    },
-    pin_mapping::{DefaultMapping, PinMap},
+    _pac::{self, rtc::rtcctl::Rtcss, wdt_a::wdtctl::Wdtssel},
+    hw_traits::{capacitive::*, timer_a::*},
+    lpm::*,
+    pin_mapping::*,
     timer::*,
-    watchdog::{IntervalMode, Wdt},
+    watchdog::*,
 };
 use core::{cell::Cell, marker::PhantomData, mem::MaybeUninit, num::NonZero};
+use msp430::interrupt::{disable as disable_interrupts, enable as enable_interrupts};
 
+
+pub use crate::hw_traits::timer_base::Tbssel;
 // --- Traits ---
 
 pub trait CaptivateIoTimer {}
@@ -20,110 +23,402 @@ pub trait CapacitiveCapable {
 }
 
 pub trait Gate<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap = DefaultMapping> {
-    fn prepare(&self, timer: &T, accumulation_cycles: u16);
-    fn capture(&self, timer: &T) -> u16;
-    fn release(&self, timer: &T);
+    type Interval: Copy;
+
+    fn prepare(&self, timer: &T, interval: Self::Interval, is_roi: bool);
+    fn capture(&self, timer: &T, interval: Self::Interval, is_roi: bool) -> u16;
+    fn release(&self, timer: &T, is_roi: bool);
 }
 
 // --- Gating Implementations ---
 
 /// 1. WDT Gate (Borrowed)
-pub struct WdtGate<'a>(&'a Wdt<IntervalMode>);
-impl<'a> WdtGate<'a> {
-    pub fn new(wdt: &'a Wdt<IntervalMode>) -> Self {
-        Self(wdt)
+pub struct WdtGate {
+    wdt: _pac::WdtA,
+    context_save_sr: Cell<u16>,
+    context_save_sfrie1: Cell<u16>,
+    context_save_wdtctl: Cell<u16>,
+    context_save_txnctl: Cell<u16>,
+    context_save_txcctl0: Cell<u16>,
+    context_save_txccr0: Cell<u16>,
+}
+impl WdtGate {
+    #[inline(always)]
+    pub fn new(wdt: _pac::WdtA) -> Self {
+        Self {
+            wdt,
+            context_save_sr: Cell::new(0),
+            context_save_sfrie1: Cell::new(0),
+            context_save_wdtctl: Cell::new(0),
+            context_save_txnctl: Cell::new(0),
+            context_save_txcctl0: Cell::new(0),
+            context_save_txccr0: Cell::new(0),
+        }
     }
 }
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGate<'a> {
-    fn prepare(&self, timer: &T, accumulation_cycles: u16) {}
-    fn capture(&self, timer: &T) -> u16 {
-        0
-    }
-    fn release(&self, timer: &T) {}
-}
+impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGate {
+    type Interval = (WdtClkPeriods, Wdtssel);
 
-/// 2. Generic Locked Wrapper (Used for Timer and RTC)
-/// This consumes the peripheral so it cannot be used elsewhere.
-pub struct Locked<T>(pub T);
-impl<T> Locked<T> {
-    pub fn new(peripheral: T) -> Self {
-        Self(peripheral)
+    #[inline(always)]
+    fn prepare(&self, timer: &T, _: Self::Interval, _is_roi: bool) {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+
+        self.context_save_sr
+            .set(msp430::register::sr::read().bits());
+        self.context_save_sfrie1.set(sfr.sfrie1().read().bits());
+        self.context_save_wdtctl
+            .set(self.wdt.wdtctl().read().bits() & 0xff);
+        self.context_save_txnctl.set(timer.get_ctl());
+        self.context_save_txcctl0
+            .set(CCRn::<CCR0>::get_cctln(timer));
+        self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+
+        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        timer.continuous();
+
+        CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+
+        unsafe { sfr.sfrie1().set_bits(|w| w.wdtie().set_bit()) };
+
+        unsafe { enable_interrupts() };
+    }
+
+    #[inline(always)]
+    fn capture(&self, timer: &T, interval: Self::Interval, _is_roi: bool) -> u16 {
+        timer.reset();
+        timer.tbifg_clr();
+
+        // Halt timer first, as specified in the user's guide
+        self.wdt.wdtctl().write(|w| {
+            Wdt::<IntervalMode>::prewrite(w, 0)
+                .wdthold()
+                .hold()
+                // Also reset timer
+                .wdtcntcl()
+                .set_bit()
+        });
+        // Set clock src and keep timer halted
+        self.wdt.wdtctl().write(|w| {
+            Wdt::<IntervalMode>::prewrite(w, 0)
+                .wdtssel()
+                .variant(interval.1)
+                .wdthold()
+                .hold()
+        });
+
+        self.wdt.wdtctl().modify(|r, w| {
+            Wdt::<IntervalMode>::prewrite(w, r.bits())
+                .wdtcntcl()
+                .set_bit()
+                .wdthold()
+                .unhold()
+                .wdtis()
+                .variant(interval.0)
+        });
+
+        if interval.1 == Wdtssel::Aclk {
+            request_lpm3();
+        } else {
+            enter_lpm0();
+        }
+
+        CCRn::<CCR0>::trigger_sw(timer);
+        self.wdt
+            .wdtctl()
+            .modify(|r, w| Wdt::<IntervalMode>::prewrite(w, r.bits()).wdthold().hold());
+
+        if timer.tbifg_rd() {
+            0
+        } else {
+            CCRn::<CCR0>::get_ccrn(timer)
+        }
+    }
+
+    #[inline(always)]
+    fn release(&self, timer: &T, _is_roi: bool) {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+
+        if self.context_save_sr.get() & (1 << 3) == 0 {
+            disable_interrupts();
+        }
+
+        sfr.sfrie1()
+            .write(|w| unsafe { w.bits(self.context_save_sfrie1.get()) });
+
+        self.wdt
+            .wdtctl()
+            .write(|w| Wdt::<IntervalMode>::prewrite(w, self.context_save_wdtctl.get()));
+        timer.set_ctl(self.context_save_txnctl.get());
+        CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
+        CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
     }
 }
 
 /// 3. Timer Gate (Using Locked)
-pub struct TimerGate<'a, TG, MG = DefaultMapping>
+pub struct TimerGate<TG, MG = DefaultMapping>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
 {
-    pub locked: &'a Locked<TG>,
-    pub config: TimerConfig<TG, MG>,
+    timer: TG,
+    context_save_sr: Cell<u16>,
+    context_save_t0nctl: Cell<u16>,
+    context_save_t0cctl0: Cell<u16>,
+    context_save_t0ccr0: Cell<u16>,
+    context_save_t1nctl: Cell<u16>,
+    context_save_t1cctl0: Cell<u16>,
+    context_save_t1ccr0: Cell<u16>,
+    _pin_map: PhantomData<MG>,
 }
-impl<'a, TG, MG> TimerGate<'a, TG, MG>
+
+impl<TG, MG> TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
 {
-    pub fn new(locked: &'a Locked<TG>, config: TimerConfig<TG, MG>) -> Self {
-        Self { locked, config }
+    #[inline(always)]
+    pub fn new(timer: TG) -> Self {
+        Self {
+            timer,
+            context_save_sr: Cell::new(0),
+            context_save_t0nctl: Cell::new(0),
+            context_save_t0cctl0: Cell::new(0),
+            context_save_t0ccr0: Cell::new(0),
+            context_save_t1nctl: Cell::new(0),
+            context_save_t1cctl0: Cell::new(0),
+            context_save_t1ccr0: Cell::new(0),
+            _pin_map: PhantomData,
+        }
     }
 }
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap, TG, MG> Gate<T, M>
-    for TimerGate<'a, TG, MG>
+impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap, TG, MG> Gate<T, M> for TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
 {
-    fn prepare(&self, timer: &T, accumulation_cycles: u16) {}
-    fn capture(&self, timer: &T) -> u16 {
-        0
+    type Interval = (Tbssel, TimerDiv, u16);
+
+    #[inline(always)]
+    fn prepare(&self, timer: &T, interval: Self::Interval, is_roi: bool) {
+        self.context_save_sr
+            .set(msp430::register::sr::read().bits());
+        self.context_save_t0nctl.set(timer.get_ctl());
+        self.context_save_t0cctl0
+            .set(CCRn::<CCR0>::get_cctln(timer));
+        self.context_save_t0ccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+
+        self.context_save_t1nctl.set(self.timer.get_ctl());
+        self.context_save_t1cctl0
+            .set(CCRn::<CCR0>::get_cctln(&self.timer));
+        self.context_save_t1ccr0
+            .set(CCRn::<CCR0>::get_ccrn(&self.timer));
+
+        if is_roi {
+            timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+            timer.continuous();
+            CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+
+            CCRn::<CCR0>::set_ccrn(&self.timer, interval.2);
+            self.timer.config_clock(interval.0, interval.1);
+            CCRn::<CCR0>::ccie_set(&self.timer);
+        } else {
+            self.timer.config_clock(interval.0, TimerDiv::_1);
+            self.timer.continuous();
+            CCRn::<CCR0>::config_cap_mode(&self.timer, Cm::BothEdges, Ccis::Gnd);
+
+            CCRn::<CCR0>::set_ccrn(timer, interval.2);
+            timer.config_clock(Tbssel::Inclk, interval.1);
+            CCRn::<CCR0>::ccie_set(timer);
+        }
+
+        unsafe { enable_interrupts() };
     }
-    fn release(&self, timer: &T) {}
+
+    #[inline(always)]
+    fn capture(&self, timer: &T, interval: Self::Interval, is_roi: bool) -> u16 {
+        
+        if is_roi {
+            timer.reset();
+            timer.tbifg_clr();
+
+            self.timer.upmode();
+        } else {
+            self.timer.reset();
+            self.timer.tbifg_clr();
+
+            timer.upmode();
+        }
+
+
+        if interval.0 == Tbssel::Aclk {
+            request_lpm3();
+        } else {
+            enter_lpm0();
+        }
+
+        if is_roi {
+            CCRn::<CCR0>::trigger_sw(timer);
+            self.timer.stop();
+
+            if timer.tbifg_rd() {
+                0
+            } else {
+                CCRn::<CCR0>::get_ccrn(timer)
+            }
+        } else {
+            CCRn::<CCR0>::trigger_sw(&self.timer);
+            timer.stop();
+
+            if self.timer.tbifg_rd() {
+                0
+            } else {
+                CCRn::<CCR0>::get_ccrn(&self.timer)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn release(&self, timer: &T, _is_roi: bool) {
+        if self.context_save_sr.get() & (1 << 3) == 0 {
+            disable_interrupts();
+        }
+
+        timer.set_ctl(self.context_save_t0nctl.get());
+        CCRn::<CCR0>::set_cctln(timer, self.context_save_t0cctl0.get());
+        CCRn::<CCR0>::set_ccrn(timer, self.context_save_t0ccr0.get());
+
+        self.timer.set_ctl(self.context_save_t1nctl.get());
+        CCRn::<CCR0>::set_cctln(&self.timer, self.context_save_t1cctl0.get());
+        CCRn::<CCR0>::set_ccrn(&self.timer, self.context_save_t1ccr0.get());
+    }
 }
 
 /// 4. RTC Gate (Using Locked)
-pub struct RtcGate<'a> {
-    pub locked: &'a Locked<_pac::Rtc>,
-    pub timeout: u16,
+pub struct RtcGate {
+    pub rtc: _pac::Rtc,
+    context_save_sr: Cell<u16>,
+    context_save_rtcctl: Cell<u16>,
+    context_save_txnctl: Cell<u16>,
+    context_save_txcctl0: Cell<u16>,
+    context_save_txccr0: Cell<u16>,
 }
-impl<'a> RtcGate<'a> {
-    pub fn new(locked: &'a Locked<_pac::Rtc>, timeout: u16) -> Self {
-        Self { locked, timeout }
+impl RtcGate {
+    #[inline(always)]
+    pub fn new(rtc: _pac::Rtc) -> Self {
+        Self {
+            rtc,
+            context_save_sr: Cell::new(0),
+            context_save_rtcctl: Cell::new(0),
+            context_save_txnctl: Cell::new(0),
+            context_save_txcctl0: Cell::new(0),
+            context_save_txccr0: Cell::new(0),
+        }
     }
 }
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for RtcGate<'a> {
-    fn prepare(&self, timer: &T, accumulation_cycles: u16) {}
-    fn capture(&self, timer: &T) -> u16 {
-        0
+impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for RtcGate {
+    type Interval = (Rtcss, RtcDiv, u16);
+
+    #[inline(always)]
+    fn prepare(&self, timer: &T, _interval: Self::Interval, _is_roi: bool) {
+        self.context_save_sr
+            .set(msp430::register::sr::read().bits());
+        self.context_save_rtcctl
+            .set(self.rtc.rtcctl().read().bits());
+        self.context_save_txnctl.set(timer.get_ctl());
+        self.context_save_txcctl0
+            .set(CCRn::<CCR0>::get_cctln(timer));
+        self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+
+        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        timer.continuous();
+
+        CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+
+        unsafe { enable_interrupts() };
     }
-    fn release(&self, timer: &T) {}
+
+    #[inline(always)]
+    fn capture(&self, timer: &T, interval: Self::Interval, _is_roi: bool) -> u16 {
+        timer.reset();
+        timer.tbifg_clr();
+
+        self.rtc.rtcmod().write(|w| unsafe { w.bits(interval.2) });
+        // Need to clear interrupt flag from last timer run
+        self.rtc.rtciv().read();
+        self.rtc.rtcctl().modify(|r, w| {
+            unsafe { w.bits(r.bits()) }
+                .rtcss()
+                .variant(interval.0)
+                .rtcsr()
+                .set_bit()
+                .rtcps()
+                .variant(interval.1)
+                .rtcie()
+                .set_bit()
+        });
+
+        if interval.0 == Rtcss::Smclk {
+            enter_lpm0();
+        } else {
+            request_lpm3();
+        }
+
+        CCRn::<CCR0>::trigger_sw(timer);
+        self.rtc.rtcctl().write(|w| w.rtcsr().set_bit());
+
+        if timer.tbifg_rd() {
+            0
+        } else {
+            CCRn::<CCR0>::get_ccrn(timer)
+        }
+    }
+
+    #[inline(always)]
+    fn release(&self, timer: &T, _is_roi: bool) {
+        if self.context_save_sr.get() & (1 << 3) == 0 {
+            disable_interrupts();
+        }
+
+        self.rtc
+            .rtcctl()
+            .write(|w| unsafe { w.bits(self.context_save_rtcctl.get()) });
+
+        timer.set_ctl(self.context_save_txnctl.get());
+        CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
+        CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
+    }
 }
 
 /// 5. Software Gate (No Peripherals)
 pub struct SwGate {
-    context_save_ta0ctl: Cell<u16>,
-    context_save_tacctl0: Cell<u16>,
+    context_save_txnctl: Cell<u16>,
+    context_save_txcctl0: Cell<u16>,
 }
 
 impl SwGate {
+    #[inline(always)]
     pub fn new() -> Self {
         Self {
-            context_save_ta0ctl: Cell::new(0),
-            context_save_tacctl0: Cell::new(0),
+            context_save_txnctl: Cell::new(0),
+            context_save_txcctl0: Cell::new(0),
         }
     }
 }
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for SwGate {
-    fn prepare(&self, timer: &T, accumulation_cycles: u16) {
-        self.context_save_ta0ctl.set(timer.get_ctl());
-        self.context_save_tacctl0
+impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for SwGate {
+    type Interval = u16;
+
+    #[inline(always)]
+    fn prepare(&self, timer: &T, accumulation_cycles: Self::Interval, _is_roi: bool) {
+        self.context_save_txnctl.set(timer.get_ctl());
+        self.context_save_txcctl0
             .set(CCRn::<CCR0>::get_cctln(timer));
 
         CCRn::<CCR0>::set_ccrn(timer, accumulation_cycles);
         // timer.set_ccrn(count);
     }
-    fn capture(&self, timer: &T) -> u16 {
+
+    #[inline(always)]
+    fn capture(&self, timer: &T, _: Self::Interval, _is_roi: bool) -> u16 {
         let mut j = 0u16;
         timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
         timer.upmode();
@@ -136,9 +431,11 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for SwGate
 
         return j;
     }
-    fn release(&self, timer: &T) {
-        timer.set_ctl(self.context_save_ta0ctl.get());
-        CCRn::<CCR0>::set_cctln(timer, self.context_save_tacctl0.get());
+
+    #[inline(always)]
+    fn release(&self, timer: &T, _is_roi: bool) {
+        timer.set_ctl(self.context_save_txnctl.get());
+        CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
     }
 } // Marker traits
 
@@ -176,23 +473,23 @@ where
 }
 
 // WDT and RTC only support RO
-impl<'a> RoCapable for WdtGate<'a> {}
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> RoGate<T, M> for WdtGate<'a> {}
-impl<'a> RoCapable for RtcGate<'a> {}
-impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> RoGate<T, M> for RtcGate<'a> {}
+impl RoCapable for WdtGate {}
+impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> RoGate<T, M> for WdtGate {}
+impl RoCapable for RtcGate {}
+impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> RoGate<T, M> for RtcGate {}
 
 // SW only supports fRO
 impl FroCapable for SwGate {}
 impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> FroGate<T, M> for SwGate {}
 
 // TimerGate supports BOTH
-impl<'a, TG, MG> RoCapable for TimerGate<'a, TG, MG>
+impl<TG, MG> RoCapable for TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
 {
 }
-impl<'a, TG, MG, T, M> RoGate<T, M> for TimerGate<'a, TG, MG>
+impl<TG, MG, T, M> RoGate<T, M> for TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
@@ -201,13 +498,13 @@ where
 {
 }
 
-impl<'a, TG, MG> FroCapable for TimerGate<'a, TG, MG>
+impl<TG, MG> FroCapable for TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
 {
 }
-impl<'a, TG, MG, T, M> FroGate<T, M> for TimerGate<'a, TG, MG>
+impl<TG, MG, T, M> FroGate<T, M> for TimerGate<TG, MG>
 where
     TG: TimerPeriph<MG>,
     MG: PinMap,
@@ -226,6 +523,7 @@ pub struct CapacitiveElement {
 }
 
 impl CapacitiveElement {
+    #[inline(always)]
     pub fn new<P: CapacitiveCapable, const THRESH: u16, const MAX: u16>(_pin: P) -> Self {
         // This is evaluated at compile-time
         const {
@@ -262,6 +560,7 @@ where
     T: CapCmpTimer3<M> + CaptivateIoTimer,
     M: PinMap,
 {
+    #[inline(always)]
     pub fn new(timer: T) -> Self {
         Self {
             timer,
@@ -301,12 +600,14 @@ pub struct Wheel {
 }
 
 impl Button {
+    #[inline(always)]
     pub const fn new() -> Self {
         Self
     }
 }
 
 impl Slider {
+    #[inline(always)]
     pub const fn new(sensor_threshold: u8, points: u8) -> Self {
         Self {
             sensor_threshold,
@@ -316,6 +617,7 @@ impl Slider {
 }
 
 impl Wheel {
+    #[inline(always)]
     pub const fn new(sensor_threshold: u8, points: u8) -> Self {
         Self {
             sensor_threshold,
@@ -330,12 +632,15 @@ pub trait SensorKind {
 }
 
 impl SensorKind for Button {
+    #[inline(always)]
     fn process<const N: usize>(&self, index: usize, _meas_cnt: &[u16]) -> Option<i16> {
         Some(index as i16)
     }
 }
 
 impl SensorKind for Slider {
+    // TODO: still panics
+    #[inline(always)]
     fn process<const N: usize>(&self, index: usize, meas_cnt: &[u16]) -> Option<i16> {
         let pts = self.points as i16;
         let num_els = N as i16;
@@ -383,6 +688,8 @@ impl SensorKind for Slider {
 }
 
 impl SensorKind for Wheel {
+    // TODO: still panics
+    #[inline(always)]
     fn process<const N: usize>(&self, index: usize, meas_cnt: &[u16]) -> Option<i16> {
         let pts = self.points as i16;
         let num_els = N as i16;
@@ -449,7 +756,7 @@ where
 
     pub base_count: [u16; N],
     capacitive: &'a C,
-    accumulation_cycles: u16,
+    interval: G::Interval,
 
     // Fixed configuration set in constructor
     tracking_rate: TrackingRate,
@@ -467,16 +774,19 @@ pub trait ConstructValidate {
 }
 
 impl ConstructValidate for Button {
+    #[inline(always)]
     fn validate<const N: usize>() {} // No constraint
 }
 
 impl ConstructValidate for Slider {
+    #[inline(always)]
     fn validate<const N: usize>() {
         const { assert!(N >= 3, "Slider requires at least 3 elements") };
     }
 }
 
 impl ConstructValidate for Wheel {
+    #[inline(always)]
     fn validate<const N: usize>() {
         const { assert!(N >= 3, "Wheel requires at least 3 elements") };
     }
@@ -491,12 +801,13 @@ where
     G: Gate<T, M>,
     S: SensorKind + ConstructValidate,
 {
+    #[inline(always)]
     fn build(
         parts: &'a CapacitiveParts3<T, M>,
         elements: [CapacitiveElement; N],
         gate: &'a G,
         capacitive: &'a C,
-        accumulation_cycles: u16,
+        interval: G::Interval,
         tracking: TrackingRate,
         drift: DriftRate,
         doi: DirectionOfInterest,
@@ -507,9 +818,9 @@ where
             parts,
             elements,
             gate,
-            base_count: [0u16; N],
+            base_count: unsafe { MaybeUninit::uninit().assume_init() },
             capacitive,
-            accumulation_cycles,
+            interval,
             tracking_rate: tracking,
             drift_rate: drift,
             doi,
@@ -528,27 +839,20 @@ where
     G: RoGate<T, M>,
     S: SensorKind + ConstructValidate,
 {
+    #[inline(always)]
     pub fn new_ro(
         parts: &'a CapacitiveParts3<T, M>,
         elements: [CapacitiveElement; N],
         gate: &'a G,
         capacitive: &'a C,
-        accumulation_cycles: u16,
+        interval: G::Interval,
         tracking: TrackingRate,
         drift: DriftRate,
         doi: DirectionOfInterest,
         sensor: S,
     ) -> Self {
         Self::build(
-            parts,
-            elements,
-            gate,
-            capacitive,
-            accumulation_cycles,
-            tracking,
-            drift,
-            doi,
-            sensor,
+            parts, elements, gate, capacitive, interval, tracking, drift, doi, sensor,
         )
     }
 }
@@ -561,27 +865,20 @@ where
     G: FroGate<T, M>,
     S: SensorKind + ConstructValidate,
 {
+    #[inline(always)]
     pub fn new_fro(
         parts: &'a CapacitiveParts3<T, M>,
         elements: [CapacitiveElement; N],
         gate: &'a G,
         capacitive: &'a C,
-        accumulation_cycles: u16,
+        interval: G::Interval,
         tracking: TrackingRate,
         drift: DriftRate,
         doi: DirectionOfInterest,
         sensor: S,
     ) -> Self {
         Self::build(
-            parts,
-            elements,
-            gate,
-            capacitive,
-            accumulation_cycles,
-            tracking,
-            drift,
-            doi,
-            sensor,
+            parts, elements, gate, capacitive, interval, tracking, drift, doi, sensor,
         )
     }
 }
@@ -595,222 +892,228 @@ where
     G: Gate<T, M>,
     S: SensorKind,
 {
-    /// THE UNIFIED HARDWARE LOOP
-    /// This is a "Static" helper - it does not take &self.
+    #[inline(always)]
+    fn apply_tracking(base: &mut u16, temp: &mut u16, tracking: &TrackingRate, is_roi: bool) {
+        let mut remainder = 0;
+
+        match tracking {
+            TrackingRate::Fast => {
+                *temp /= 2;
+                *base /= 2;
+            }
+            TrackingRate::Medium => {
+                *temp /= 4;
+                *base = 3 * (*base / 4);
+            }
+            TrackingRate::Slow => {
+                remainder = (((*base & 0x3F) * 63) + (*temp & 0x3F)) >> 6;
+                *temp /= 64;
+                *base = 63 * (*base / 64);
+            }
+            TrackingRate::VerySlow => {
+                remainder = (((*base & 0x7F) * 127) + (*temp & 0x7F)) >> 7;
+                *temp /= 128;
+                *base = 127 * (*base / 128);
+            }
+        }
+
+        *base = base.saturating_add(*temp + remainder);
+
+        if is_roi {
+            *base = base.saturating_add(1);
+        } else {
+            *base = base.saturating_sub(1);
+        }
+    }
+
+    #[inline(always)]
+    fn normalize_to_percent(cnt: &mut u16, element: &CapacitiveElement) {
+        if *cnt > element.max_response {
+            *cnt = element.max_response;
+        }
+        let diff = cnt.saturating_sub(element.threshold);
+        if (diff as u32 * 100) > u16::MAX as u32 {
+            // SAFETY: enforced by element invariant
+            unsafe {
+                core::hint::unreachable_unchecked();
+            }
+        }
+        *cnt = (100 * diff) / element.range;
+    }
+
+    #[inline(always)]
+    fn apply_drift(base: &mut u16, temp: &mut u16, drift: &DriftRate, is_roi: bool) {
+        let mut remainder = 1;
+
+        match drift {
+            DriftRate::VerySlow => {
+                *temp = 0;
+            }
+            DriftRate::Slow => {
+                remainder = 2;
+                *temp = 0;
+            }
+            DriftRate::Medium => {
+                *temp /= 4;
+                *base = 3 * (*base / 4);
+            }
+            DriftRate::Fast => {
+                *temp /= 2;
+                *base /= 2;
+            }
+        }
+
+        *base = base.saturating_add(*temp);
+
+        if is_roi {
+            *base = base.saturating_sub(remainder);
+        } else {
+            *base = base.saturating_add(remainder);
+        }
+    }
+
+    /// Unified hardware sweep — drives the gate/IO sequence and calls `logic`
+    /// once per element with `(index, element, raw_count)`.
+    #[inline(always)]
     fn perform_hardware_sweep<F>(
-        gate: &dyn Gate<T, M>,
+        gate: &G,
         timer: &T,
         capacitive: &C,
         elements: &[CapacitiveElement; N],
-        cycles: u16,
+        interval: G::Interval,
         mut logic: F,
     ) where
-        F: FnMut(usize, u16),
+        F: FnMut(usize, &CapacitiveElement, u16),
     {
-        gate.prepare(timer, cycles);
+        gate.prepare(timer, interval, Method::IS_ROI);
         let context_save = capacitive.captioxctl_rd();
-
         for (i, element) in elements.iter().enumerate() {
             capacitive.captioxctl_set(element.pin_id);
             capacitive.enable();
-            let raw_val = gate.capture(timer);
-            logic(i, raw_val);
+            logic(i, element, gate.capture(timer, interval, Method::IS_ROI));
         }
-
         capacitive.captioxctl_set(context_save);
-        gate.release(timer);
+        gate.release(timer, Method::IS_ROI);
     }
 
+    #[inline(always)]
     pub fn init(&mut self) {
-        let base_counts = &mut self.base_count;
-
+        let base_count = &mut self.base_count;
         Self::perform_hardware_sweep(
             self.gate,
             &self.parts.timer,
             self.capacitive,
             &self.elements,
-            self.accumulation_cycles,
-            |i, val| {
-                base_counts[i] = val;
-            },
+            self.interval,
+            |i, _el, val| base_count[i] = val,
         );
     }
 
+    #[inline(always)]
     pub fn update(&mut self, number_of_averages: u8) {
-        let base_counts = &mut self.base_count;
-
+        let base_count = &mut self.base_count;
         for _ in 0..number_of_averages {
             Self::perform_hardware_sweep(
                 self.gate,
                 &self.parts.timer,
                 self.capacitive,
                 &self.elements,
-                self.accumulation_cycles,
-                |i, val| {
-                    // Now base_counts is a local unique reference, no longer tied to 'self' borrow
-                    base_counts[i] = (val >> 1) + (base_counts[i] >> 1);
+                self.interval,
+                |i, _el, val| {
+                    base_count[i] = (val >> 1) + (base_count[i] >> 1);
                 },
             );
         }
     }
 
+    #[inline(always)]
     pub fn sensor(&mut self) -> Option<i16> {
-        const PAST_EVNT: u8 = 0x04;
-
         let mut has_event = false;
+        let mut meas_cnt: [u16; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut dominant = 0usize;
+        let mut peak_delta = 0u16;
 
-        // 1. Allocate measurement array on stack
-        let mut meas_cnt = [0u16; N];
-        let mut dominant_element = 0;
-        let mut percent_delta = 0;
+        // Split-borrow self so the closure can mutate base_count / had_event
+        // while perform_hardware_sweep uses the remaining fields.
+        let base_count = &mut self.base_count;
+        let tracking = &self.tracking_rate;
+        let drift = &self.drift_rate;
+        let doi = &self.doi;
+        let had_event = &mut self.had_event;
 
-        self.gate
-            .prepare(&self.parts.timer, self.accumulation_cycles);
-        let context_save = self.capacitive.captioxctl_rd();
+        Self::perform_hardware_sweep(
+            self.gate,
+            &self.parts.timer,
+            self.capacitive,
+            &self.elements,
+            self.interval,
+            |i, element, raw| {
+                meas_cnt[i] = raw;
 
-        for (i, element) in self.elements.iter().enumerate() {
-            self.capacitive.captioxctl_set(element.pin_id);
-            self.capacitive.enable();
-            meas_cnt[i] = self.gate.capture(&self.parts.timer);
+                if raw == 0 {
+                    return;
+                }
 
-            let mut temp_cnt = meas_cnt[i];
-            if temp_cnt != 0 {
                 let is_roi = Method::IS_ROI;
+                let is_doi = matches!(doi, DirectionOfInterest::Increment);
 
-                let is_doi = matches!(self.doi, DirectionOfInterest::Increment);
+                let mut temp_cnt = raw;
 
-                // Interest in decrease vs increase logic
-                // Logic: (DOI && RO) || (!DOI && !RO)
                 if is_doi == is_roi {
-                    if self.base_count[i] < meas_cnt[i] {
+                    if base_count[i] < raw {
                         meas_cnt[i] = 0;
-
                         if element.threshold != 0 {
-                            let temp = self.base_count[i].saturating_add(element.threshold >> 1);
-
-                            if temp < temp_cnt {
-                                temp_cnt = temp;
+                            let ceil = base_count[i].saturating_add(element.threshold >> 1);
+                            if ceil < temp_cnt {
+                                temp_cnt = ceil;
                             }
                         }
                     } else {
-                        meas_cnt[i] = self.base_count[i].wrapping_sub(meas_cnt[i]);
+                        meas_cnt[i] = base_count[i].saturating_sub(raw);
                     }
                 } else {
-                    if self.base_count[i] > meas_cnt[i] {
+                    if base_count[i] > raw {
                         meas_cnt[i] = 0;
                         if element.threshold != 0 {
-                            let temp = self.base_count[i].saturating_sub(element.threshold >> 1);
-                            if temp > temp_cnt {
-                                temp_cnt = temp;
+                            let floor = base_count[i].saturating_sub(element.threshold >> 1);
+                            if floor > temp_cnt {
+                                temp_cnt = floor;
                             }
                         }
                     } else {
-                        meas_cnt[i] -= self.base_count[i];
+                        meas_cnt[i] -= base_count[i];
                     }
                 }
 
+                // ── Update baseline / flag event ───────────────────────────
                 if meas_cnt[i] == 0 {
-                    let mut remainder: u16 = 0;
-                    match self.tracking_rate {
-                        TrackingRate::Fast => {
-                            temp_cnt /= 2;
-                            self.base_count[i] /= 2;
-                        }
-                        TrackingRate::Medium => {
-                            temp_cnt /= 4;
-                            self.base_count[i] = 3 * (self.base_count[i] / 4);
-                        }
-                        TrackingRate::Slow => {
-                            remainder = (0x3F & self.base_count[i]) * 63;
-                            remainder = (remainder + (0x3F & temp_cnt)) >> 6;
-                            temp_cnt /= 64;
-                            self.base_count[i] = 63 * (self.base_count[i] / 64);
-                        }
-                        TrackingRate::VerySlow => {
-                            // VSLOW
-                            remainder = (0x7F & self.base_count[i]) * 127;
-                            remainder = (remainder + (0x7F & temp_cnt)) >> 7;
-                            temp_cnt /= 128;
-                            self.base_count[i] = 127 * (self.base_count[i] / 128);
-                        }
-                    }
-                    self.base_count[i] = self.base_count[i].saturating_add(temp_cnt + remainder);
-
-                    // Adjust baseline by 1 to prevent "sticking"
-                    if is_roi {
-                        self.base_count[i] = self.base_count[i].saturating_add(1);
-                    } else {
-                        self.base_count[i] = self.base_count[i].saturating_sub(1);
-                    }
-                } else if meas_cnt[i] < element.threshold && !self.had_event {
-                    // Drift following (Slow tracking while not in a touch event)
-                    let mut remainder = 1;
-                    match self.drift_rate {
-                        DriftRate::VerySlow => {
-                            temp_cnt = 0;
-                        }
-                        DriftRate::Slow => {
-                            remainder = 2;
-                            temp_cnt = 0;
-                        }
-                        DriftRate::Medium => {
-                            temp_cnt /= 4;
-                            self.base_count[i] = 3 * (self.base_count[i] / 4);
-                        }
-                        DriftRate::Fast => {
-                            // fast
-                            temp_cnt /= 2;
-                            self.base_count[i] /= 2;
-                        } // FAST
-                    }
-                    self.base_count[i] = self.base_count[i].saturating_add(temp_cnt);
-                    if is_roi {
-                        self.base_count[i] = self.base_count[i].saturating_sub(remainder);
-                    } else {
-                        self.base_count[i] = self.base_count[i].saturating_add(remainder);
-                    }
+                    Self::apply_tracking(&mut base_count[i], &mut temp_cnt, tracking, is_roi);
+                } else if meas_cnt[i] < element.threshold && !*had_event {
+                    Self::apply_drift(&mut base_count[i], &mut temp_cnt, drift, is_roi);
                 } else if meas_cnt[i] >= element.threshold {
                     has_event = true;
-                    self.had_event = true;
-                }
-            }
-
-            if meas_cnt[i] >= element.threshold {
-                if meas_cnt[i] > element.max_response {
-                    meas_cnt[i] = element.max_response;
+                    *had_event = true;
                 }
 
-                // delta_cnt[i] = 100 * (delta_cnt[i] - element.threshold)
-                //     / (element.max_response - element.threshold);
-
-                let diff = meas_cnt[i].saturating_sub(element.threshold);
-
-                // Tell the compiler the result of 100 * diff is guaranteed to be <= u16::MAX
-                if (diff as u32 * 100) > u16::MAX as u32 {
-                    unsafe {
-                        core::hint::unreachable_unchecked();
+                // ── Normalise to 0–100 % and track dominant element ────────
+                if meas_cnt[i] >= element.threshold {
+                    Self::normalize_to_percent(&mut meas_cnt[i], element);
+                    if meas_cnt[i] >= peak_delta {
+                        peak_delta = meas_cnt[i];
+                        dominant = i;
                     }
+                } else {
+                    meas_cnt[i] = 0;
                 }
-
-                meas_cnt[i] = (100 * diff) / element.range;
-
-                if meas_cnt[i] >= percent_delta {
-                    percent_delta = meas_cnt[i];
-                    dominant_element = i;
-                }
-            } else {
-                meas_cnt[i] = 0;
-            }
-        }
-
-        self.capacitive.captioxctl_set(context_save);
-        self.gate.release(&self.parts.timer);
+            },
+        );
 
         if !has_event {
-            self.had_event = false;
+            *had_event = false;
+
             return None;
         }
 
-        self.sensor.process::<N>(dominant_element, &meas_cnt)
+        self.sensor.process::<N>(dominant, &meas_cnt)
     }
 }
