@@ -308,13 +308,19 @@ impl Button {
 
 impl Slider {
     pub const fn new(sensor_threshold: u8, points: u8) -> Self {
-        Self { sensor_threshold, points }
+        Self {
+            sensor_threshold,
+            points,
+        }
     }
 }
 
 impl Wheel {
     pub const fn new(sensor_threshold: u8, points: u8) -> Self {
-        Self { sensor_threshold, points }
+        Self {
+            sensor_threshold,
+            points,
+        }
     }
 }
 
@@ -450,7 +456,7 @@ where
     drift_rate: DriftRate,
     doi: DirectionOfInterest,
 
-    cts_status_reg: u8,
+    had_event: bool,
     sensor: S,
     _method: PhantomData<Method>,
 }
@@ -507,7 +513,7 @@ where
             tracking_rate: tracking,
             drift_rate: drift,
             doi,
-            cts_status_reg: 0,
+            had_event: false,
             _method: PhantomData,
             sensor,
         }
@@ -533,7 +539,17 @@ where
         doi: DirectionOfInterest,
         sensor: S,
     ) -> Self {
-        Self::build(parts, elements, gate, capacitive, accumulation_cycles, tracking, drift, doi, sensor)
+        Self::build(
+            parts,
+            elements,
+            gate,
+            capacitive,
+            accumulation_cycles,
+            tracking,
+            drift,
+            doi,
+            sensor,
+        )
     }
 }
 
@@ -556,7 +572,17 @@ where
         doi: DirectionOfInterest,
         sensor: S,
     ) -> Self {
-        Self::build(parts, elements, gate, capacitive, accumulation_cycles, tracking, drift, doi, sensor)
+        Self::build(
+            parts,
+            elements,
+            gate,
+            capacitive,
+            accumulation_cycles,
+            tracking,
+            drift,
+            doi,
+            sensor,
+        )
     }
 }
 
@@ -628,176 +654,136 @@ where
         }
     }
 
-    fn raw(&mut self, out: &mut [u16]) {
-        Self::perform_hardware_sweep(
-            self.gate,
-            &self.parts.timer,
-            self.capacitive,
-            &self.elements,
-            self.accumulation_cycles,
-            |i, val| out[i] = val,
-        );
-    }
-
-    fn custom(&mut self, delta_cnt: &mut [u16]) {
-        const EVNT: u8 = 0x01;
-        const PAST_EVNT: u8 = 0x04;
-        // ctsStatusReg &= ~ EVNT;
-
-        self.cts_status_reg &= !EVNT;
-
-        // let mut delta_cnt = [0u16; N];
-        self.raw(delta_cnt);
-
-        for (i, element) in self.elements.iter().enumerate() {
-            let mut temp_cnt = delta_cnt[i];
-            if temp_cnt == 0 {
-                continue;
-            }
-
-            let is_roi = Method::IS_ROI;
-
-            let is_doi = matches!(self.doi, DirectionOfInterest::Increment);
-
-            // Interest in decrease vs increase logic
-            // Logic: (DOI && RO) || (!DOI && !RO)
-            if is_doi == is_roi {
-                if self.base_count[i] < delta_cnt[i] {
-                    delta_cnt[i] = 0;
-
-                    if element.threshold != 0 {
-                        let temp = self.base_count[i].saturating_add(element.threshold >> 1);
-
-                        if temp < temp_cnt {
-                            temp_cnt = temp;
-                        }
-                    }
-                } else {
-                    delta_cnt[i] = self.base_count[i].wrapping_sub(delta_cnt[i]);
-                }
-            } else {
-                if self.base_count[i] > delta_cnt[i] {
-                    delta_cnt[i] = 0;
-                    if element.threshold != 0 {
-                        let temp = self.base_count[i].saturating_sub(element.threshold >> 1);
-                        if temp > temp_cnt {
-                            temp_cnt = temp;
-                        }
-                    }
-                } else {
-                    delta_cnt[i] -= self.base_count[i];
-                }
-            }
-
-            if delta_cnt[i] == 0 {
-                let mut remainder: u16 = 0;
-                match self.tracking_rate {
-                    TrackingRate::Fast => {
-                        temp_cnt /= 2;
-                        self.base_count[i] /= 2;
-                    }
-                    TrackingRate::Medium => {
-                        temp_cnt /= 4;
-                        self.base_count[i] = 3 * (self.base_count[i] / 4);
-                    }
-                    TrackingRate::Slow => {
-                        remainder = (0x3F & self.base_count[i]) * 63;
-                        remainder = (remainder + (0x3F & temp_cnt)) >> 6;
-                        temp_cnt /= 64;
-                        self.base_count[i] = 63 * (self.base_count[i] / 64);
-                    }
-                    TrackingRate::VerySlow => {
-                        // VSLOW
-                        remainder = (0x7F & self.base_count[i]) * 127;
-                        remainder = (remainder + (0x7F & temp_cnt)) >> 7;
-                        temp_cnt /= 128;
-                        self.base_count[i] = 127 * (self.base_count[i] / 128);
-                    }
-                }
-                self.base_count[i] = self.base_count[i].saturating_add(temp_cnt + remainder);
-
-                // Adjust baseline by 1 to prevent "sticking"
-                if is_roi {
-                    self.base_count[i] = self.base_count[i].saturating_add(1);
-                } else {
-                    self.base_count[i] = self.base_count[i].saturating_sub(1);
-                }
-            } else if delta_cnt[i] < element.threshold && self.cts_status_reg & PAST_EVNT == 0 {
-                // Drift following (Slow tracking while not in a touch event)
-                let mut remainder = 1;
-                match self.drift_rate {
-                    DriftRate::VerySlow => {
-                        temp_cnt = 0;
-                    }
-                    DriftRate::Slow => {
-                        remainder = 2;
-                        temp_cnt = 0;
-                    }
-                    DriftRate::Medium => {
-                        temp_cnt /= 4;
-                        self.base_count[i] = 3 * (self.base_count[i] / 4);
-                    }
-                    DriftRate::Fast => {
-                        // fast
-                        temp_cnt /= 2;
-                        self.base_count[i] /= 2;
-                    } // FAST
-                }
-                self.base_count[i] = self.base_count[i].saturating_add(temp_cnt);
-                if is_roi {
-                    self.base_count[i] = self.base_count[i].saturating_sub(remainder);
-                } else {
-                    self.base_count[i] = self.base_count[i].saturating_add(remainder);
-                }
-            } else if delta_cnt[i] >= element.threshold {
-                self.cts_status_reg |= EVNT;
-                self.cts_status_reg |= PAST_EVNT;
-            }
-        }
-
-        // 0100 1001
-        // 0010 0010
-        // 1100 0000
-
-        if self.cts_status_reg & EVNT == 0 {
-            self.cts_status_reg &= !PAST_EVNT;
-        }
-    }
-
     pub fn sensor(&mut self) -> Option<i16> {
+        const PAST_EVNT: u8 = 0x04;
+
+        let mut has_event = false;
+
         // 1. Allocate measurement array on stack
         let mut meas_cnt = [0u16; N];
-
-        // 2. Perform measurements (Equivalent to TI_CAPT_Custom)
-        self.custom(&mut meas_cnt);
-
-        const EVNT: u8 = 0x01;
-
-        // 3. Check if any element triggered an event
-        if (self.cts_status_reg & EVNT) == 0 {
-            return None;
-        }
-
-        // 4. Find the strongest element (Equivalent to Dominant_Element)
-        let index = self.dominant_element(&mut meas_cnt) as usize;
-
-        self.sensor.process::<N>(index, &meas_cnt)
-    }
-
-    fn dominant_element(&mut self, delta_cnt: &mut [u16]) -> u8 {
         let mut dominant_element = 0;
         let mut percent_delta = 0;
 
+        self.gate
+            .prepare(&self.parts.timer, self.accumulation_cycles);
+        let context_save = self.capacitive.captioxctl_rd();
+
         for (i, element) in self.elements.iter().enumerate() {
-            if delta_cnt[i] >= element.threshold {
-                if delta_cnt[i] > element.max_response {
-                    delta_cnt[i] = element.max_response;
+            self.capacitive.captioxctl_set(element.pin_id);
+            self.capacitive.enable();
+            meas_cnt[i] = self.gate.capture(&self.parts.timer);
+
+            let mut temp_cnt = meas_cnt[i];
+            if temp_cnt != 0 {
+                let is_roi = Method::IS_ROI;
+
+                let is_doi = matches!(self.doi, DirectionOfInterest::Increment);
+
+                // Interest in decrease vs increase logic
+                // Logic: (DOI && RO) || (!DOI && !RO)
+                if is_doi == is_roi {
+                    if self.base_count[i] < meas_cnt[i] {
+                        meas_cnt[i] = 0;
+
+                        if element.threshold != 0 {
+                            let temp = self.base_count[i].saturating_add(element.threshold >> 1);
+
+                            if temp < temp_cnt {
+                                temp_cnt = temp;
+                            }
+                        }
+                    } else {
+                        meas_cnt[i] = self.base_count[i].wrapping_sub(meas_cnt[i]);
+                    }
+                } else {
+                    if self.base_count[i] > meas_cnt[i] {
+                        meas_cnt[i] = 0;
+                        if element.threshold != 0 {
+                            let temp = self.base_count[i].saturating_sub(element.threshold >> 1);
+                            if temp > temp_cnt {
+                                temp_cnt = temp;
+                            }
+                        }
+                    } else {
+                        meas_cnt[i] -= self.base_count[i];
+                    }
+                }
+
+                if meas_cnt[i] == 0 {
+                    let mut remainder: u16 = 0;
+                    match self.tracking_rate {
+                        TrackingRate::Fast => {
+                            temp_cnt /= 2;
+                            self.base_count[i] /= 2;
+                        }
+                        TrackingRate::Medium => {
+                            temp_cnt /= 4;
+                            self.base_count[i] = 3 * (self.base_count[i] / 4);
+                        }
+                        TrackingRate::Slow => {
+                            remainder = (0x3F & self.base_count[i]) * 63;
+                            remainder = (remainder + (0x3F & temp_cnt)) >> 6;
+                            temp_cnt /= 64;
+                            self.base_count[i] = 63 * (self.base_count[i] / 64);
+                        }
+                        TrackingRate::VerySlow => {
+                            // VSLOW
+                            remainder = (0x7F & self.base_count[i]) * 127;
+                            remainder = (remainder + (0x7F & temp_cnt)) >> 7;
+                            temp_cnt /= 128;
+                            self.base_count[i] = 127 * (self.base_count[i] / 128);
+                        }
+                    }
+                    self.base_count[i] = self.base_count[i].saturating_add(temp_cnt + remainder);
+
+                    // Adjust baseline by 1 to prevent "sticking"
+                    if is_roi {
+                        self.base_count[i] = self.base_count[i].saturating_add(1);
+                    } else {
+                        self.base_count[i] = self.base_count[i].saturating_sub(1);
+                    }
+                } else if meas_cnt[i] < element.threshold && !self.had_event {
+                    // Drift following (Slow tracking while not in a touch event)
+                    let mut remainder = 1;
+                    match self.drift_rate {
+                        DriftRate::VerySlow => {
+                            temp_cnt = 0;
+                        }
+                        DriftRate::Slow => {
+                            remainder = 2;
+                            temp_cnt = 0;
+                        }
+                        DriftRate::Medium => {
+                            temp_cnt /= 4;
+                            self.base_count[i] = 3 * (self.base_count[i] / 4);
+                        }
+                        DriftRate::Fast => {
+                            // fast
+                            temp_cnt /= 2;
+                            self.base_count[i] /= 2;
+                        } // FAST
+                    }
+                    self.base_count[i] = self.base_count[i].saturating_add(temp_cnt);
+                    if is_roi {
+                        self.base_count[i] = self.base_count[i].saturating_sub(remainder);
+                    } else {
+                        self.base_count[i] = self.base_count[i].saturating_add(remainder);
+                    }
+                } else if meas_cnt[i] >= element.threshold {
+                    has_event = true;
+                    self.had_event = true;
+                }
+            }
+
+            if meas_cnt[i] >= element.threshold {
+                if meas_cnt[i] > element.max_response {
+                    meas_cnt[i] = element.max_response;
                 }
 
                 // delta_cnt[i] = 100 * (delta_cnt[i] - element.threshold)
                 //     / (element.max_response - element.threshold);
 
-                let diff = delta_cnt[i].saturating_sub(element.threshold);
+                let diff = meas_cnt[i].saturating_sub(element.threshold);
 
                 // Tell the compiler the result of 100 * diff is guaranteed to be <= u16::MAX
                 if (diff as u32 * 100) > u16::MAX as u32 {
@@ -806,17 +792,25 @@ where
                     }
                 }
 
-                delta_cnt[i] = (100 * diff) / element.range;
+                meas_cnt[i] = (100 * diff) / element.range;
 
-                if delta_cnt[i] >= percent_delta {
-                    percent_delta = delta_cnt[i];
-                    dominant_element = i as u8;
+                if meas_cnt[i] >= percent_delta {
+                    percent_delta = meas_cnt[i];
+                    dominant_element = i;
                 }
             } else {
-                delta_cnt[i] = 0;
+                meas_cnt[i] = 0;
             }
         }
 
-        return dominant_element;
+        self.capacitive.captioxctl_set(context_save);
+        self.gate.release(&self.parts.timer);
+
+        if !has_event {
+            self.had_event = false;
+            return None;
+        }
+
+        self.sensor.process::<N>(dominant_element, &meas_cnt)
     }
 }
