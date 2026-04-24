@@ -13,7 +13,6 @@ use crate::{
 use core::{cell::Cell, marker::PhantomData, mem::MaybeUninit, num::NonZero};
 use msp430::interrupt::{disable as disable_interrupts, enable as enable_interrupts};
 
-
 pub use crate::hw_traits::timer_base::Tbssel;
 // --- Traits ---
 
@@ -167,11 +166,11 @@ where
     timer: TG,
     context_save_sr: Cell<u16>,
     context_save_t0nctl: Cell<u16>,
-    context_save_t0cctl0: Cell<u16>,
-    context_save_t0ccr0: Cell<u16>,
     context_save_t1nctl: Cell<u16>,
-    context_save_t1cctl0: Cell<u16>,
-    context_save_t1ccr0: Cell<u16>,
+    // context_save_t0cctl0: Cell<u16>,
+    // context_save_t0ccr0: Cell<u16>,
+    context_save_txcctl0: Cell<u16>,
+    context_save_txccr0: Cell<u16>,
     _pin_map: PhantomData<MG>,
 }
 
@@ -186,11 +185,9 @@ where
             timer,
             context_save_sr: Cell::new(0),
             context_save_t0nctl: Cell::new(0),
-            context_save_t0cctl0: Cell::new(0),
-            context_save_t0ccr0: Cell::new(0),
             context_save_t1nctl: Cell::new(0),
-            context_save_t1cctl0: Cell::new(0),
-            context_save_t1ccr0: Cell::new(0),
+            context_save_txcctl0: Cell::new(0),
+            context_save_txccr0: Cell::new(0),
             _pin_map: PhantomData,
         }
     }
@@ -202,33 +199,38 @@ where
 {
     type Interval = (Tbssel, TimerDiv, u16);
 
+    // TODO: if not roi store 
+    //? fixed?
     #[inline(always)]
     fn prepare(&self, timer: &T, interval: Self::Interval, is_roi: bool) {
         self.context_save_sr
             .set(msp430::register::sr::read().bits());
         self.context_save_t0nctl.set(timer.get_ctl());
-        self.context_save_t0cctl0
-            .set(CCRn::<CCR0>::get_cctln(timer));
-        self.context_save_t0ccr0.set(CCRn::<CCR0>::get_ccrn(timer));
-
-        self.context_save_t1nctl.set(self.timer.get_ctl());
-        self.context_save_t1cctl0
-            .set(CCRn::<CCR0>::get_cctln(&self.timer));
-        self.context_save_t1ccr0
-            .set(CCRn::<CCR0>::get_ccrn(&self.timer));
+        // self.context_save_t0cctl0
+        //     .set(CCRn::<CCR0>::get_cctln(timer));
+        self.context_save_t1nctl
+            .set(self.timer.get_ctl());
 
         if is_roi {
-            timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
-            timer.continuous();
-            CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+            // timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+            // timer.continuous();
+            // CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+
+            self.context_save_txccr0
+                .set(CCRn::<CCR0>::get_ccrn(&self.timer));
+            self.context_save_txcctl0
+                .set(CCRn::<CCR0>::get_cctln(&self.timer));
 
             CCRn::<CCR0>::set_ccrn(&self.timer, interval.2);
             self.timer.config_clock(interval.0, interval.1);
             CCRn::<CCR0>::ccie_set(&self.timer);
         } else {
-            self.timer.config_clock(interval.0, TimerDiv::_1);
-            self.timer.continuous();
-            CCRn::<CCR0>::config_cap_mode(&self.timer, Cm::BothEdges, Ccis::Gnd);
+            // self.timer.config_clock(interval.0, TimerDiv::_1);
+            // self.timer.continuous();
+            // CCRn::<CCR0>::config_cap_mode(&self.timer, Cm::BothEdges, Ccis::Gnd);
+            self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+            self.context_save_txcctl0
+                .set(CCRn::<CCR0>::get_cctln(timer));
 
             CCRn::<CCR0>::set_ccrn(timer, interval.2);
             timer.config_clock(Tbssel::Inclk, interval.1);
@@ -240,19 +242,22 @@ where
 
     #[inline(always)]
     fn capture(&self, timer: &T, interval: Self::Interval, is_roi: bool) -> u16 {
-        
         if is_roi {
-            timer.reset();
-            timer.tbifg_clr();
+            timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+            timer.continuous();
+            // timer.reset();
+            // timer.tbifg_clr();
 
             self.timer.upmode();
         } else {
-            self.timer.reset();
-            self.timer.tbifg_clr();
+            self.timer.config_clock(interval.0, TimerDiv::_1);
+            self.timer.continuous();
+
+            // self.timer.reset();
+            // self.timer.tbifg_clr();
 
             timer.upmode();
         }
-
 
         if interval.0 == Tbssel::Aclk {
             request_lpm3();
@@ -261,39 +266,46 @@ where
         }
 
         if is_roi {
-            CCRn::<CCR0>::trigger_sw(timer);
+            // CCRn::<CCR0>::trigger_sw(timer);
+            timer.stop();
             self.timer.stop();
 
             if timer.tbifg_rd() {
                 0
             } else {
-                CCRn::<CCR0>::get_ccrn(timer)
+                // CCRn::<CCR0>::get_ccrn(timer)
+                timer.get_tbxr()
             }
         } else {
-            CCRn::<CCR0>::trigger_sw(&self.timer);
+            // CCRn::<CCR0>::trigger_sw(&self.timer);
+            self.timer.stop();
             timer.stop();
 
             if self.timer.tbifg_rd() {
                 0
             } else {
-                CCRn::<CCR0>::get_ccrn(&self.timer)
+                // CCRn::<CCR0>::get_ccrn(&self.timer)
+                self.timer.get_tbxr()
             }
         }
     }
 
     #[inline(always)]
-    fn release(&self, timer: &T, _is_roi: bool) {
+    fn release(&self, timer: &T, is_roi: bool) {
         if self.context_save_sr.get() & (1 << 3) == 0 {
             disable_interrupts();
         }
 
         timer.set_ctl(self.context_save_t0nctl.get());
-        CCRn::<CCR0>::set_cctln(timer, self.context_save_t0cctl0.get());
-        CCRn::<CCR0>::set_ccrn(timer, self.context_save_t0ccr0.get());
-
         self.timer.set_ctl(self.context_save_t1nctl.get());
-        CCRn::<CCR0>::set_cctln(&self.timer, self.context_save_t1cctl0.get());
-        CCRn::<CCR0>::set_ccrn(&self.timer, self.context_save_t1ccr0.get());
+
+        if is_roi {
+            CCRn::<CCR0>::set_ccrn(&self.timer, self.context_save_txccr0.get());
+            CCRn::<CCR0>::set_cctln(&self.timer, self.context_save_txcctl0.get());
+        } else {
+            CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
+            CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
+        }
     }
 }
 
@@ -1195,7 +1207,7 @@ where
                 }
             },
         );
-        
+
         return meas_cnt;
     }
 }

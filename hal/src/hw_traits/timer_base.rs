@@ -148,7 +148,7 @@ pub trait CCRn<C>: Steal {
     fn get_cctln(&self) -> u16; 
     fn set_cctln(&self, bits: u16);
 
-    fn trigger_sw(&self);
+    // fn trigger_sw(&self);
 }
 
 /// Label for capture-compare register 0
@@ -238,10 +238,10 @@ macro_rules! ccrn_impl {
                 self.$tbxcctln().write(|w| unsafe { w.bits(bits) });
             }
 
-            #[inline(always)]
-            fn trigger_sw(&self) {
-                self.$tbxcctln().modify(|r, w| unsafe { w.ccis().bits(r.ccis().bits() ^ 0b01) });
-            }
+            // #[inline(always)]
+            // fn trigger_sw(&self) {
+            //     self.$tbxcctln().modify(|r, w| unsafe { w.ccis().bits(r.ccis().bits() ^ 0b01) });
+            // }
         }
     };
 }
