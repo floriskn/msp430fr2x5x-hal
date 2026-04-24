@@ -8,6 +8,67 @@
 //! DCO with FLL is supported on MCLK for select frequencies. Supporting arbitrary frequencies on
 //! the DCO requires complex calibration routines not supported by the HAL.
 
+/*
+ * TODO: XT1 Integration Plan
+ * * 1. PIN CONFIGURATION:
+ * - XT1 requires PJ.4 (XIN) and PJ.5 (XOUT) to be set to 'Primary Module Function'.
+ * - This must be done in the GPIO HAL before calling ClockConfig::freeze().
+ * * 2. XT1 CONFIGURATION (CSCTL6):
+ * - XT1BYPASS: Set to 1 for external square wave, 0 for crystal.
+ * - XTS / XT1HFFREQ: Range selection for High Frequency (>32kHz) vs Low Frequency (32kHz).
+ * - XT1AGCOFF: Automatic Gain Control. Usually 0 (Enabled) for better stability.
+ * - XT1AUTOOFF: Allows the hardware to disable XT1 if no peripheral is using it.
+ * - ENSTFCNT1: Enable startup fault counter to ensure signal stability before use.
+ * * 3. ROUTING LOGIC (CSCTL3 & CSCTL4):
+ * - FLL Reference (SELREF): Can now be pointed to XT1CLK. If XT1 > 32kHz, 
+ * FLLREFDIV must be set to divide the signal down to ~32kHz for the FLL.
+ * - ACLK Source (SELA): Can be XT1CLK, REFOCLK, or VLOCLK.
+ * - MCLK/SMCLK Source (SELMS): Can bypass DCO and run directly from XT1CLK.
+ * * 4. FAULT HANDLING:
+ * - Implement a loop in freeze() to clear XT1OFFG (CSCTL7) and OFIE (SFRIE1).
+ * - Add a timeout mechanism for the FLL unlock loop to fallback to REFOCLK 
+ * if the crystal fails to start (prevents system hang).
+ * * 5. API UPDATES:
+ * - Update ClockConfig to store Xt1Config.
+ * - Return an Xt1(u32) token from freeze() to allow peripherals (UART/Timers) 
+ * to calculate baud rates/periods based on the raw crystal frequency.
+ */
+
+ /*
+ * # XT1 Implementation Guide for MSP430FR2xxx/4xxx
+ * 
+ * ## 1. Physical Layer (GPIO)
+ * - XT1 uses PJ.4 (XIN) and PJ.5 (XOUT).
+ * - Pins MUST be set to 'Primary Module Function' in PJSEL before freezing.
+ * - Crystal Mode: Both PJ.4 and PJ.5 are dedicated to the oscillator.
+ * - Bypass Mode: Only PJ.4 is required (Clock Input). PJ.5 is freed for GPIO.
+ *
+ * ## 2. Oscillator Configuration (CSCTL6)
+ * - XT1BYPASS: 0 for Crystal (Internal Amp ON), 1 for External Square Wave (Amp OFF).
+ * - XTS: Mode selection. 0 for Low-Frequency (32.768kHz), 1 for High-Frequency.
+ * - XT1HFFREQ: If XTS=1, must match frequency range:
+ *     00: 1-4MHz | 01: 4-6MHz | 10: 6-16MHz | 11: 16-24MHz
+ * - XT1DRIVE: Drive strength. Usually starts at max (3) and can be reduced to 0 
+ *   after stabilization to save power.
+ * - ENSTFCNT1: Startup fault counter. Enable to ensure clock stability.
+ *
+ * ## 3. FLL & Routing (CSCTL3 & CSCTL4)
+ * - FLL Reference (SELREF): Can be pointed to XT1.
+ * - FLLREFDIV: If XT1 is >32kHz, this MUST divide the signal down to ~32kHz 
+ *   (e.g., 16MHz / 512) or the FLL will overspeed and crash the CPU.
+ * - ACLK Source (SELA): Can be assigned to XT1CLK independently of the FLL.
+ *
+ * ## 4. Stabilization & Safety
+ * - Fault Clearing: Must loop to clear XT1OFFG (CSCTL7) until stable.
+ * - Safe Fallback: When using XT1 for FLL, implement a timeout. If the crystal 
+ *   fails to start, fallback to REFOCLK to prevent a permanent system hang.
+ *
+ * ## 5. Peripheral Usage
+ * - Peripherals like UART/Timers can use 'XT1CLK' directly (bypassing ACLK/SMCLK).
+ * - Returning an 'Xt1' token from freeze() allows these peripherals to calculate
+ *   precise timings based on the external source.
+*/
+
 use core::arch::asm;
 use core::marker::PhantomData;
 
