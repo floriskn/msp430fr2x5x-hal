@@ -39,8 +39,8 @@ pub struct WdtGate {
     context_save_sfrie1: Cell<u16>,
     context_save_wdtctl: Cell<u16>,
     context_save_txnctl: Cell<u16>,
-    context_save_txcctl0: Cell<u16>,
-    context_save_txccr0: Cell<u16>,
+    // context_save_txcctl0: Cell<u16>,
+    // context_save_txccr0: Cell<u16>,
 }
 impl WdtGate {
     #[inline(always)]
@@ -51,8 +51,8 @@ impl WdtGate {
             context_save_sfrie1: Cell::new(0),
             context_save_wdtctl: Cell::new(0),
             context_save_txnctl: Cell::new(0),
-            context_save_txcctl0: Cell::new(0),
-            context_save_txccr0: Cell::new(0),
+            // context_save_txcctl0: Cell::new(0),
+            // context_save_txccr0: Cell::new(0),
         }
     }
 }
@@ -69,14 +69,14 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGat
         self.context_save_wdtctl
             .set(self.wdt.wdtctl().read().bits() & 0xff);
         self.context_save_txnctl.set(timer.get_ctl());
-        self.context_save_txcctl0
-            .set(CCRn::<CCR0>::get_cctln(timer));
-        self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+        // self.context_save_txcctl0
+        //     .set(CCRn::<CCR0>::get_cctln(timer));
+        // self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
 
-        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
-        timer.continuous();
+        // timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        // timer.continuous();
 
-        CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+        // CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
 
         unsafe { sfr.sfrie1().set_bits(|w| w.wdtie().set_bit()) };
 
@@ -85,8 +85,10 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGat
 
     #[inline(always)]
     fn capture(&self, timer: &T, interval: Self::Interval, _is_roi: bool) -> u16 {
-        timer.reset();
-        timer.tbifg_clr();
+        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        timer.continuous();
+        // timer.reset();
+        // timer.tbifg_clr();
 
         // Halt timer first, as specified in the user's guide
         self.wdt.wdtctl().write(|w| {
@@ -122,7 +124,8 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGat
             enter_lpm0();
         }
 
-        CCRn::<CCR0>::trigger_sw(timer);
+        // CCRn::<CCR0>::trigger_sw(timer);
+        timer.stop();
         self.wdt
             .wdtctl()
             .modify(|r, w| Wdt::<IntervalMode>::prewrite(w, r.bits()).wdthold().hold());
@@ -130,7 +133,8 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGat
         if timer.tbifg_rd() {
             0
         } else {
-            CCRn::<CCR0>::get_ccrn(timer)
+            // CCRn::<CCR0>::get_ccrn(timer)
+            timer.get_tbxr()
         }
     }
 
@@ -149,8 +153,8 @@ impl<'a, T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for WdtGat
             .wdtctl()
             .write(|w| Wdt::<IntervalMode>::prewrite(w, self.context_save_wdtctl.get()));
         timer.set_ctl(self.context_save_txnctl.get());
-        CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
-        CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
+        // CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
+        // CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
     }
 }
 
@@ -1121,5 +1125,77 @@ where
         }
 
         self.sensor.process::<N>(dominant, &meas_cnt)
+    }
+
+    #[inline(always)]
+    pub fn mesaure(&mut self) -> [u16; N] {
+        let mut has_event = false;
+        let mut meas_cnt: [u16; N] = unsafe { MaybeUninit::uninit().assume_init() };
+
+        // Split-borrow self so the closure can mutate base_count / had_event
+        // while perform_hardware_sweep uses the remaining fields.
+        let base_count = &mut self.base_count;
+        let tracking = &self.tracking_rate;
+        let drift = &self.drift_rate;
+        let doi = &self.doi;
+        let had_event = &mut self.had_event;
+
+        Self::perform_hardware_sweep(
+            self.gate,
+            &self.parts.timer,
+            self.capacitive,
+            &self.elements,
+            self.interval,
+            |i, element, raw| {
+                meas_cnt[i] = raw;
+
+                if raw == 0 {
+                    return;
+                }
+
+                let is_roi = Method::IS_ROI;
+                let is_doi = matches!(doi, DirectionOfInterest::Increment);
+
+                let mut temp_cnt = raw;
+
+                if is_doi == is_roi {
+                    if base_count[i] < raw {
+                        meas_cnt[i] = 0;
+                        if element.threshold != 0 {
+                            let ceil = base_count[i].saturating_add(element.threshold >> 1);
+                            if ceil < temp_cnt {
+                                temp_cnt = ceil;
+                            }
+                        }
+                    } else {
+                        meas_cnt[i] = base_count[i].saturating_sub(raw);
+                    }
+                } else {
+                    if base_count[i] > raw {
+                        meas_cnt[i] = 0;
+                        if element.threshold != 0 {
+                            let floor = base_count[i].saturating_sub(element.threshold >> 1);
+                            if floor > temp_cnt {
+                                temp_cnt = floor;
+                            }
+                        }
+                    } else {
+                        meas_cnt[i] -= base_count[i];
+                    }
+                }
+
+                // ── Update baseline / flag event ───────────────────────────
+                if meas_cnt[i] == 0 {
+                    Self::apply_tracking(&mut base_count[i], &mut temp_cnt, tracking, is_roi);
+                } else if meas_cnt[i] < element.threshold && !*had_event {
+                    Self::apply_drift(&mut base_count[i], &mut temp_cnt, drift, is_roi);
+                } else if meas_cnt[i] >= element.threshold {
+                    has_event = true;
+                    *had_event = true;
+                }
+            },
+        );
+        
+        return meas_cnt;
     }
 }

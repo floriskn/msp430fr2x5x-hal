@@ -99,7 +99,7 @@ fn main() -> ! {
     let capacitive = CapacitiveParts3::new(unsafe { Timer0A3::steal() });
 
     // let el5 = CapacitiveElement::new::<_, 100, 500>(p1.pin6);
-    let el6 = CapacitiveElement::new::<_, 100, 755>(p1.pin7.to_output());
+    let el6 = CapacitiveElement::new::<_, 1500, 2000>(p1.pin7.to_output());
     // let el7 = CapacitiveElement::new::<_, 100, 500>(p2.pin5);
 
     // FIX: Bind the WDT gate to a variable too
@@ -116,14 +116,16 @@ fn main() -> ! {
     //     Button::new(),
     // );
 
-    let timer_gate = RtcGate::new(unsafe { msp430fr413x::RealTimeClock::steal() });
+    // let timer_gate = RtcGate::new(unsafe { msp430fr413x::RealTimeClock::steal() });
+    let wdt_gate = WdtGate::new(unsafe { msp430fr413x::WatchdogTimer::steal() });
 
     let mut s4 = CapacitiveSensor::new_ro(
         &capacitive,
         [el6],
-        &timer_gate, // Use the named variable
+        &wdt_gate, // Use the named variable
         &periph.capacitive_touch_io_0,
-        (Rtcss::Smclk, RtcDiv::_1, 1024),
+        (WdtClkPeriods::_64, Wdtssel::Aclk),
+        // (Rtcss::Smclk, RtcDiv::_1, 1024),
         TrackingRate::Fast,
         DriftRate::Slow,
         DirectionOfInterest::Increment,
@@ -164,9 +166,9 @@ fn main() -> ! {
 
     embedded_io::Write::write_all(&mut tx, b"----------------------\r\n").ok();
 
-    with(|cs| unsafe {
-        *TX.borrow(cs).get() = Some(tx);
-    });
+    // with(|cs| unsafe {
+    //     *TX.borrow(cs).get() = Some(tx);
+    // });
 
     loop {
         // let button = s3.sensor();
@@ -198,6 +200,11 @@ fn main() -> ! {
             any = true;
             // embedded_io::Write::write_all(&mut tx, b"S4\r\n").ok();
         }
+
+        // let measure = s4.mesaure()[0];
+        // print_num(&mut tx, measure as i32);
+        // write(&mut tx, '\r');
+        // write(&mut tx, '\n');
 
         // let button = s5.sensor();
 
@@ -250,8 +257,7 @@ unsafe fn rtc_check() -> u16 {
 unsafe fn RTC() {
     let periph = msp430fr413x::Peripherals::steal();
 
-    if periph.real_time_clock.rtciv().read().bits() == 0x02 {
-    }
+    if periph.real_time_clock.rtciv().read().bits() == 0x02 {}
 }
 
 // #[export_name = "RTC"]
