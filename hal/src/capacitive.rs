@@ -299,8 +299,8 @@ pub struct RtcGate {
     context_save_sr: Cell<u16>,
     context_save_rtcctl: Cell<u16>,
     context_save_txnctl: Cell<u16>,
-    context_save_txcctl0: Cell<u16>,
-    context_save_txccr0: Cell<u16>,
+    // context_save_txcctl0: Cell<u16>,
+    // context_save_txccr0: Cell<u16>,
 }
 impl RtcGate {
     #[inline(always)]
@@ -310,8 +310,8 @@ impl RtcGate {
             context_save_sr: Cell::new(0),
             context_save_rtcctl: Cell::new(0),
             context_save_txnctl: Cell::new(0),
-            context_save_txcctl0: Cell::new(0),
-            context_save_txccr0: Cell::new(0),
+            // context_save_txcctl0: Cell::new(0),
+            // context_save_txccr0: Cell::new(0),
         }
     }
 }
@@ -325,26 +325,30 @@ impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for RtcGate {
         self.context_save_rtcctl
             .set(self.rtc.rtcctl().read().bits());
         self.context_save_txnctl.set(timer.get_ctl());
-        self.context_save_txcctl0
-            .set(CCRn::<CCR0>::get_cctln(timer));
-        self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
+        // self.context_save_txcctl0
+        //     .set(CCRn::<CCR0>::get_cctln(timer));
+        // self.context_save_txccr0.set(CCRn::<CCR0>::get_ccrn(timer));
 
-        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
-        timer.continuous();
+        // timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        // timer.continuous();
 
-        CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
+        // CCRn::<CCR0>::config_cap_mode(timer, Cm::BothEdges, Ccis::Gnd);
 
         unsafe { enable_interrupts() };
     }
 
     #[inline(always)]
     fn capture(&self, timer: &T, interval: Self::Interval, _is_roi: bool) -> u16 {
-        timer.reset();
-        timer.tbifg_clr();
+        timer.config_clock(Tbssel::Inclk, TimerDiv::_1);
+        timer.continuous();
 
-        self.rtc.rtcmod().write(|w| unsafe { w.bits(interval.2) });
+        // timer.reset();
+        // timer.tbifg_clr();
+
+        self.rtc.rtcctl().write(|w| w.rtcsr().set_bit());
         // Need to clear interrupt flag from last timer run
         self.rtc.rtciv().read();
+        self.rtc.rtcmod().write(|w| unsafe { w.bits(interval.2) });
         self.rtc.rtcctl().modify(|r, w| {
             unsafe { w.bits(r.bits()) }
                 .rtcss()
@@ -363,13 +367,15 @@ impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for RtcGate {
             request_lpm3();
         }
 
-        CCRn::<CCR0>::trigger_sw(timer);
+        // CCRn::<CCR0>::trigger_sw(timer);
+        timer.stop();
         self.rtc.rtcctl().write(|w| w.rtcsr().set_bit());
 
         if timer.tbifg_rd() {
             0
         } else {
-            CCRn::<CCR0>::get_ccrn(timer)
+            // CCRn::<CCR0>::get_ccrn(timer)
+            timer.get_tbxr()
         }
     }
 
@@ -384,8 +390,8 @@ impl<T: CapCmpTimer3<M> + CaptivateIoTimer, M: PinMap> Gate<T, M> for RtcGate {
             .write(|w| unsafe { w.bits(self.context_save_rtcctl.get()) });
 
         timer.set_ctl(self.context_save_txnctl.get());
-        CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
-        CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
+        // CCRn::<CCR0>::set_cctln(timer, self.context_save_txcctl0.get());
+        // CCRn::<CCR0>::set_ccrn(timer, self.context_save_txccr0.get());
     }
 }
 
