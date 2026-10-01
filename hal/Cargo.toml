@@ -1,18 +1,19 @@
 [package]
-name = "msp430fr2x5x-hal"
-version = "0.6.1"
+name = "msp430-hal"
+version = "0.8.0"
 authors = ["YuhanLiin <linyuhan0315@hotmail.com>, RossPorter506 <rossporter506@gmail.com>"]
 edition = "2018"
-description = "Implementation of embedded-hal for microcontrollers MSP430FR2475, MSP430FR2476, MSP430FR2355, MSP430FR2353, MSP430FR2153 and MSP430FR2155"
+description = "Implementation of embedded-hal for MSP430 microcontrollers"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/YuhanLiin/msp430fr2x5x-hal"
+repository = "https://github.com/YuhanLiin/msp430-hal"
 keywords = ["no-std", "msp430", "ti", "launchpad", "embedded-hal"]
-documentation = "https://docs.rs/msp430fr2x5x-hal"
+documentation = "https://docs.rs/msp430-hal"
 readme = "../README.md"
 
 [features]
 default = []
 embedded-hal-02 = ["dep:embedded-hal-02", "dep:void"]
+defmt = ["dep:defmt"]
 
 # Device features. Provide exactly one of these.
 msp430fr2355 = ["2x5x", "sac_l3"] # 32kB FRAM + SAC unit
@@ -22,10 +23,13 @@ msp430fr2153 = ["2x5x"]           # 16kB FRAM
 msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b", "info_mem"]
 msp430fr2475 = ["247x"]           # 6kB RAM
 msp430fr2476 = ["247x"]           # 8kB RAM
+msp430fr2512 = ["25x2"]           # 2kB RAM up to 8 self-capacitive and 16 mutual-capacitive sensors
+msp430fr2522 = ["25x2"]           # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
 
 # Derived features. Do not provide these.
 2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk"]
 247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "rtc_aclk"]
+25x2 = ["dep:msp430fr25x2", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "eusci_b", "vloclk_source"]
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
 eusci_modclk = [] # eUSCI peripherals can source from MODCLK
 adc12bit = ["adc"]
@@ -45,16 +49,18 @@ enhanced_cs = []
 rtc_aclk = []
 
 [dependencies]
+defmt = {version = "1.0", optional = true }
 msp430 = "0.4.0"
 msp430fr2355 = { version = "0.6", features = ["rt", "critical-section"], optional = true }
 msp430fr2433 = { version = "0.2", features = ["rt", "critical-section"], optional = true }
-msp430fr247x = { version = "0.3.1", features = ["rt", "critical-section"], optional = true }
+msp430fr247x = { version = "0.3.3", features = ["rt", "critical-section"], optional = true }
+msp430fr25x2 = { version = "0.3.3", features = ["rt", "critical-section"], optional = true }
 nb = "1.1"
 void = { version = "1.0.2", default-features = false, optional = true }
 embedded-hal-02 = { package = 'embedded-hal', version = "0.2.7", features = ["unproven"], optional = true }
 embedded-hal = { version = "1.0" }
 embedded-hal-nb = { version = "1.0" }
-embedded-io = "0.6"
+embedded-io = "0.7"
 bitflags = "2.9"
 
 [dev-dependencies]

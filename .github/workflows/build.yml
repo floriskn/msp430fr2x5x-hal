@@ -10,9 +10,10 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         rust_toolchain: [nightly, nightly-2024-09-01]
-        device: [msp430fr2355, msp430fr2476]
+        device: [msp430fr2355, msp430fr2476, msp430fr2433, msp430fr2522]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -39,7 +40,7 @@ jobs:
       - name: Build library
         working-directory: hal/
         run: cargo +${{matrix.rust_toolchain}} build --features ${{matrix.device}}
-    
+
       - name: Build library with ehal02
         working-directory: hal/
         run: cargo +${{matrix.rust_toolchain}} build --features ${{matrix.device}},embedded-hal-02
@@ -48,21 +49,26 @@ jobs:
         if: matrix.rust_toolchain == 'nightly'
         working-directory: device-examples/${{matrix.device}}
         run: cargo build --examples
-      
+
       - name: Build MSRV examples
         if: matrix.rust_toolchain != 'nightly'
         working-directory: device-examples/${{matrix.device}}
         shell: bash
         run: |
+          failed=0
           for ex in examples/*.rs; do
-            # Skip examples that rely on non-MSRV features 
+            # Skip examples that rely on non-MSRV features
             case "$(basename $ex)" in
-              lpm0.rs)
+              lpm0.rs|defmt.rs)
                 echo "Skipping $ex"
                 ;;
               *)
                 echo "Building $ex"
-                cargo +${{matrix.rust_toolchain}} build --example "$(basename $ex .rs)"
+                if ! cargo +${{matrix.rust_toolchain}} build --example "$(basename $ex .rs)" --no-default-features; then
+                    echo "Failed to build $ex"
+                    failed=1
+                fi
                 ;;
             esac
           done
+          exit "$failed"

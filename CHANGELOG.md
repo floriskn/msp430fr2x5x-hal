@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [v0.8.0] - 2026-08-14
+- Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
+  - On the old `msp430fr2x5c-hal` crate, this added a build error telling users to switch to the new `msp430-hal` crate.
+  - On the new crate `msp430-hal`, 0.8.0 is a no-change release from 0.7.0, just to keep version numbers in line.
+
+## [v0.7.0] - 2026-08-11
+- Add support for the MSP430FR25x2 subfamily.
+- Add support for the MSP430FR247x subfamily.
+- Add support for pin remapping on certain peripherals on certain devices (like the FR247x subfamily). For devices that don't support pin remapping this should be invisible for the most part.
+- Add defmt support through `defmt` feature flag.
+- Optimised GPIO toggling implementation
+- Fixed a bug around enabling/disabling the PWM on the FR2433 Timer1 peripheral.
+
 ## [v0.6.1] - 2026-03-11
 - Fix missing readme on crates.io
 

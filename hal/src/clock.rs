@@ -15,6 +15,14 @@
 use core::arch::asm;
 use core::marker::PhantomData;
 
+pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
+use crate::_pac::{
+    self,
+    cs::{
+        csctl1::Dcorsel,
+        csctl4::{Sela, Selms},
+    },
+};
 use crate::delay::SysDelay;
 use crate::fram::{Fram, WaitStates};
 use crate::_pac::{
@@ -524,16 +532,12 @@ pub trait SmclkState {
 
 impl SmclkState for SmclkDefined {
     #[inline(always)]
-    fn div(&self) -> Option<SmclkDiv> {
-        Some(self.0)
-    }
+    fn div(&self) -> Option<SmclkDiv> { Some(self.0) }
 }
 
 impl SmclkState for SmclkDisabled {
     #[inline(always)]
-    fn div(&self) -> Option<SmclkDiv> {
-        None
-    }
+    fn div(&self) -> Option<SmclkDiv> { None }
 }
 
 /// Builder object that configures system clocks
@@ -791,12 +795,9 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
     #[inline]
     fn configure_cs(&self) {
         // Configure clock selector and divisors
-        self.periph.csctl4().write(|w| {
-            w.sela()
-                .variant(self.aclk_sel.sela())
-                .selms()
-                .variant(self.mclk.0.selms())
-        });
+        self.periph.csctl4().write(|w| w
+                .sela().variant(self.aclk_sel.sela())
+                .selms().variant(self.mclk.0.selms()));
 
         self.periph.csctl5().write(|w| {
             let w = w.vloautooff().set_bit().divm().variant(self.mclk_div);
@@ -912,9 +913,7 @@ pub trait Clock {
 
 impl Clock for Smclk {
     #[inline]
-    fn freq(&self) -> u32 {
-        self.0
-    }
+    fn freq(&self) -> u32 { self.0 }
 }
 
 impl Clock for Aclk {
