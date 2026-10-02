@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add `ClockConfig::refo_low_power()` on the MSP430FR2x5x (enhanced clock system).
 - Add `TimerConfig::vloclk()`, for the timers that can be clocked from the VLO: TA0 and TA2 on the MSP430FR247x, and TA0 on the MSP430FR25x2.
 - Add timer cascading: `TimerConfig::cascade()` clocks a timer from the CCR2 output of another timer, set up with `SubTimer::into_cascade_output()` or `PwmUninit::into_cascade_output()`, so that it counts the periods of that timer. Available for TA1 (from TA0) and TA3 (from TA2) on the MSP430FR247x, TA1 (from TA0) on the MSP430FR25x2, and TB1 (from TB0) on the MSP430FR2x5x.
+- Add `TimerParts2` for timers with two capture/compare registers: TA2 and TA3 on the MSP430FR2433, which couldn't be used before. They aren't connected to any pins, so they work as timers only.
 - The DCO is now trimmed in software for every frequency except the device's highest, as the user's guide recommends, so the FLL locks reliably.
 - The 8 MHz and 16 MHz DCO settings now run at 7.995 MHz and 15.991 MHz. They previously ran slightly above 8 MHz and 16 MHz, which needed an extra FRAM wait state and, at 16 MHz, exceeded the maximum frequency of most devices.
 - FRAM wait states now also cover MCLK while the DCO is being configured, which runs undivided before the MCLK divider is applied.

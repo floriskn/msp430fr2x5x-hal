@@ -25,7 +25,7 @@ impl<T: CCRn<C>, C> CapCmp<C> for T {}
 // Trait effectively sealed by TimerB
 /// Trait indicating that the peripheral can be used as a timer
 pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
-    /// Pin type used for external TBxCLK of this timer
+    /// Pin type used for external TBxCLK of this timer, or [`NoTbxclkPin`] if it has none
     type Tbxclk;
 
     /// Additional configuration
@@ -33,7 +33,15 @@ pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
     fn configure_pin_mapping() {}
 }
 
+/// The external TBxCLK pin of timers that don't have one, such as TA2 and TA3 on the
+/// MSP430FR2433
+///
+/// It has no values, so [`TimerConfig::tbclk`] can't be called for these timers.
+pub enum NoTbxclkPin {}
+
 // Traits effectively sealed by CCRn
+/// Trait indicating that the peripheral has 2 capture compare registers
+pub trait CapCmpTimer2<M: PinMap = DefaultMapping>: TimerPeriph<M> + CapCmp<CCR1> {}
 /// Trait indicating that the peripheral has 3 capture compare registers
 pub trait CapCmpTimer3<M: PinMap = DefaultMapping>:
     TimerPeriph<M> + CapCmp<CCR1> + CapCmp<CCR2>
@@ -187,6 +195,37 @@ where
     /// example, a source timer with a period of 1 s lets this timer count seconds.
     #[inline]
     pub fn cascade(_source: &CascadeOutput<T::Source>) -> Self { Self::with_clock(Tbssel::Inclk) }
+}
+
+/// Main timer and sub-timer for timer peripherals with 2 capture-compare registers
+pub struct TimerParts2<T, M = DefaultMapping>
+where
+    T: CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Main timer
+    pub timer: Timer<T, M>,
+    /// Timer interrupt vector
+    pub tbxiv: TBxIV<T>,
+    /// Sub-timer 1 (derived from CCR1 register)
+    pub subtimer1: SubTimer<T, CCR1>,
+}
+
+impl<T, M> TimerParts2<T, M>
+where
+    T: CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Create new set of timers out of a TBx peripheral
+    #[inline(always)]
+    pub fn new(_timer: T, config: TimerConfig<T, M>) -> Self {
+        config.write_regs(unsafe { &T::steal() });
+        Self {
+            timer: Timer::new(),
+            tbxiv: TBxIV(PhantomData),
+            subtimer1: SubTimer::new(),
+        }
+    }
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers

@@ -462,6 +462,18 @@ mod timer {
     }
     impl CapCmpTimer3 for Timer1A3 {}
 
+    // TA2 and TA3 aren't connected to any pins, so they have no clock pin and no PWM or capture
+    // (data sheet, Timer_A section)
+    impl TimerPeriph for Timer2A2 {
+        type Tbxclk = NoTbxclkPin;
+    }
+    impl CapCmpTimer2 for Timer2A2 {}
+
+    impl TimerPeriph for Timer3A2 {
+        type Tbxclk = NoTbxclkPin;
+    }
+    impl CapCmpTimer2 for Timer3A2 {}
+
     // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (data sheet,
     // Tables 6-11 to 6-14)
 }
