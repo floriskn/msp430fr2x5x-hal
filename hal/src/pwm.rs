@@ -13,8 +13,8 @@ use crate::timer::{CapCmpTimer3, CapCmpTimer7};
 use core::marker::PhantomData;
 
 pub use crate::timer::{
-    CapCmp, TimerConfig, TimerDiv, TimerExDiv, TimerPeriph, CCR0, CCR1, CCR2, CCR3, CCR4, CCR5,
-    CCR6,
+    CapCmp, CascadeOutput, TimerConfig, TimerDiv, TimerExDiv, TimerPeriph, CCR0, CCR1, CCR2, CCR3,
+    CCR4, CCR5, CCR6,
 };
 
 // Sealed by CapCmp
@@ -108,6 +108,13 @@ impl<T: PwmPeriph<C>, C> PwmUninit<T, C> {
 impl<T, C> PwmUninit<T, C> {
     #[inline]
     fn new() -> Self { Self(PhantomData, PhantomData) }
+}
+
+impl<T: CapCmp<CCR2>> PwmUninit<T, CCR2> {
+    /// Use this PWM output to clock a cascaded timer instead of a pin, see
+    /// [`TimerConfig::cascade`]. The cascaded timer then counts PWM periods.
+    #[inline]
+    pub fn into_cascade_output(self) -> CascadeOutput<T> { CascadeOutput::new() }
 }
 
 /// An initialized Pwm pin

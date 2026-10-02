@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add `ClockConfig::try_freeze()`, which gives up on XT1 after a timeout instead of blocking, and `ClockConfig::xt1clk_off()` to fall back to the internal oscillators.
 - Add `Xt1clk::is_faulted()` and `Xt1clk::clear_fault()`. XT1 faults switch the clocks it sources to a fallback oscillator until the fault flags are cleared.
 - Add `ClockConfig::refo_low_power()` on the MSP430FR2x5x (enhanced clock system).
+- Add `TimerConfig::vloclk()`, for the timers that can be clocked from the VLO: TA0 and TA2 on the MSP430FR247x, and TA0 on the MSP430FR25x2.
+- Add timer cascading: `TimerConfig::cascade()` clocks a timer from the CCR2 output of another timer, set up with `SubTimer::into_cascade_output()` or `PwmUninit::into_cascade_output()`, so that it counts the periods of that timer. Available for TA1 (from TA0) and TA3 (from TA2) on the MSP430FR247x, TA1 (from TA0) on the MSP430FR25x2, and TB1 (from TB0) on the MSP430FR2x5x.
 - The DCO is now trimmed in software for every frequency except the device's highest, as the user's guide recommends, so the FLL locks reliably.
 - The 8 MHz and 16 MHz DCO settings now run at 7.995 MHz and 15.991 MHz. They previously ran slightly above 8 MHz and 16 MHz, which needed an extra FRAM wait state and, at 16 MHz, exceeded the maximum frequency of most devices.
 - FRAM wait states now also cover MCLK while the DCO is being configured, which runs undivided before the MCLK divider is applied.
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed XT1 pins on the MSP430FR2x5x, which need alternate function 2.
 - Fixed LPM3.5 entry stopping XT1 on devices other than the MSP430FR2x5x, and not resetting `P2SEL1`. LPMx.5 entry now also clears ACLKREQEN, as the user's guide requires.
 - Fixed `delay_ns()` and `delay_us()` never waiting longer than 1 ms.
+- Fixed the TB0 clock input pin (TB0CLK) on the MSP430FR247x, which is P6.1, not P2.7.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

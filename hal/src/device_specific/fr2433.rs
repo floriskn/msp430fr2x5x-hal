@@ -461,6 +461,9 @@ mod timer {
         type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
     }
     impl CapCmpTimer3 for Timer1A3 {}
+
+    // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (data sheet,
+    // Tables 6-11 to 6-14)
 }
 
 pub mod clock {

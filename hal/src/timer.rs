@@ -8,7 +8,7 @@
 //! `Capture` and `Pwm`.
 
 use crate::clock::{Aclk, Smclk};
-use crate::hw_traits::timer_base::{CCRn, RunningMode, Tbssel, TimerBase};
+use crate::hw_traits::timer_base::{CCRn, Outmod, RunningMode, Tbssel, TimerBase};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
 use core::marker::PhantomData;
@@ -49,6 +49,55 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     + CapCmp<CCR6>
 {}
 
+// Traits effectively sealed by TimerBase
+/// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
+///
+/// A timer's fourth clock input, INCLK, is wired differently on each device and each timer. These
+/// timers have the VLO on it (data sheet, timer signal connections):
+///
+/// | Device                     | Timers   |
+/// |----------------------------|----------|
+/// | MSP430FR2475, MSP430FR2476 | TA0, TA2 |
+/// | MSP430FR2512, MSP430FR2522 | TA0      |
+/// | Other devices              | None     |
+pub trait VloclkTimer: TimerBase {}
+
+/// Trait indicating that the timer can be clocked by another timer, see [`TimerConfig::cascade`]
+///
+/// A timer's fourth clock input, INCLK, is wired differently on each device and each timer. These
+/// timers have the CCR2 output of their `Source` timer on it (data sheet, timer signal
+/// connections):
+///
+/// | Device                     | Timer ← `Source`     |
+/// |----------------------------|----------------------|
+/// | MSP430FR2475, MSP430FR2476 | TA1 ← TA0, TA3 ← TA2 |
+/// | MSP430FR2512, MSP430FR2522 | TA1 ← TA0            |
+/// | MSP430FR2x5x               | TB1 ← TB0            |
+/// | MSP430FR2433               | None                 |
+pub trait CascadedTimer: TimerBase {
+    /// Timer whose CCR2 output clocks this timer
+    type Source: CapCmp<CCR2>;
+}
+
+/// The CCR2 output of timer `T`, set up to clock a [`CascadedTimer`] with
+/// [`TimerConfig::cascade`]
+///
+/// While `T` runs, the output is high for the first count of each period, so the cascaded timer
+/// counts as `T` wraps around to 0. This needs a period of at least 2 counts.
+pub struct CascadeOutput<T>(PhantomData<T>);
+
+impl<T: CapCmp<CCR2>> CascadeOutput<T> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        let timer = unsafe { T::steal() };
+        // Reset/set mode sets the output as the timer wraps around to 0, and resets it when the
+        // timer reaches CCR2. With CCR2 at 0 both happen at once and the output stays low.
+        CCRn::<CCR2>::set_ccrn(&timer, 1);
+        CCRn::<CCR2>::config_outmod(&timer, Outmod::ResetSet);
+        CascadeOutput(PhantomData)
+    }
+}
+
 /// Configuration object for the TimerB peripheral
 ///
 /// Used to configure `Timer`, `Capture`, and `Pwm`, which all use the TimerB peripheral.
@@ -69,41 +118,28 @@ where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    /// Configure timer clock source to ACLK
     #[inline]
-    pub fn aclk(_aclk: &Aclk) -> Self {
+    fn with_clock(sel: Tbssel) -> Self {
         TimerConfig {
             _timer: PhantomData,
-            sel: Tbssel::Aclk,
+            sel,
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
             _pin_map: PhantomData,
         }
     }
+
+    /// Configure timer clock source to ACLK
+    #[inline]
+    pub fn aclk(_aclk: &Aclk) -> Self { Self::with_clock(Tbssel::Aclk) }
 
     /// Configure timer clock source to SMCLK
     #[inline]
-    pub fn smclk(_smclk: &Smclk) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: Tbssel::Smclk,
-            div: TimerDiv::_1,
-            ex_div: TimerExDiv::_1,
-            _pin_map: PhantomData,
-        }
-    }
+    pub fn smclk(_smclk: &Smclk) -> Self { Self::with_clock(Tbssel::Smclk) }
 
     /// Configure timer clock source to TBCLK
     #[inline]
-    pub fn tbclk(_pin: T::Tbxclk) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: Tbssel::Tbxclk,
-            div: TimerDiv::_1,
-            ex_div: TimerExDiv::_1,
-            _pin_map: PhantomData,
-        }
-    }
+    pub fn tbclk(_pin: T::Tbxclk) -> Self { Self::with_clock(Tbssel::Tbxclk) }
 
     /// Configure the normal clock divider and expansion clock divider settings
     #[inline]
@@ -124,6 +160,33 @@ where
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
     }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + VloclkTimer,
+    M: PinMap,
+{
+    /// Configure timer clock source to VLOCLK, which runs at about 10 kHz but is only accurate to
+    /// ±50 % (data sheet). Only some timers have this option, see [`VloclkTimer`].
+    #[inline]
+    pub fn vloclk() -> Self { Self::with_clock(Tbssel::Inclk) }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + CascadedTimer,
+    M: PinMap,
+{
+    /// Configure the timer to be clocked by its source timer (cascading): it counts once per
+    /// period of the source timer, while that timer runs. Only some timers have this option, see
+    /// [`CascadedTimer`].
+    ///
+    /// `source` is the source timer's CCR2 output, from [`SubTimer::into_cascade_output`] or
+    /// [`PwmUninit::into_cascade_output`](crate::pwm::PwmUninit::into_cascade_output). For
+    /// example, a source timer with a period of 1 s lets this timer count seconds.
+    #[inline]
+    pub fn cascade(_source: &CascadeOutput<T::Source>) -> Self { Self::with_clock(Tbssel::Inclk) }
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
@@ -373,6 +436,12 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
     }
+}
+
+impl<T: CapCmp<CCR2>> SubTimer<T, CCR2> {
+    #[inline]
+    /// Use CCR2 to clock a cascaded timer instead, see [`TimerConfig::cascade`]
+    pub fn into_cascade_output(self) -> CascadeOutput<T> { CascadeOutput::new() }
 }
 
 #[cfg(feature = "embedded-hal-02")]

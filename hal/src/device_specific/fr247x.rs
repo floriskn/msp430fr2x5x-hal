@@ -1021,9 +1021,21 @@ mod timer {
     impl CapCmpTimer3<RemappedMapping> for Ta3 {}
 
     impl TimerPeriph for Tb0 {
-        type Tbxclk = Pin<P2, Pin7, Alternate1<Input<Floating>>>;
+        // TB0CLK is only bonded out in the 48-pin package
+        type Tbxclk = Pin<P6, Pin1, Alternate1<Input<Floating>>>;
     }
     impl CapCmpTimer7 for Tb0 {}
+
+    // INCLK is the VLO on TA0 and TA2, and the CCR2 output of TA0 on TA1 and of TA2 on TA3. It
+    // isn't connected on TB0. (Data sheet, Tables 9-12 to 9-15)
+    impl VloclkTimer for Ta0 {}
+    impl VloclkTimer for Ta2 {}
+    impl CascadedTimer for Ta1 {
+        type Source = Ta0;
+    }
+    impl CascadedTimer for Ta3 {
+        type Source = Ta2;
+    }
 }
 
 pub mod clock {

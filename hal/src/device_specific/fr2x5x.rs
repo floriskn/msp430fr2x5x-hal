@@ -774,6 +774,12 @@ mod timer {
         type Tbxclk = Pin<P6, Pin6, Alternate1<Input<Floating>>>;
     }
     impl CapCmpTimer7 for Tb3 {}
+
+    // INCLK is the CCR2 output of TB0 on TB1. It isn't connected on TB0, and on TB2 and TB3 it is
+    // the TBxCLK pin again, the same as `TimerConfig::tbclk`. (Data sheet, Tables 6-16 to 6-19)
+    impl CascadedTimer for Tb1 {
+        type Source = Tb0;
+    }
 }
 
 pub mod clock {

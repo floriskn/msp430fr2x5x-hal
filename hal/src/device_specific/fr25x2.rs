@@ -465,6 +465,12 @@ mod timer {
         type Tbxclk = Pin<P2, Pin4, Alternate1<Input<Floating>>>;
     }
     impl CapCmpTimer3 for Ta1 {}
+
+    // INCLK is the VLO on TA0 and the CCR2 output of TA0 on TA1 (data sheet, Figure 6-2)
+    impl VloclkTimer for Ta0 {}
+    impl CascadedTimer for Ta1 {
+        type Source = Ta0;
+    }
 }
 
 pub mod clock {
