@@ -4,11 +4,13 @@
 //! 
 //! Supports SMCLK, ACLK, VLOCLK, and XT1CLK as clock sources.
 //! 
-//! Note: On FR2x5x and FR247x series, ACLK and SMCLK share the same RTCCKSEL 
-//! hardware bit pattern and are further distinguished via SYSCFG2 selection.
+//! Note: On devices that can clock the RTC from ACLK (FR2x5x, FR247x and FR25x2), ACLK and
+//! SMCLK share the same RTCSS bit pattern and are further distinguished via the SYSCFG2
+//! RTCCKSEL selection.
 
 use crate::clock::{Smclk, Xt1clk};
 use core::{convert::Infallible, marker::PhantomData};
+use crate::_pac::{self, rtc::rtcctl::Rtcss};
 
 #[cfg(feature = "rtc_aclk")]
 use crate::clock::Aclk;
@@ -65,7 +67,7 @@ impl RtcClockSrc for RtcAclk {
     const CLK_SRC: Rtcss = Rtcss::Smclk;
     
     fn apply_sys_config() {
-        // Ensure the mux is set to SMCLK (0)
+        // Ensure the mux is set to ACLK (1)
         let sys = unsafe { &*_pac::Sys::ptr() };
         sys.syscfg2().modify(|_, w| w.rtccksel().set_bit());
     }
@@ -77,6 +79,12 @@ pub struct RtcXt1clk;
 impl RtcClockSrc for RtcXt1clk {
     const CLK_SRC: Rtcss = Rtcss::Xt1clk;
 }
+
+/// Marker trait for RTC clock sources that keep running in LPM3.5 (VLOCLK and XT1CLK)
+pub trait RtcLpm3_5ClockSrc: RtcClockSrc {}
+
+impl RtcLpm3_5ClockSrc for RtcVloclk {}
+impl RtcLpm3_5ClockSrc for RtcXt1clk {}
 
 /// 16-bit real-time counter
 pub struct Rtc<SRC: RtcClockSrc> {
@@ -121,6 +129,9 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
 
     /// Configure the RTC to use XT1CLK as clock source. Setting comes in effect the next time RTC
     /// is started.
+    ///
+    /// XT1 must run in low-frequency mode: the RTC's XT1CLK input only carries a 32 kHz XT1
+    /// (device data sheets, clock distribution).
     #[inline]
     pub fn use_xt1clk(self, _xt1clk: &Xt1clk) -> Rtc<RtcXt1clk> {
         Rtc {
@@ -158,17 +169,23 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     pub fn get_count(&self) -> u16 { self.periph.rtccnt().read().bits() }
 
     #[inline]
-    /// Clear the timer contents and start the timer counting up to `count`.
+    /// Clear the timer contents and start the timer counting up to `count`. The counter wraps to
+    /// zero after reaching `count`, so a period lasts `count + 1` ticks of the divided clock.
     pub fn start(&mut self, count: u16) {
         self.periph.rtcmod().write(|w| unsafe { w.bits(count) });
-        // Need to clear interrupt flag from last timer run
-        self.periph.rtciv().read();
         SRC::apply_sys_config();
+        // Select the clock first, then reset the counter, which also loads `count` into the
+        // shadow register. The reset resynchronizes the count with the new clock (SLAU445I 15.2.2).
         self.periph.rtcctl().modify(|r, w| {
             unsafe { w.bits(r.bits()) }
             .rtcss().variant(SRC::CLK_SRC)
+        });
+        self.periph.rtcctl().modify(|r, w| {
+            unsafe { w.bits(r.bits()) }
             .rtcsr().set_bit()
         });
+        // Clear the interrupt flag from the last timer run, and any raised while switching clocks
+        self.periph.rtciv().read();
     }
 
     #[inline]

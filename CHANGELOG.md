@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+- Add XT1 support, in crystal and bypass mode, through `Xt1Config` and `ClockConfig::xt1clk_on()`. XT1 can source ACLK, MCLK and SMCLK, and serve as the FLL reference. `Xt1Config::crystal()` and `bypass()` set up a 32 kHz XT1; on the MSP430FR2x5x, `crystal_hf()` and `bypass_hf()` set up a 1 MHz to 24 MHz XT1, typed as `HighFrequency`. The XT1 pins of each device are available as `clock::Xt1Xin` and `clock::Xt1Xout`.
+- Add `ClockConfig::try_freeze()`, which gives up on XT1 after a timeout instead of blocking, and `ClockConfig::xt1clk_off()` to fall back to the internal oscillators.
+- Add `Xt1clk::is_faulted()` and `Xt1clk::clear_fault()`. XT1 faults switch the clocks it sources to a fallback oscillator until the fault flags are cleared.
+- Add `ClockConfig::refo_low_power()` on the MSP430FR2x5x (enhanced clock system).
+- The DCO is now trimmed in software for every frequency except the device's highest, as the user's guide recommends, so the FLL locks reliably.
+- The 8 MHz and 16 MHz DCO settings now run at 7.995 MHz and 15.991 MHz. They previously ran slightly above 8 MHz and 16 MHz, which needed an extra FRAM wait state and, at 16 MHz, exceeded the maximum frequency of most devices.
+- FRAM wait states now also cover MCLK while the DCO is being configured, which runs undivided before the MCLK divider is applied.
+- The RTC can now be clocked from ACLK and XT1CLK. `Rtc::start()` now resets the counter after selecting the clock, as the user's guide recommends.
+- `enter_lpm3_5()` now accepts an RTC clocked from XT1CLK. After a wake-up from LPM3.5, `Pmm::new_locked()` and `Pmm::unlock_lpm5()` allow XT1 to be reconfigured before the pins are unlocked, so it keeps clocking the RTC.
+- PWM pins no longer specify their alternate function separately: it is derived from the pin type.
+- Breaking: `ClockConfig::aclk_vloclk()` is no longer available on the MSP430FR25x2, which can't source ACLK from VLO.
+- Fixed XT1 pins on the MSP430FR2x5x, which need alternate function 2.
+- Fixed LPM3.5 entry stopping XT1 on devices other than the MSP430FR2x5x, and not resetting `P2SEL1`. LPMx.5 entry now also clears ACLKREQEN, as the user's guide requires.
+- Fixed `delay_ns()` and `delay_us()` never waiting longer than 1 ms.
+
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
   - On the old `msp430fr2x5c-hal` crate, this added a build error telling users to switch to the new `msp430-hal` crate.

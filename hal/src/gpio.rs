@@ -17,6 +17,7 @@
 
 pub use crate::batch_gpio::*;
 use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph};
+use crate::hw_traits::Steal;
 use crate::util::BitsExt;
 use core::convert::Infallible;
 use core::marker::PhantomData;
@@ -29,6 +30,7 @@ mod sealed {
 
     pub trait SealedPinNum {}
     pub trait SealedGpioFunction {}
+    pub trait SealedAlternateMode {}
 
     impl SealedPinNum for Pin0 {}
     impl SealedPinNum for Pin1 {}
@@ -41,6 +43,10 @@ mod sealed {
 
     impl SealedGpioFunction for Output {}
     impl<PULL> SealedGpioFunction for Input<PULL> {}
+
+    impl<DIR> SealedAlternateMode for Alternate1<DIR> {}
+    impl<DIR> SealedAlternateMode for Alternate2<DIR> {}
+    impl<DIR> SealedAlternateMode for Alternate3<DIR> {}
 }
 
 /// Trait that encompasses all `Pinx` types for specifying a pin number.
@@ -452,6 +458,97 @@ pub struct Alternate2<DIR>(PhantomData<DIR>);
 
 /// Typestate for GPIO alternate function 3
 pub struct Alternate3<DIR>(PhantomData<DIR>);
+
+// Only used as a bound inside the HAL, so keep it hidden
+/// Alternate function typestates, with the PxSEL bits that select them
+#[doc(hidden)]
+pub trait AlternateMode: sealed::SealedAlternateMode {
+    /// PxSEL0 bit value that selects this function
+    const SEL0: bool;
+    /// PxSEL1 bit value that selects this function
+    const SEL1: bool;
+}
+
+impl<DIR> AlternateMode for Alternate1<DIR> {
+    const SEL0: bool = true;
+    const SEL1: bool = false;
+}
+
+impl<DIR> AlternateMode for Alternate2<DIR> {
+    const SEL0: bool = false;
+    const SEL1: bool = true;
+}
+
+impl<DIR> AlternateMode for Alternate3<DIR> {
+    const SEL0: bool = true;
+    const SEL1: bool = true;
+}
+
+// Only used as a bound inside the HAL, so keep it hidden
+/// A pin whose type puts it in one of its three alternate functions: `Alternate1`, `Alternate2`
+/// or `Alternate3` (PxSEL1/PxSEL0 = 01, 10 or 11, TI's primary, secondary and tertiary module
+/// functions). For example, on the FR247x `Pin<P1, Pin1, Alternate2<Output>>` is P1.1 in
+/// alternate function 2, the TA0.1 timer output.
+///
+/// The type alone gives the pin's port and the PxSEL bits of its alternate function, so code
+/// that only knows the type can find the pin. The methods switch the pin in hardware between
+/// that one alternate function and plain GPIO, without changing the pin's type. PWM uses them
+/// to disconnect its output while disabled, and LPMx.5 entry uses them to check whether XIN is
+/// still connected to XT1.
+#[doc(hidden)]
+pub trait AlternatePin: ChangeSelectBits {
+    /// The pin's port
+    type Port: PortNum;
+    /// The pin's bit within its port
+    const MASK: u8;
+    /// PxSEL0 bit value of the alternate function in the pin's type
+    const SEL0: bool;
+    /// PxSEL1 bit value of the alternate function in the pin's type
+    const SEL1: bool;
+
+    /// Whether the pin's PxSEL bits currently select the alternate function in its type
+    #[inline]
+    fn function_matches_type() -> bool {
+        let port = unsafe { Self::Port::steal() };
+        let sel0 = port.pxsel0_rd() & Self::MASK != 0;
+        let sel1 = port.pxsel1_rd() & Self::MASK != 0;
+        sel0 == Self::SEL0 && sel1 == Self::SEL1
+    }
+
+    /// Set the pin's PxSEL bits to the alternate function in its type: PxSEL0 for `Alternate1`,
+    /// PxSEL1 for `Alternate2`, both for `Alternate3`. Does nothing if they already are.
+    #[inline]
+    fn set_function_from_type(&mut self) {
+        match (Self::SEL0, Self::SEL1) {
+            (true, false) => self.set_sel0(),
+            (false, true) => self.set_sel1(),
+            // Alternate function 3 needs both PxSEL bits set. Setting one bit at a time would
+            // briefly select function 1 or 2 in between, so flip both in one write through
+            // PxSELC, as `to_alternate3()` does (SLAU445I 8.2.5). A flip toggles, so only flip
+            // while the pin is a GPIO.
+            _ => if !Self::function_matches_type() { self.flip_selc() },
+        }
+    }
+
+    /// Clear the pin's PxSEL bits, so it acts as a plain GPIO with its PxOUT and PxDIR
+    /// settings. The pin's type stays the same. Does nothing if the bits are already clear.
+    #[inline]
+    fn set_function_gpio(&mut self) {
+        match (Self::SEL0, Self::SEL1) {
+            (true, false) => self.clear_sel0(),
+            (false, true) => self.clear_sel1(),
+            // Clear both PxSEL bits in one write, see `set_function_from_type`
+            _ => if Self::function_matches_type() { self.flip_selc() },
+        }
+    }
+}
+
+impl<PORT: PortNum, PIN: PinNum, MODE: AlternateMode> AlternatePin for Pin<PORT, PIN, MODE> {
+    type Port = PORT;
+    const MASK: u8 = PIN::SET_MASK;
+    const SEL0: bool = MODE::SEL0;
+    const SEL1: bool = MODE::SEL1;
+}
 
 #[cfg(feature = "adcpctl")]
 /// Typestate for GPIO ADC mode (for devices that use ADCPCTLx)

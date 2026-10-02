@@ -37,10 +37,34 @@ pub enum ReferenceVoltage {
 pub struct InternalTempSensor<'a>(PhantomData<&'a InternalVRef>);
 
 impl Pmm {
-    /// Sets the LOCKLPM5 bit and returns a `Pmm` (and an `InfoMemory`).
+    /// Clears the LOCKLPM5 bit, so the I/O pins take on their configured state, and returns a
+    /// `Pmm` (and an `InfoMemory`).
     pub fn new(pmm: _pac::Pmm, sys: _pac::Sys) -> (Pmm, InfoMemory) {
-        pmm.pm5ctl0().write(|w| w.locklpm5().clear_bit());
+        let mut pmm = Pmm(pmm);
+        pmm.unlock_lpm5();
+        (pmm, InfoMemory::new(sys))
+    }
+
+    /// Like [`Pmm::new`], but leaves the LOCKLPM5 bit set. Use this after a wake-up from
+    /// LPM3.5, and call [`Pmm::unlock_lpm5`] once the GPIO pins and clocks are configured.
+    ///
+    /// After a wake-up from LPMx.5 the I/O pins, and XT1 if it clocked the RTC, keep the
+    /// configuration they had while asleep until LOCKLPM5 is cleared, while their registers
+    /// start out reset. Configuring the pins, and XT1 through
+    /// [`ClockConfig`](crate::clock::ClockConfig), before clearing LOCKLPM5 lets them carry on
+    /// without a glitch (SLAU445I 1.4.3.3). With [`Pmm::new`], clearing LOCKLPM5 first would
+    /// stop XT1, and the RTC with it, until XT1 is reconfigured.
+    ///
+    /// After a cold start the locked pins are held in their power-on state, so XT1 cannot
+    /// start before LOCKLPM5 is cleared. Use [`Pmm::new`] then.
+    pub fn new_locked(pmm: _pac::Pmm, sys: _pac::Sys) -> (Pmm, InfoMemory) {
         (Pmm(pmm), InfoMemory::new(sys))
+    }
+
+    /// Clears the LOCKLPM5 bit, so the I/O pins take on their configured state. Only needed
+    /// after [`Pmm::new_locked`]; [`Pmm::new`] already does this.
+    pub fn unlock_lpm5(&mut self) {
+        self.0.pm5ctl0().write(|w| w.locklpm5().clear_bit());
     }
 
     /// Configures the internal voltage reference to the specified voltage and enables it.

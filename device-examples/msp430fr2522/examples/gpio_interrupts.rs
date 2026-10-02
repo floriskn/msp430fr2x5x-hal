@@ -22,7 +22,7 @@ use panic_msp430 as _;
 static RED_LED: Mutex<RefCell<Option<Pin<P1, Pin0, Output>>>> = Mutex::new(RefCell::new(None));
 static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
-// Red LED should blink 2 seconds on, 2 seconds off
+// Red LED should blink 1 second on, 1 second off
 // Both green and red LEDs should blink when P2.3 LED is pressed
 #[entry]
 fn main() -> ! {
@@ -32,7 +32,7 @@ fn main() -> ! {
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_refoclk(MclkDiv::_1) // 32 kHz MCLK
         .smclk_on(SmclkDiv::_2) // 16 kHz SMCLK
-        .aclk_vloclk()
+        .aclk_refoclk()
         .freeze(&mut Fram::new(periph.frctl));
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);

@@ -39,7 +39,7 @@ fn main() -> ! {
     let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
+        .aclk_refoclk()
         .freeze(&mut fram);
 
     let mut i2c: I2cSingleMaster<_, DefaultMapping> =

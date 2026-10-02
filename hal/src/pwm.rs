@@ -6,7 +6,7 @@
 //! Each PWM pin starts off in an "uninitialized" state and must be initialized by passing in the
 //! appropriate alternate-function GPIO pin. Only initialized pins can be used for PWM.
 
-use crate::gpio::ChangeSelectBits;
+use crate::gpio::AlternatePin;
 use crate::hw_traits::timer_base::{CCRn, Outmod};
 use crate::pin_mapping::{DefaultMapping, PinMap};
 use crate::timer::{CapCmpTimer3, CapCmpTimer7};
@@ -17,35 +17,11 @@ pub use crate::timer::{
     CCR6,
 };
 
-#[doc(hidden)]
-pub enum Alt {
-    Alt1,
-    Alt2,
-}
-
 // Sealed by CapCmp
 /// Associates PWM pins with specific GPIO pins
 pub trait PwmPeriph<C>: CapCmp<C> + CapCmp<CCR0> {
-    /// GPIO type
-    type Gpio: ChangeSelectBits;
-    #[doc(hidden)]
-    const ALT: Alt;
-
-    #[doc(hidden)]
-    fn to_alt(pin: &mut Self::Gpio) {
-        match Self::ALT {
-            Alt::Alt1 => pin.set_sel0(),
-            Alt::Alt2 => pin.set_sel1(),
-        }
-    }
-
-    #[doc(hidden)]
-    fn to_gpio(pin: &mut Self::Gpio) {
-        match Self::ALT {
-            Alt::Alt1 => pin.clear_sel0(),
-            Alt::Alt2 => pin.clear_sel1(),
-        }
-    }
+    /// GPIO type, in the alternate function that outputs the PWM signal
+    type Gpio: AlternatePin;
 }
 
 fn setup_pwm<T: TimerPeriph<M>, M: PinMap>(timer: &T, config: TimerConfig<T, M>, period: u16) {
@@ -202,9 +178,9 @@ mod ehal02 {
         }
 
         #[inline]
-        fn disable(&mut self) { T::to_gpio(&mut self.pin); }
+        fn disable(&mut self) { self.pin.set_function_gpio(); }
 
         #[inline]
-        fn enable(&mut self) { T::to_alt(&mut self.pin); }
+        fn enable(&mut self) { self.pin.set_function_from_type(); }
     }
 }

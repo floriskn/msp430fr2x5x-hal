@@ -48,10 +48,14 @@
 //! the GPIO pins will take on their reset values when LOCKLPM5 is cleared.
 
 use crate::_pac;
+use core::any::TypeId;
 use core::arch::asm;
 
 use crate::{
-    rtc::{Rtc, RtcVloclk},
+    clock::{Xt1Xin, Xt1Xout},
+    device_specific::lpm::reset_all_pin_functions,
+    gpio::{AlternatePin, PortNum},
+    rtc::{Rtc, RtcLpm3_5ClockSrc},
     watchdog::{WatchdogSelect, Wdt},
 };
 
@@ -115,17 +119,18 @@ pub fn request_lpm4() {
 
 /// Enter Low Power Mode 3.5 (LPM3.5).
 ///
-/// In LPM3.5 everything except the backup memory, VLOCLK, and the RTC are disabled. The only enabled interrupts are from the RTC, I/O pins, the RST pin, or a power cycle.
+/// In LPM3.5 everything except the backup memory, the RTC and its clock (VLOCLK or XT1) are disabled. The only enabled interrupts are from the RTC, I/O pins, the RST pin, or a power cycle.
 ///
 /// I/O pins have their state latched while in LPM3.5, but the IO register values are reset on wake-up.
+/// If XT1 clocks the RTC, use [`Pmm::new_locked`](crate::pmm::Pmm::new_locked) after the wake-up to keep it running.
 ///
 /// **Waking up from LPM3.5 requires a full system reset**.
 ///
 /// Power draw in LPM3.5: Approx 620 nA.
 #[inline(always)]
-pub fn enter_lpm3_5<MODE: WatchdogSelect>(
+pub fn enter_lpm3_5<MODE: WatchdogSelect, SRC: RtcLpm3_5ClockSrc>(
     wdt: Wdt<MODE>,
-    _rtc: Rtc<RtcVloclk>,
+    _rtc: Rtc<SRC>,
     svs: SvsState,
 ) -> ! {
     lpm3_5(wdt, svs);
@@ -140,26 +145,10 @@ pub unsafe fn enter_lpm3_5_unchecked<MODE: WatchdogSelect>(wdt: Wdt<MODE>, svs: 
 }
 
 fn lpm3_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, svs: SvsState) -> ! {
-    // Take peripherals. Execution won't return from this fn.
-    let regs = unsafe { _pac::Peripherals::steal() };
-
-    // If LF XT crystal is not in use, reset everything, otherwise reset everything but XIN, XOUT
-    const MASK: u8 = (1 << 6) | (1 << 7);
-    let lfxt_in_use = (regs.p2.p2sel1().read().bits() & MASK == MASK)
-        && (regs.p2.p2sel0().read().bits() & MASK == 0);
-    if lfxt_in_use {
-        // Reset everything except for XIN and XOUT
-        unsafe {
-            regs.p2.p2sel1().clear_bits(|w| w.bits(MASK));
-            regs.p2.p2sel0().clear_bits(|w| w.bits(MASK));
-        }
-    } else {
-        // Reset everything
-        regs.p2.p2sel0().reset();
-        regs.p2.p2sel0().reset();
-    }
-
-    enter_lpmx_5(wdt, svs, regs)
+    // Every pin returns to GPIO, except the XT1 pins while XT1 is in use, so it can keep
+    // clocking the RTC (SLAU445I 1.4.3.1)
+    reset_all_pin_functions(KeepXt1Pins::in_use());
+    enter_lpmx_5(wdt, svs)
 }
 
 /// Enter Low Power Mode 4.5 (LPM4.5).
@@ -176,44 +165,65 @@ pub fn enter_lpm4_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, rtc_reg: _pac::Rtc, sv
     // Disable RTC
     unsafe { rtc_reg.rtcctl().clear_bits(|w| w.rtcss().disabled()) };
 
-    // Take peripherals. Execution won't return from this fn.
-    let regs = unsafe { crate::pac::Peripherals::steal() };
+    // LPM4.5 stops every oscillator, so every pin returns to GPIO, the XT1 pins included
+    // (SLAU445I 1.4.3.1)
+    reset_all_pin_functions(KeepXt1Pins::NONE);
+    enter_lpmx_5(wdt, svs)
+}
 
-    // Reset P2SEL, including XIN and XOUT
-    regs.p2.p2sel0().reset();
-    regs.p2.p2sel1().reset();
+/// The XT1 pins to leave in their XT1 function when entering LPMx.5
+#[derive(Clone, Copy)]
+pub(crate) struct KeepXt1Pins {
+    xin: bool,
+    xout: bool,
+}
 
-    enter_lpmx_5(wdt, svs, regs)
+impl KeepXt1Pins {
+    const NONE: Self = Self { xin: false, xout: false };
+
+    /// The XT1 pins currently in their XT1 function. XT1 is in use when XIN is selected for it;
+    /// XOUT only belongs to XT1 in crystal mode and may be a GPIO in bypass mode
+    /// (SLAU445I 3.2.4).
+    fn in_use() -> Self {
+        let xin = Xt1Xin::<()>::function_matches_type();
+        Self { xin, xout: xin && Xt1Xout::<()>::function_matches_type() }
+    }
+
+    /// Bit mask of the kept pins on `PORT`
+    fn mask_on<PORT: PortNum + 'static>(self) -> u8 {
+        fn pin_mask<PIN: AlternatePin, PORT: 'static>(keep: bool) -> u8
+        where
+            PIN::Port: 'static,
+        {
+            if keep && TypeId::of::<PIN::Port>() == TypeId::of::<PORT>() { PIN::MASK } else { 0 }
+        }
+        pin_mask::<Xt1Xin<()>, PORT>(self.xin) | pin_mask::<Xt1Xout<()>, PORT>(self.xout)
+    }
+}
+
+/// Return every pin of `PORT` to GPIO (PxSEL0 and PxSEL1 cleared), except the XT1 pins in `keep`
+pub(crate) fn reset_pin_functions<PORT: PortNum + 'static>(keep: KeepXt1Pins) {
+    let keep = keep.mask_on::<PORT>();
+    let port = unsafe { PORT::steal() };
+    // Clearing leaves only the bits in the mask set
+    port.pxsel0_clear(keep);
+    port.pxsel1_clear(keep);
 }
 
 /// Configuration common to LPM3.5 and 4.5
-fn enter_lpmx_5<MODE: WatchdogSelect>(
-    mut wdt: Wdt<MODE>,
-    svs: SvsState,
-    regs: _pac::Peripherals,
-) -> ! {
+fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
+    // Take peripherals. Execution won't return from this fn.
+    let regs = unsafe { _pac::Peripherals::steal() };
+
     // Pause WDT
     wdt.pause();
 
-    // Reset PxSEL
-    regs.p1.p1sel0().reset();
-    regs.p1.p1sel1().reset();
-    /* P2 reset by 4.5 and 3.5 fns */
-    #[cfg(not(feature = "25x2"))]
-    {
-        regs.p3.p3sel0().reset();
-        regs.p3.p3sel1().reset();
-    }
-
-    #[cfg(any(feature = "2x5x", feature = "247x"))]
-    {
-        regs.p4.p4sel0().reset();
-        regs.p4.p4sel1().reset();
-        regs.p5.p5sel0().reset();
-        regs.p5.p5sel1().reset();
-        regs.p6.p6sel0().reset();
-        regs.p6.p6sel1().reset();
-    }
+    // A module that still requests ACLK keeps the device out of LPMx.5 (SLAU445I 3.2.12.1)
+    unsafe { regs.cs.csctl8().clear_bits(|w| w.aclkreqen().clear_bit()) };
+    // The low-power REFO mode must be switched off before LPMx.5, or it draws extra current
+    // (SLAU445I Table 3-7)
+    #[cfg(feature = "enhanced_cs")]
+    unsafe { regs.cs.csctl3().clear_bits(|w| w.refolp().clear_bit()) };
 
     let interrupts_were_enabled = msp430::register::sr::read().gie();
     msp430::interrupt::disable();

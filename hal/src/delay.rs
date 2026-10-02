@@ -27,12 +27,12 @@ mod ehal1 {
         #[inline]
         /// Pauses execution for approximately `ns / 1_000_000` milliseconds (but always at least 1 ms). Recommend using delay_ms instead.
         fn delay_ns(&mut self, ns: u32) {
-            let ms = (ns >> 20).min(1);
+            let ms = (ns >> 20).max(1);
             self.delay_ms(ms)
         }
         /// Pauses execution for approximately `us / 1_000` milliseconds (but always at least 1 ms). Recommend using delay_ms instead.
         fn delay_us(&mut self, us: u32) {
-            let ms = (us >> 10).min(1);
+            let ms = (us >> 10).max(1);
             self.delay_ms(ms)
         }
         /// Pauses execution for approximately `ms` milliseconds.

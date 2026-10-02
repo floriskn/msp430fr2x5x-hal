@@ -459,79 +459,62 @@ mod pwm {
     // TA0
     impl PwmPeriph<CCR1> for Ta0 {
         type Gpio = Pin<P1, Pin1, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR2> for Ta0 {
         type Gpio = Pin<P1, Pin2, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
 
     // TA1
     impl PwmPeriph<CCR1> for Ta1 {
         type Gpio = Pin<P1, Pin5, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR2> for Ta1 {
         type Gpio = Pin<P1, Pin4, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
 
     // TA2
     impl PwmPeriph<CCR0> for Ta2 {
         type Gpio = Pin<P2, Pin3, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
     impl PwmPeriph<CCR1> for Ta2 {
         type Gpio = Pin<P3, Pin3, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
     impl PwmPeriph<CCR2> for Ta2 {
         type Gpio = Pin<P3, Pin0, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
 
     // TA3
     impl PwmPeriph<CCR0> for Ta3 {
         type Gpio = Pin<P4, Pin1, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
     impl PwmPeriph<CCR1> for Ta3 {
         type Gpio = Pin<P4, Pin0, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
     impl PwmPeriph<CCR2> for Ta3 {
         type Gpio = Pin<P3, Pin7, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
 
     // TB0
     impl PwmPeriph<CCR0> for Tb0 {
         type Gpio = Pin<P6, Pin2, Alternate1<Output>>;
-        const ALT: Alt = Alt::Alt1;
     }
     impl PwmPeriph<CCR1> for Tb0 {
         type Gpio = Pin<P4, Pin7, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR2> for Tb0 {
         type Gpio = Pin<P5, Pin0, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR3> for Tb0 {
         type Gpio = Pin<P5, Pin1, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR4> for Tb0 {
         type Gpio = Pin<P5, Pin2, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR5> for Tb0 {
         type Gpio = Pin<P4, Pin3, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
     impl PwmPeriph<CCR6> for Tb0 {
         type Gpio = Pin<P4, Pin4, Alternate2<Output>>;
-        const ALT: Alt = Alt::Alt2;
     }
 }
 
@@ -1044,8 +1027,31 @@ mod timer {
 }
 
 pub mod clock {
-    use crate::{gpio::*, clock::*};
+    use crate::{_pac::cs::csctl3::Fllrefdiv, gpio::*};
 
-    impl<DIR> Xt1XinPin  for Pin<P2, Pin1, Alternate1<DIR>> {}
-    impl<DIR> Xt1XoutPin for Pin<P2, Pin0, Alternate1<DIR>> {}
+    // The XT1 pins are defined once, here. Everything else, from the `Xt1Config` constructors to
+    // keeping the pins selected through LPM3.5, derives the port, pin and PxSEL bits from these
+    // types. Both pins are selected with P2SELx = 01.
+    /// XT1 input pin (XIN), in its XT1 function
+    pub type Xt1Xin<DIR> = Pin<P2, Pin1, Alternate1<DIR>>;
+    /// XT1 output pin (XOUT), in its XT1 function
+    pub type Xt1Xout<DIR> = Pin<P2, Pin0, Alternate1<DIR>>;
+
+    /// FLLREFDIV setting for an undivided FLL reference
+    pub(crate) const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::_1;
+}
+
+/* LPM */
+pub(crate) mod lpm {
+    use crate::{gpio::*, lpm::{reset_pin_functions, KeepXt1Pins}};
+
+    /// Return every pin of the device to GPIO before LPMx.5, except the XT1 pins in `keep`
+    pub(crate) fn reset_all_pin_functions(keep: KeepXt1Pins) {
+        reset_pin_functions::<P1>(keep);
+        reset_pin_functions::<P2>(keep);
+        reset_pin_functions::<P3>(keep);
+        reset_pin_functions::<P4>(keep);
+        reset_pin_functions::<P5>(keep);
+        reset_pin_functions::<P6>(keep);
+    }
 }

@@ -7,37 +7,42 @@
 //! configuration is optional but, when enabled, provides a high-precision source for
 //! system clocks or the FLL reference.
 //!
-//! DCO with FLL is supported on MCLK for select frequencies. The FLL can be
-//! referenced by either the internal REFO or the external XT1 crystal. Supporting
-//! arbitrary frequencies on the DCO requires complex calibration routines not
-//! supported by the HAL.
+//! DCO with FLL is supported on MCLK for select frequencies. The FLL can be referenced by
+//! either the internal REFO or XT1. The highest DCO range of the device uses the factory DCO
+//! trim; every other range is trimmed in software while the clocks are configured, as the
+//! user's guide recommends, so the FLL locks reliably. Supporting arbitrary frequencies on the
+//! DCO requires calibration routines not supported by the HAL.
+//!
+//! XT1 runs in low-frequency mode, with a 32.768 kHz watch crystal or clock input, on every
+//! device. Devices with high-frequency XT1 support also accept 1 MHz to 24 MHz crystals and
+//! clock inputs (`HighFrequency`).
+//!
+//! When XT1 fails, the hardware fail-safe keeps the clocks sourced from XT1 running from a
+//! fallback oscillator, and keeps them there until software clears the fault flags. See
+//! [`Xt1clk::is_faulted`] and [`Xt1clk::clear_fault`].
 
 use core::arch::asm;
 use core::marker::PhantomData;
 
+use embedded_hal::delay::DelayNs;
+
 pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
-use crate::_pac::{
-    self,
-    cs::{
-        csctl1::Dcorsel,
-        csctl4::{Sela, Selms},
-    },
-};
+pub use crate::_pac::cs::csctl6::Xt1drive as Xt1Drive;
+pub use crate::device_specific::clock::{Xt1Xin, Xt1Xout};
 use crate::delay::SysDelay;
+use crate::device_specific::clock::FLLREFDIV_1;
 use crate::fram::{Fram, WaitStates};
 use crate::_pac::{
     self,
     cs::{
         csctl1::Dcorsel,
+        csctl3::{Fllrefdiv, Selref},
         csctl4::{Sela, Selms},
-        csctl3::{Selref, Fllrefdiv},
-        csctl6::Xt1drive,
     },
 };
-pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
 
 #[cfg(feature = "xt1_high_frequency")]
-use crate::_pac::cs::csctl6::{Xt1hffreq, Xts};
+use crate::_pac::cs::csctl6::{Diva, Xt1hffreq, Xts};
 
 /// REFOCLK frequency
 pub const REFOCLK_FREQ_HZ: u16 = 32768;
@@ -45,38 +50,62 @@ pub const REFOCLK_FREQ_HZ: u16 = 32768;
 pub const VLOCLK_FREQ_HZ: u16 = 10000;
 pub use crate::device_specific::MODCLK_FREQ_HZ;
 
-// The "divide by 1" FLLREFDIV encoding. The FR2433 PAC names the `Fllrefdiv`
-// variants differently from the other PACs, so give it a common name here.
-#[cfg(not(feature = "msp430fr2433"))]
-const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::_1;
-#[cfg(feature = "msp430fr2433")]
-const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::Fllrefdiv0;
+/// MCLK frequency out of reset: DCOCLKDIV locked to 32 x REFOCLK. XT1 start-up timeouts are
+/// timed against it, because they run before the new configuration is applied.
+const RESET_MCLK_FREQ_HZ: u32 = 32 * REFOCLK_FREQ_HZ as u32;
 
+/// Highest XT1 frequency in low-frequency mode. ACLK must not exceed this either
+/// (SLAU445I 3.1).
+const XT1_LF_MAX_HZ: u32 = 40_000;
+/// Lowest XT1 frequency in high-frequency mode (SLAU445I Table 3-10)
+#[cfg(feature = "xt1_high_frequency")]
+const XT1_HF_MIN_HZ: u32 = 1_000_000;
+/// Highest XT1 frequency in high-frequency mode. The band above 16 MHz exists on the enhanced
+/// clock system only (SLAU445I Table 3-1).
+#[cfg(all(feature = "xt1_high_frequency", feature = "enhanced_cs"))]
+const XT1_HF_MAX_HZ: u32 = 24_000_000;
+#[cfg(all(feature = "xt1_high_frequency", not(feature = "enhanced_cs")))]
+const XT1_HF_MAX_HZ: u32 = 16_000_000;
+
+/// Highest MCLK frequency that needs no FRAM wait states. Every further 8 MHz needs one more
+/// wait state (device data sheets, recommended operating conditions).
+const FRAM_NO_WAIT_MAX_HZ: u32 = 8_000_000;
+
+// CSCTL0 and CSCTL1 fields used by the DCO software trim. They're accessed as raw bits because
+// the PACs name them differently.
+/// CSCTL0 DCO tap bits
+const DCO_TAP_MASK: u16 = 0x1FF;
+/// The middle of the DCO tap range, where the trim routine aims the locked tap
+const DCO_TAP_MID: u16 = 256;
+/// CSCTL1 DCOFTRIMEN bit
+const DCOFTRIMEN: u16 = 1 << 7;
+/// CSCTL1 DCOFTRIM field position
+const DCOFTRIM_SHIFT: u16 = 4;
+/// CSCTL1 DCOFTRIM field
+const DCOFTRIM_MASK: u16 = 0b111 << DCOFTRIM_SHIFT;
+/// Highest DCOFTRIM value
+const DCOFTRIM_MAX: u16 = 7;
+/// DCOFTRIM value the trim routine starts from, as in TI's reference routine
+const DCOFTRIM_START: u16 = 3;
+/// CSCTL1 DCORSEL field position
+const DCORSEL_SHIFT: u16 = 1;
+
+#[derive(Clone, Copy)]
 enum MclkSel {
     Refoclk,
     Vloclk,
     Dcoclk(DcoclkFreqSel),
-    Xt1clk(u32),
+    Xt1clk,
 }
 
 impl MclkSel {
-    #[inline]
-    fn freq(&self) -> u32 {
-        match self {
-            MclkSel::Vloclk => VLOCLK_FREQ_HZ as u32,
-            MclkSel::Refoclk => REFOCLK_FREQ_HZ as u32,
-            MclkSel::Dcoclk(sel) => sel.freq(),
-            MclkSel::Xt1clk(freq) => *freq,
-        }
-    }
-
     #[inline(always)]
     fn selms(&self) -> Selms {
         match self {
             MclkSel::Vloclk => Selms::Vloclk,
             MclkSel::Refoclk => Selms::Refoclk,
             MclkSel::Dcoclk(_) => Selms::Dcoclkdiv,
-            MclkSel::Xt1clk(_) => Selms::Xt1clk,
+            MclkSel::Xt1clk => Selms::Xt1clk,
         }
     }
 }
@@ -86,7 +115,7 @@ enum AclkSel {
     #[cfg(feature = "vloclk_source")]
     Vloclk,
     Refoclk,
-    Xt1clk(u32),
+    Xt1clk,
 }
 
 impl AclkSel {
@@ -96,42 +125,42 @@ impl AclkSel {
             #[cfg(feature = "vloclk_source")]
             AclkSel::Vloclk => Sela::Vloclk,
             AclkSel::Refoclk => Sela::Refoclk,
-            AclkSel::Xt1clk(_) => Sela::Xt1clk,
+            AclkSel::Xt1clk => Sela::Xt1clk,
         }
     }
 
+    /// This selection, with XT1CLK replaced by REFOCLK
     #[inline(always)]
-    fn freq(self) -> u32 {
+    fn without_xt1(self) -> Self {
         match self {
-            #[cfg(feature = "vloclk_source")]
-            AclkSel::Vloclk => VLOCLK_FREQ_HZ as u32,
-            AclkSel::Refoclk => REFOCLK_FREQ_HZ as u32,
-            AclkSel::Xt1clk(freq) => freq,
+            AclkSel::Xt1clk => AclkSel::Refoclk,
+            sel => sel,
         }
     }
 }
 
-/// Selectable DCOCLK frequencies when using factory trim settings.
-/// Actual frequencies may be slightly higher.
+/// Selectable DCOCLK frequencies. With REFO as FLL reference the DCO locks to the frequency in
+/// brackets: the largest multiple of 32.768 kHz that doesn't exceed the target, so the clock
+/// stays within the device limits (1 MHz keeps the reset default instead).
 #[derive(Clone, Copy)]
 pub enum DcoclkFreqSel {
-    /// 1 MHz
+    /// 1 MHz (1.048576 MHz)
     _1MHz,
-    /// 2 MHz
+    /// 2 MHz (1.998848 MHz)
     _2MHz,
-    /// 4 MHz
+    /// 4 MHz (3.997696 MHz)
     _4MHz,
-    /// 8 MHz
+    /// 8 MHz (7.995392 MHz)
     _8MHz,
-    /// 12 MHz
+    /// 12 MHz (11.993088 MHz)
     _12MHz,
-    /// 16 MHz
+    /// 16 MHz (15.990784 MHz)
     _16MHz,
     #[cfg(feature = "enhanced_cs")]
-    /// 20 MHz
+    /// 20 MHz (19.988480 MHz)
     _20MHz,
     #[cfg(feature = "enhanced_cs")]
-    /// 24 MHz
+    /// 24 MHz (23.986176 MHz)
     _24MHz,
 }
 
@@ -152,15 +181,16 @@ impl DcoclkFreqSel {
         }
     }
 
+    /// FLL multiplier (FLLN + 1) with REFO as reference
     #[inline(always)]
     fn multiplier(self) -> u16 {
         match self {
             DcoclkFreqSel::_1MHz => 32,
             DcoclkFreqSel::_2MHz => 61,
             DcoclkFreqSel::_4MHz => 122,
-            DcoclkFreqSel::_8MHz => 245,
+            DcoclkFreqSel::_8MHz => 244,
             DcoclkFreqSel::_12MHz => 366,
-            DcoclkFreqSel::_16MHz => 490,
+            DcoclkFreqSel::_16MHz => 488,
             #[cfg(feature = "enhanced_cs")]
             DcoclkFreqSel::_20MHz => 610,
             #[cfg(feature = "enhanced_cs")]
@@ -168,7 +198,18 @@ impl DcoclkFreqSel {
         }
     }
 
-    /// Numerical frequency
+    /// Whether this is the highest DCO range of the device. TI recommends the factory DCO trim
+    /// there, and software trim for every other range (SLAU445I 3.2.11).
+    #[inline(always)]
+    fn factory_trimmed(self) -> bool {
+        #[cfg(feature = "enhanced_cs")]
+        let highest = matches!(self, DcoclkFreqSel::_24MHz);
+        #[cfg(not(feature = "enhanced_cs"))]
+        let highest = matches!(self, DcoclkFreqSel::_16MHz);
+        highest
+    }
+
+    /// Numerical frequency, with REFO as FLL reference
     #[inline]
     pub fn freq(self) -> u32 {
         (self.multiplier() as u32) * (REFOCLK_FREQ_HZ as u32)
@@ -184,23 +225,48 @@ pub struct SmclkDefined(SmclkDiv);
 /// Typestate for `ClockConfig` that represents disabled SMCLK
 pub struct SmclkDisabled;
 /// Typestate for `ClockConfig` that represents a configured XT1CLK
-pub struct Xt1Defined<MODE>(Xt1Config<MODE>);
+pub struct Xt1Defined<MODE, RANGE>(Xt1Config<MODE, RANGE>);
 /// Typestate for `ClockConfig` that represents disabled/unconfigured XT1CLK
 pub struct Xt1Disabled;
-
-
-/// Valid XT1 XIN (input) pin
-pub trait Xt1XinPin {}
-
-/// Valid XT1 XOUT (output) pin
-pub trait Xt1XoutPin {}
-
 
 /// Typestate marker for XT1 **crystal mode** (external crystal, oscillator enabled).
 pub struct CrystalMode;
 
 /// Typestate marker for XT1 **bypass mode** (external clock input, oscillator disabled).
 pub struct BypassMode;
+
+/// Typestate for XT1 in low-frequency mode, with a 32.768 kHz watch crystal or clock input.
+/// Only this mode keeps running in LPM3 and LPM3.5, and only this mode can clock the RTC.
+pub struct LowFrequency;
+
+/// Typestate for XT1 in high-frequency mode, with a 1 MHz to 24 MHz crystal or clock input
+/// (16 MHz without the enhanced clock system). XT1 only runs from active mode to LPM0 in this
+/// mode, and cannot clock the RTC (device data sheet, XTCLK distribution).
+#[cfg(feature = "xt1_high_frequency")]
+pub struct HighFrequency;
+
+mod sealed {
+    pub trait SealedXt1Range {}
+
+    impl SealedXt1Range for super::LowFrequency {}
+    #[cfg(feature = "xt1_high_frequency")]
+    impl SealedXt1Range for super::HighFrequency {}
+}
+
+/// XT1 frequency modes: [`LowFrequency`], and `HighFrequency` on devices that support it
+pub trait Xt1Range: sealed::SealedXt1Range {
+    #[doc(hidden)]
+    const HIGH_FREQUENCY: bool;
+}
+
+impl Xt1Range for LowFrequency {
+    const HIGH_FREQUENCY: bool = false;
+}
+
+#[cfg(feature = "xt1_high_frequency")]
+impl Xt1Range for HighFrequency {
+    const HIGH_FREQUENCY: bool = true;
+}
 
 /// Configuration object for the XT1 oscillator.
 ///
@@ -212,29 +278,32 @@ pub struct BypassMode;
 /// - **Crystal mode**: Uses an external crystal connected to both XIN and XOUT.
 /// - **Bypass mode**: Uses an external clock signal fed into XIN only.
 ///
+/// Each mode runs in low-frequency mode ([`LowFrequency`]), or in high-frequency mode
+/// (`HighFrequency`) on devices that support it.
+///
 /// The configuration includes:
 /// - The input frequency (used for timing calculations and routing decisions)
 /// - Drive strength for the oscillator (relevant in crystal mode)
 /// - Whether bypass mode is enabled
 /// - Automatic Gain Control (AGC) behavior
-pub struct Xt1Config<MODE> {
+pub struct Xt1Config<MODE, RANGE = LowFrequency> {
     frequency: u32,
-    drive: Xt1drive,
+    drive: Xt1Drive,
     agc: bool,
     start_counter: bool,
     bypass: bool,
     #[cfg(feature = "enhanced_cs")]
     fault_switch: bool,
     auto_off: bool,
-    _mode: PhantomData<MODE>,
+    _mode: PhantomData<(MODE, RANGE)>,
 }
 
 #[cfg(feature = "enhanced_cs")]
-impl<MODE> Xt1Config<MODE> {
-    /// Disable the automatic clock fallback on XT1 fault.
+impl<MODE, RANGE> Xt1Config<MODE, RANGE> {
+    /// Disable the automatic ACLK fallback on XT1 fault.
     ///
-    /// When disabled, the system will not automatically switch to a fallback
-    /// oscillator (like REFO) if the XT1 crystal fails or stops.
+    /// When disabled, ACLK does not switch to REFO if XT1 fails or stops, so it stops as well.
+    /// MCLK and SMCLK are not affected by this setting and always fall back.
     pub fn disable_fault_switch(mut self) -> Self {
         self.fault_switch = false;
         self
@@ -242,30 +311,70 @@ impl<MODE> Xt1Config<MODE> {
 }
 
 impl Xt1Config<CrystalMode> {
-    /// Configure XT1 as a crystal oscillator.
+    /// Configure XT1 for a low-frequency watch crystal on XIN and XOUT.
     ///
-    /// This mode expects a crystal connected to XIN/XOUT and enables
-    /// internal oscillator circuitry.
-    ///
-    /// - `frequency`: Target crystal frequency in Hz. Devices without
-    ///   high-frequency XT1 support only accept low-frequency watch crystals
-    ///   (32768 Hz typical, 40 kHz max). Devices with high-frequency support
-    ///   additionally accept crystals from 1 MHz up to 24 MHz.
+    /// - `frequency`: Crystal frequency in Hz. The data sheets specify 32768 Hz; up to 40 kHz is
+    ///   accepted.
     /// - `_xin`, `_xout`: Pins connected to the crystal.
     ///
     /// The start counter is enabled by default in crystal mode because
     /// crystals require a stabilization period before producing a valid clock.
     /// The counter ensures the oscillator is given sufficient startup time
     /// before being considered stable.
-    pub fn crystal<XIN, XOUT>(frequency: u32, _xin: XIN, _xout: XOUT) -> Self
-    where
-        XIN: Xt1XinPin,
-        XOUT: Xt1XoutPin,
-    {
+    ///
+    /// Automatic gain control is enabled, as it is after reset; see [`Self::disable_agc`].
+    ///
+    /// # Panics
+    ///
+    /// If `frequency` is 0 or above 40 kHz. With a constant, valid frequency the check is
+    /// optimised away.
+    pub fn crystal<XinDir, XoutDir>(
+        frequency: u32,
+        _xin: Xt1Xin<XinDir>,
+        _xout: Xt1Xout<XoutDir>,
+    ) -> Self {
+        assert!(
+            frequency > 0 && frequency <= XT1_LF_MAX_HZ,
+            "XT1 low-frequency mode supports up to 40 kHz"
+        );
+        Self::crystal_config(frequency)
+    }
+}
+
+#[cfg(feature = "xt1_high_frequency")]
+impl Xt1Config<CrystalMode, HighFrequency> {
+    /// Configure XT1 for a high-frequency crystal or resonator on XIN and XOUT.
+    ///
+    /// - `frequency`: Crystal frequency in Hz, from 1 MHz up to 24 MHz (16 MHz without the
+    ///   enhanced clock system).
+    /// - `_xin`, `_xout`: Pins connected to the crystal.
+    ///
+    /// The start counter and automatic gain control are enabled, as for [`Xt1Config::crystal`].
+    ///
+    /// # Panics
+    ///
+    /// If `frequency` is outside the range above. With a constant, valid frequency the check is
+    /// optimised away.
+    pub fn crystal_hf<XinDir, XoutDir>(
+        frequency: u32,
+        _xin: Xt1Xin<XinDir>,
+        _xout: Xt1Xout<XoutDir>,
+    ) -> Self {
+        assert!(
+            (XT1_HF_MIN_HZ..=XT1_HF_MAX_HZ).contains(&frequency),
+            "XT1 high-frequency frequency out of range"
+        );
+        Self::crystal_config(frequency)
+    }
+}
+
+impl<RANGE> Xt1Config<CrystalMode, RANGE> {
+    #[inline(always)]
+    fn crystal_config(frequency: u32) -> Self {
         Self {
             frequency,
-            drive: Xt1drive::Xt1drive3,
-            agc: false,
+            drive: Xt1Drive::Xt1drive3,
+            agc: true,
             start_counter: true,
             bypass: false,
             #[cfg(feature = "enhanced_cs")]
@@ -275,12 +384,13 @@ impl Xt1Config<CrystalMode> {
         }
     }
 
-    /// Enable Automatic Gain Control (AGC).
+    /// Disable Automatic Gain Control (AGC).
     ///
-    /// AGC is only applicable in crystal mode and helps stabilize oscillation
-    /// amplitude across varying conditions.
-    pub fn enable_agc(mut self) -> Self {
-        self.agc = true;
+    /// AGC is on by default: once the crystal has started it lowers the oscillation
+    /// amplitude, which reduces current consumption. Disabling it keeps the full amplitude,
+    /// which can help in electrically noisy environments at the cost of a higher current.
+    pub fn disable_agc(mut self) -> Self {
+        self.agc = false;
         self
     }
 
@@ -292,7 +402,7 @@ impl Xt1Config<CrystalMode> {
     /// Note that startup and stabilization always run at the highest drive
     /// strength, as required by the user's guide; the level requested here is
     /// applied once the oscillator is stable.
-    pub fn with_drive(mut self, drive: Xt1drive) -> Self {
+    pub fn with_drive(mut self, drive: Xt1Drive) -> Self {
         self.drive = drive;
         self
     }
@@ -318,28 +428,61 @@ impl Xt1Config<CrystalMode> {
 }
 
 impl Xt1Config<BypassMode> {
-    /// Configure XT1 in bypass mode using an external clock source.
+    /// Configure XT1 in low-frequency bypass mode, with an external clock signal on XIN.
     ///
     /// In this mode, a digital clock signal is fed directly into XIN and the
-    /// internal crystal oscillator circuitry is bypassed.
+    /// internal crystal oscillator circuitry is bypassed. XOUT is not used and
+    /// remains available as a GPIO.
     ///
-    /// - `frequency`: Input clock frequency in Hz. Devices without
-    ///   high-frequency XT1 support only accept low-frequency inputs
-    ///   (40 kHz max). Devices with high-frequency support additionally
-    ///   accept inputs from 1 MHz up to 24 MHz.
+    /// - `frequency`: Input clock frequency in Hz. The data sheets specify 32.768 kHz with a
+    ///   40 % to 60 % duty cycle; up to 40 kHz is accepted.
     /// - `_xin`: Pin receiving the external clock.
     ///
     /// The start counter is disabled by default because an external clock
     /// source is assumed to already be stable and does not require oscillator
     /// startup time.
-    pub fn bypass<XIN>(frequency: u32, _xin: XIN) -> Self
-    where
-        XIN: Xt1XinPin,
-    {
+    ///
+    /// # Panics
+    ///
+    /// If `frequency` is 0 or above 40 kHz. With a constant, valid frequency the check is
+    /// optimised away.
+    pub fn bypass<DIR>(frequency: u32, _xin: Xt1Xin<DIR>) -> Self {
+        assert!(
+            frequency > 0 && frequency <= XT1_LF_MAX_HZ,
+            "XT1 low-frequency mode supports up to 40 kHz"
+        );
+        Self::bypass_config(frequency)
+    }
+}
+
+#[cfg(feature = "xt1_high_frequency")]
+impl Xt1Config<BypassMode, HighFrequency> {
+    /// Configure XT1 in high-frequency bypass mode, with an external clock signal on XIN.
+    ///
+    /// - `frequency`: Input clock frequency in Hz, from 1 MHz up to 24 MHz (16 MHz without the
+    ///   enhanced clock system), with a 40 % to 60 % duty cycle.
+    /// - `_xin`: Pin receiving the external clock.
+    ///
+    /// # Panics
+    ///
+    /// If `frequency` is outside the range above. With a constant, valid frequency the check is
+    /// optimised away.
+    pub fn bypass_hf<DIR>(frequency: u32, _xin: Xt1Xin<DIR>) -> Self {
+        assert!(
+            (XT1_HF_MIN_HZ..=XT1_HF_MAX_HZ).contains(&frequency),
+            "XT1 high-frequency frequency out of range"
+        );
+        Self::bypass_config(frequency)
+    }
+}
+
+impl<RANGE> Xt1Config<BypassMode, RANGE> {
+    #[inline(always)]
+    fn bypass_config(frequency: u32) -> Self {
         Self {
             frequency,
-            drive: Xt1drive::Xt1drive0, // Ignored in bypass mode
-            agc: false,                 // Not applicable in bypass mode
+            drive: Xt1Drive::Xt1drive0, // Ignored in bypass mode
+            agc: true,                  // Not applicable in bypass mode, left at its reset value
             start_counter: false,       // External clock assumed stable
             bypass: true,
             #[cfg(feature = "enhanced_cs")]
@@ -360,17 +503,13 @@ impl Xt1Config<BypassMode> {
     }
 }
 
-impl<MODE> Xt1Config<MODE> {
-    /// Map the configured frequency onto the XTS mode bit and XT1HFFREQ range.
-    ///
-    /// Ranges per SLAU445I Table 3-10: 1 to 4 MHz, above 4 to 6 MHz, above 6 to
-    /// 16 MHz, above 16 to 24 MHz (the last range exists on the enhanced clock
-    /// system only, which is the only system with high-frequency XT1 support
-    /// covered by this HAL).
+impl<MODE, RANGE: Xt1Range> Xt1Config<MODE, RANGE> {
+    /// The XTS mode bit and XT1HFFREQ range for the configured frequency (SLAU445I Table 3-10):
+    /// 1 to 4 MHz, above 4 to 6 MHz, above 6 to 16 MHz, above 16 to 24 MHz.
     #[cfg(feature = "xt1_high_frequency")]
     #[inline]
     fn mode_bits(&self) -> (Xts, Xt1hffreq) {
-        if self.frequency <= 40_000 {
+        if !RANGE::HIGH_FREQUENCY {
             (Xts::Xts0, Xt1hffreq::Xt1hffreq0)
         } else if self.frequency <= 4_000_000 {
             (Xts::Xts1, Xt1hffreq::Xt1hffreq0)
@@ -383,7 +522,75 @@ impl<MODE> Xt1Config<MODE> {
         }
     }
 
-    /// Bring up the XT1 oscillator and block until it has stabilized.
+    /// The ACLK divider (DIVA) for XT1 in high-frequency mode, as the register setting and
+    /// the division factor.
+    ///
+    /// ACLK must not exceed 40 kHz. Of the dividers that keep it there, pick the one landing
+    /// closest to 32.768 kHz, which is what peripherals clocked from ACLK usually expect. In
+    /// low-frequency mode the hardware bypasses DIVA, so the choice does not matter there.
+    #[cfg(feature = "xt1_high_frequency")]
+    fn aclk_divider(&self) -> (Diva, u32) {
+        const DIVIDERS: &[(Diva, u32)] = &[
+            (Diva::_1, 1),
+            (Diva::_16, 16),
+            (Diva::_32, 32),
+            (Diva::_64, 64),
+            (Diva::_128, 128),
+            (Diva::_256, 256),
+            (Diva::_384, 384),
+            (Diva::_512, 512),
+        ];
+        // Dividers that only exist on the enhanced clock system (SLAU445I Table 3-1)
+        #[cfg(feature = "enhanced_cs")]
+        const ENHANCED_DIVIDERS: &[(Diva, u32)] = &[
+            (Diva::_108, 108),
+            (Diva::_338, 338),
+            (Diva::_414, 414),
+            (Diva::_640, 640),
+            (Diva::_768, 768),
+            (Diva::_1024, 1024),
+        ];
+        #[cfg(not(feature = "enhanced_cs"))]
+        const ENHANCED_DIVIDERS: &[(Diva, u32)] = &[];
+
+        let mut best = (Diva::_1, 1);
+        let mut best_error = u32::MAX;
+        for &(diva, div) in DIVIDERS.iter().chain(ENHANCED_DIVIDERS) {
+            let aclk = self.frequency / div;
+            let error = aclk.abs_diff(REFOCLK_FREQ_HZ as u32);
+            if aclk <= XT1_LF_MAX_HZ && error < best_error {
+                best = (diva, div);
+                best_error = error;
+            }
+        }
+        best
+    }
+
+    /// ACLK frequency when ACLK is sourced from XT1
+    #[inline]
+    fn aclk_freq(&self) -> u32 {
+        #[cfg(feature = "xt1_high_frequency")]
+        if RANGE::HIGH_FREQUENCY {
+            return self.frequency / self.aclk_divider().1;
+        }
+        self.frequency
+    }
+
+    /// The FLL reference XT1 provides: its frequency after FLLREFDIV, and the FLLREFDIV setting
+    #[inline]
+    fn fll_reference(&self) -> (u32, Fllrefdiv) {
+        #[cfg(feature = "xt1_high_frequency")]
+        if RANGE::HIGH_FREQUENCY {
+            return xt1_hf_fll_ref_divider(self.frequency);
+        }
+        // A 32 kHz XT1 is used undivided. On devices whose XT1 only supports 32 kHz,
+        // "FLLREFDIV always reads and should be written as zero" (SLAU445I 3.3.4).
+        (self.frequency, FLLREFDIV_1)
+    }
+
+    /// Bring up the XT1 oscillator and wait until it has stabilized, giving up
+    /// after roughly `timeout_ms` milliseconds if a timeout is given. Returns
+    /// whether XT1 started.
     ///
     /// Stabilization deliberately runs with settings that differ from the
     /// user's configuration; [`Self::finalize`] applies the requested values
@@ -392,18 +599,24 @@ impl<MODE> Xt1Config<MODE> {
     /// - Drive strength is forced to the maximum. Per SLAU445I 3.2.4, XT1
     ///   "starts with the highest drive settings for fast reliable startup"
     ///   and only "after startup, user software can reduce the drive strength".
-    /// - XT1AUTOOFF is cleared so the oscillator runs unconditionally. This
-    ///   guarantees the fault-polling loop below actually exercises the
-    ///   crystal even though no system clock or FLL reference has requested
-    ///   XT1 yet, and keeps it running until the switch-over.
-    fn start(&self, periph: &_pac::Cs) {
-        let sfr = unsafe { &*_pac::Sfr::ptr() };
-
+    /// - XT1 is kept requested, so the oscillator runs and its fault detection
+    ///   is active even though no system clock or FLL reference has selected
+    ///   it yet. Clearing XT1AUTOOFF does this in crystal mode, but not in
+    ///   bypass mode (SLAU445I Table 3-10), so ACLK is pointed at XT1 as well.
+    ///   The fail-safe keeps ACLK on REFO until XT1 is stable, and ACLK's final
+    ///   source is selected afterwards.
+    ///
+    /// On a timeout ACLK and XT1AUTOOFF are restored, so XT1 switches off again
+    /// once nothing requests it.
+    fn start(&self, periph: &_pac::Cs, timeout_ms: Option<u16>) -> bool {
         // The start fault counter must be configured before the oscillator
         // starts. When enabled, the hardware holds the fault condition (and
-        // XT1OFFG) asserted until XT1 has oscillated cleanly for 8192 (LF) or
-        // 1024 (HF) cycles, which is what turns the fault-polling loop below
-        // into a stabilization wait (SLAU445I 3.2.13).
+        // XT1OFFG) asserted until XT1 has run cleanly for 1024 cycles in
+        // low-frequency mode, crystal or bypass, or 4096 cycles for a
+        // high-frequency crystal, which is what turns the fault-polling loop
+        // below into a stabilization wait (SLAU445I 3.2.13). The cycle counts
+        // come from the device data sheets, and 1024 was measured on the
+        // FR2476; the 8192 and 1024 in SLAU445I 3.2.13 don't match the hardware.
         periph.csctl7().modify(|_, w| w.enstfcnt1().bit(self.start_counter));
 
         periph.csctl6().modify(|_, w| {
@@ -411,12 +624,16 @@ impl<MODE> Xt1Config<MODE> {
                 .xt1bypass().bit(self.bypass)
                 .xt1agcoff().bit(!self.agc)
                 .xt1autooff().clear_bit()
-                .xt1drive().variant(Xt1drive::Xt1drive3);
+                .xt1drive().variant(Xt1Drive::Xt1drive3);
 
+            // DIVA is set before ACLK is pointed at XT1 below, so ACLK never
+            // exceeds 40 kHz.
             #[cfg(feature = "xt1_high_frequency")]
             let w = {
                 let (xts, hf_range) = self.mode_bits();
-                w.xts().variant(xts).xt1hffreq().variant(hf_range)
+                w.xts().variant(xts)
+                    .xt1hffreq().variant(hf_range)
+                    .diva().variant(self.aclk_divider().0)
             };
             // Devices without high-frequency support run XT1 in
             // low-frequency mode only.
@@ -429,29 +646,40 @@ impl<MODE> Xt1Config<MODE> {
             w
         });
 
+        let csctl4 = periph.csctl4().read().bits();
+        periph.csctl4().modify(|_, w| w.sela().variant(Sela::Xt1clk));
+
         // Oscillator fault flags are sticky: they stay latched even after the
         // fault condition disappears, and re-assert if cleared while the fault
         // persists (SLAU445I 3.2.13). Clearing them and checking whether they
         // return is therefore the canonical way to wait for the oscillator:
         // this loop only exits once XT1 runs fault-free (for the full start
-        // counter period, if enabled).
+        // counter period, if enabled). Polling once per millisecond lets the
+        // timeout be counted.
+        let mut delay = SysDelay::new(RESET_MCLK_FREQ_HZ);
+        let mut elapsed_ms: u16 = 0;
         loop {
-            unsafe {
-                periph.csctl7().clear_bits(|w|
-                    w.xt1offg().clear_bit()
-                      .dcoffg().clear_bit()
-                );
-                sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
+            clear_osc_faults();
+            if !osc_fault_pending() {
+                return true;
             }
-
-            if sfr.sfrifg1().read().ofifg().bit_is_clear() {
-                break;
+            if let Some(timeout_ms) = timeout_ms {
+                if elapsed_ms >= timeout_ms {
+                    break;
+                }
+                elapsed_ms += 1;
             }
+            delay.delay_ms(1);
         }
+
+        // XT1 did not start in time: put ACLK back and let XT1 switch off again
+        periph.csctl4().write(|w| unsafe { w.bits(csctl4) });
+        periph.csctl6().modify(|_, w| w.xt1autooff().set_bit());
+        clear_osc_faults();
+        false
     }
 
-    /// Apply the user-requested drive strength and auto-off behavior, then
-    /// leave the oscillator fault flags clean.
+    /// Apply the user-requested drive strength and auto-off behavior.
     ///
     /// This runs *after* the system clocks have been switched over, so XT1
     /// stays continuously powered (auto-off was held disabled by
@@ -460,24 +688,72 @@ impl<MODE> Xt1Config<MODE> {
     /// the fail-safe REFO fallback in place until software clears it
     /// (SLAU445I 3.2.13).
     fn finalize(&self, periph: &_pac::Cs) {
-        let sfr = unsafe { &*_pac::Sfr::ptr() };
-
         periph.csctl6().modify(|_, w| {
             w.xt1drive().variant(self.drive)
                 .xt1autooff().bit(self.auto_off)
         });
-
-        // A single clear pass leaves a healthy system fault-free; if a genuine
-        // fault remains the hardware simply re-asserts the flags for the user
-        // to observe. No loop here: this must never hang post-configuration.
-        unsafe {
-            periph.csctl7().clear_bits(|w|
-                w.xt1offg().clear_bit()
-                  .dcoffg().clear_bit()
-            );
-            sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
-        }
     }
+}
+
+/// Pick the FLL reference divider for a high-frequency XT1 so that the divided reference lands
+/// in the stable ~23 kHz to ~47 kHz range. Returns the divided reference frequency along with
+/// the divider setting.
+#[cfg(feature = "xt1_high_frequency")]
+#[inline]
+fn xt1_hf_fll_ref_divider(freq: u32) -> (u32, Fllrefdiv) {
+    // Each cutoff is the "handover" point between hardware dividers: at
+    // 1.5 MHz, /32 gives 46.8 kHz and /64 gives 23.4 kHz, and so on.
+    if freq <= 1_500_000 {
+        (freq / 32, Fllrefdiv::_32)
+    } else if freq <= 3_000_000 {
+        (freq / 64, Fllrefdiv::_64)
+    } else if freq <= 6_000_000 {
+        (freq / 128, Fllrefdiv::_128)
+    } else if freq <= 12_000_000 {
+        (freq / 256, Fllrefdiv::_256)
+    } else if freq <= 18_000_000 {
+        (freq / 512, Fllrefdiv::_512)
+    } else {
+        // The /640 and /768 dividers only exist on the enhanced clock system
+        // (SLAU445I 3.3.4); without them /512 is the closest available.
+        #[cfg(feature = "enhanced_cs")]
+        let res = if freq <= 22_000_000 {
+            (freq / 640, Fllrefdiv::Fllrefdiv6)
+        } else {
+            (freq / 768, Fllrefdiv::Fllrefdiv7)
+        };
+        #[cfg(not(feature = "enhanced_cs"))]
+        let res = (freq / 512, Fllrefdiv::_512);
+        res
+    }
+}
+
+/// Clear the XT1 and DCO fault flags, then OFIFG. Flags whose fault condition
+/// persists are set again by the hardware straight away (SLAU445I 3.2.13).
+#[inline]
+fn clear_osc_faults() {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    let sfr = unsafe { &*_pac::Sfr::ptr() };
+    unsafe {
+        cs.csctl7().clear_bits(|w|
+            w.xt1offg().clear_bit()
+              .dcoffg().clear_bit()
+        );
+        sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
+    }
+}
+
+/// Whether an oscillator fault (XT1 or DCO) is latched in OFIFG
+#[inline]
+fn osc_fault_pending() -> bool {
+    let sfr = unsafe { &*_pac::Sfr::ptr() };
+    sfr.sfrifg1().read().ofifg().bit_is_set()
+}
+
+/// Whether the FLL reports the DCO as too fast, too slow or out of range
+#[inline]
+fn fll_unlocked(cs: &_pac::Cs) -> bool {
+    !cs.csctl7().read().fllunlock().is_fllunlock_0()
 }
 
 // Using Xt1State as a trait bound outside the HAL will never be useful, since we only
@@ -486,21 +762,37 @@ impl<MODE> Xt1Config<MODE> {
 pub trait Xt1State {
     /// XT1 frequency in Hz, or `None` when XT1 is not configured
     fn freq(&self) -> Option<u32>;
-    /// Bring up and stabilize XT1 (no-op when XT1 is not configured)
-    fn start(&self, periph: &_pac::Cs);
+    /// ACLK frequency in Hz when ACLK is sourced from XT1, or `None` when XT1 is not configured
+    fn aclk_freq(&self) -> Option<u32>;
+    /// The FLL reference frequency and FLLREFDIV setting XT1 provides, or `None` when XT1 is
+    /// not configured
+    fn fll_reference(&self) -> Option<(u32, Fllrefdiv)>;
+    /// Bring up and stabilize XT1, giving up after `timeout_ms` if given. Returns whether XT1
+    /// is running (always `true` when XT1 is not configured)
+    fn start(&self, periph: &_pac::Cs, timeout_ms: Option<u16>) -> bool;
     /// Apply post-stabilization XT1 settings (no-op when XT1 is not configured)
     fn finalize(&self, periph: &_pac::Cs);
 }
 
-impl<MODE> Xt1State for Xt1Defined<MODE> {
+impl<MODE, RANGE: Xt1Range> Xt1State for Xt1Defined<MODE, RANGE> {
     #[inline(always)]
     fn freq(&self) -> Option<u32> {
         Some(self.0.frequency)
     }
 
     #[inline(always)]
-    fn start(&self, periph: &_pac::Cs) {
-        self.0.start(periph);
+    fn aclk_freq(&self) -> Option<u32> {
+        Some(self.0.aclk_freq())
+    }
+
+    #[inline(always)]
+    fn fll_reference(&self) -> Option<(u32, Fllrefdiv)> {
+        Some(self.0.fll_reference())
+    }
+
+    #[inline(always)]
+    fn start(&self, periph: &_pac::Cs, timeout_ms: Option<u16>) -> bool {
+        self.0.start(periph, timeout_ms)
     }
 
     #[inline(always)]
@@ -516,7 +808,19 @@ impl Xt1State for Xt1Disabled {
     }
 
     #[inline(always)]
-    fn start(&self, _periph: &_pac::Cs) {}
+    fn aclk_freq(&self) -> Option<u32> {
+        None
+    }
+
+    #[inline(always)]
+    fn fll_reference(&self) -> Option<(u32, Fllrefdiv)> {
+        None
+    }
+
+    #[inline(always)]
+    fn start(&self, _periph: &_pac::Cs, _timeout_ms: Option<u16>) -> bool {
+        true
+    }
 
     #[inline(always)]
     fn finalize(&self, _periph: &_pac::Cs) {}
@@ -551,7 +855,9 @@ pub struct ClockConfig<MCLK, SMCLK, XT1CLK> {
     aclk_sel: AclkSel,
     smclk: SMCLK,
     xt1clk: XT1CLK,
-    fll_ref: Selref
+    fll_ref: Selref,
+    #[cfg(feature = "enhanced_cs")]
+    refo_low_power: bool,
 }
 
 macro_rules! make_clkconf {
@@ -564,6 +870,8 @@ macro_rules! make_clkconf {
             smclk: $smclk,
             xt1clk: $xt1clk,
             fll_ref: $fll_ref,
+            #[cfg(feature = "enhanced_cs")]
+            refo_low_power: $conf.refo_low_power,
         }
     };
 }
@@ -579,6 +887,8 @@ impl ClockConfig<NoClockDefined, NoClockDefined, Xt1Disabled> {
             mclk_div: MclkDiv::_1,
             aclk_sel: AclkSel::Refoclk,
             fll_ref: Selref::Refoclk,
+            #[cfg(feature = "enhanced_cs")]
+            refo_low_power: false,
         }
     }
 }
@@ -618,8 +928,11 @@ impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
     }
 
     /// Select DCOCLK for MCLK with FLL for stabilization. Frequency is `target_freq / mclk_div` Hz.
-    /// This setting selects the default factory trim for DCO trimming and performs no extra
-    /// calibration, so only a select few frequency targets can be selected.
+    /// Only a select few frequency targets can be selected, see [`DcoclkFreqSel`].
+    ///
+    /// With XT1 as the FLL reference (see `fll_ref_xt1`) the FLL locks to the multiple of the
+    /// XT1 frequency closest to `target_freq` without exceeding it, and the returned clock
+    /// objects report that frequency.
     #[inline]
     pub fn mclk_dcoclk(
         self,
@@ -644,44 +957,86 @@ impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
         make_clkconf!(self, self.mclk, SmclkDisabled, self.xt1clk, self.fll_ref)
     }
 
-    /// Enable XT1 with specific hardware requirements
+    /// Enable XT1 with specific hardware requirements. Calling this again replaces the
+    /// previous XT1 configuration.
     #[inline]
-    pub fn xt1clk_on<MODE>(
+    pub fn xt1clk_on<MODE, RANGE>(
         self,
-        config: Xt1Config<MODE>
-    ) -> ClockConfig<MCLK, SMCLK, Xt1Defined<MODE>> {
+        config: Xt1Config<MODE, RANGE>
+    ) -> ClockConfig<MCLK, SMCLK, Xt1Defined<MODE, RANGE>> {
         make_clkconf!(self, self.mclk, self.smclk, Xt1Defined(config), self.fll_ref)
     }
 
-    /// Explicitly disable XT1 to save power
+    /// Run REFO in its low-power mode, which draws about 1 µA instead of 15 µA (FR235x data
+    /// sheet). Only the enhanced clock system has this mode (SLAU445I Table 3-1).
+    ///
+    /// The mode is switched off again when entering LPM3.5 or LPM4.5, where it would draw extra
+    /// current.
+    #[cfg(feature = "enhanced_cs")]
     #[inline]
-    pub fn xt1clk_off(self) -> ClockConfig<MCLK, SMCLK, Xt1Disabled> {
-        make_clkconf!(self, self.mclk, self.smclk, Xt1Disabled, Selref::Refoclk)
+    pub fn refo_low_power(mut self) -> Self {
+        self.refo_low_power = true;
+        self
     }
 }
 
-impl<MCLK, SMCLK, MODE> ClockConfig<MCLK, SMCLK, Xt1Defined<MODE>> {
-    /// Select XT1CLK for ACLK
+impl<SMCLK, XT1CLK> ClockConfig<NoClockDefined, SMCLK, XT1CLK> {
+    /// Disable XT1 (the default), undoing [`ClockConfig::xt1clk_on`]. If ACLK or the FLL
+    /// reference were sourced from XT1, they fall back to REFOCLK.
+    #[inline]
+    pub fn xt1clk_off(self) -> ClockConfig<NoClockDefined, SMCLK, Xt1Disabled> {
+        ClockConfig {
+            aclk_sel: self.aclk_sel.without_xt1(),
+            ..make_clkconf!(self, self.mclk, self.smclk, Xt1Disabled, Selref::Refoclk)
+        }
+    }
+}
+
+impl<SMCLK, XT1CLK> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
+    /// Disable XT1 (the default), undoing [`ClockConfig::xt1clk_on`]. Every clock sourced
+    /// from XT1 falls back to REFOCLK: MCLK (keeping its divider), ACLK and the FLL reference.
+    ///
+    /// Use this to fall back to the internal oscillators when `try_freeze` timed out.
+    #[inline]
+    pub fn xt1clk_off(self) -> ClockConfig<MclkDefined, SMCLK, Xt1Disabled> {
+        let mclk = match self.mclk.0 {
+            MclkSel::Xt1clk => MclkSel::Refoclk,
+            sel => sel,
+        };
+        ClockConfig {
+            aclk_sel: self.aclk_sel.without_xt1(),
+            ..make_clkconf!(self, MclkDefined(mclk), self.smclk, Xt1Disabled, Selref::Refoclk)
+        }
+    }
+}
+
+impl<MCLK, SMCLK, MODE, RANGE> ClockConfig<MCLK, SMCLK, Xt1Defined<MODE, RANGE>> {
+    /// Select XT1CLK for ACLK.
+    ///
+    /// ACLK must not exceed 40 kHz, so a high-frequency XT1 is divided down for ACLK, using
+    /// the divider that lands closest to 32.768 kHz. [`Aclk`] reports the divided frequency.
     #[inline]
     pub fn aclk_xt1clk(mut self) -> Self {
-        self.aclk_sel = AclkSel::Xt1clk(self.xt1clk.0.frequency);
+        self.aclk_sel = AclkSel::Xt1clk;
         self
     }
 
-    /// Select XT1CLK for MCLK
+    /// Select XT1CLK for MCLK and set the MCLK divider. Frequency is `xt1_freq / mclk_div` Hz.
     #[inline]
     pub fn mclk_xt1clk(
         self,
         mclk_div: MclkDiv,
-    ) -> ClockConfig<MclkDefined, SMCLK, Xt1Defined<MODE>> {
-        let freq = self.xt1clk.0.frequency;
+    ) -> ClockConfig<MclkDefined, SMCLK, Xt1Defined<MODE, RANGE>> {
         ClockConfig {
             mclk_div,
-            ..make_clkconf!(self, MclkDefined(MclkSel::Xt1clk(freq)), self.smclk, self.xt1clk, self.fll_ref)
+            ..make_clkconf!(self, MclkDefined(MclkSel::Xt1clk), self.smclk, self.xt1clk, self.fll_ref)
         }
     }
 
-    /// Select XT1CLK for fll
+    /// Reference the FLL to XT1CLK instead of REFOCLK, when MCLK is sourced from the DCO.
+    ///
+    /// If a low-frequency XT1 fails, the FLL falls back to REFO. A high-frequency XT1 has no
+    /// such fallback: the DCO drops to its lowest tap instead (SLAU445I 3.2.13).
     #[inline]
     pub fn fll_ref_xt1(mut self) -> Self  {
         self.fll_ref = Selref::Xt1clk;
@@ -701,83 +1056,132 @@ fn fll_on() {
     unsafe { asm!("bic.b #64, SR", options(nomem, nostack)) };
 }
 
-/// Pick the FLL reference divider for an XT1-referenced FLL so that the
-/// divided reference lands in the stable ~23 kHz to ~47 kHz range. Returns the
-/// divided reference frequency along with the divider setting.
-#[cfg(feature = "xt1_high_frequency")]
-#[inline]
-fn xt1_fll_ref_divider(freq: u32) -> (u32, Fllrefdiv) {
-    // Each cutoff is the "handover" point between hardware dividers: at
-    // 1.5 MHz, /32 gives 46.8 kHz and /64 gives 23.4 kHz, and so on.
-    if freq <= 40_000 {
-        // Low-frequency crystal: the reference is used undivided
-        (freq, FLLREFDIV_1)
-    } else if freq <= 1_500_000 {
-        (freq / 32, Fllrefdiv::_32)
-    } else if freq <= 3_000_000 {
-        (freq / 64, Fllrefdiv::_64)
-    } else if freq <= 6_000_000 {
-        (freq / 128, Fllrefdiv::_128)
-    } else if freq <= 12_000_000 {
-        (freq / 256, Fllrefdiv::_256)
-    } else if freq <= 18_000_000 {
-        (freq / 512, Fllrefdiv::_512)
-    } else {
-        // The /640 and /768 dividers only exist on the enhanced clock system
-        // (SLAU445I 3.3.4); without them /512 is the closest available.
-        #[cfg(feature = "enhanced_cs")]
-        let res = if freq <= 22_000_000 {
-            (freq / 640, Fllrefdiv::Fllrefdiv6)
-        } else {
-            (freq / 768, Fllrefdiv::Fllrefdiv7)
-        };
-        #[cfg(not(feature = "enhanced_cs"))]
-        let res = (freq / 512, Fllrefdiv::_512);
-        res
-    }
+/// FLL settings for a DCOCLKDIV target
+struct FllSettings {
+    selref: Selref,
+    ref_div: Fllrefdiv,
+    /// Reference frequency after FLLREFDIV
+    ref_freq: u32,
+    /// FLLN register value: DCOCLKDIV = (FLLN + 1) x reference / FLLREFDIV
+    flln: u16,
+    /// The frequency the FLL locks DCOCLKDIV to
+    freq: u32,
 }
 
-/// On devices without high-frequency XT1 support there is nothing to divide:
-/// "If XT1 supports only a 32-kHz clock, FLLREFDIV always reads and should be
-/// written as zero" (SLAU445I 3.3.4).
-#[cfg(not(feature = "xt1_high_frequency"))]
+/// Set the FRAM wait states MCLK needs at `mclk_freq`: one per 8 MHz above the first 8 MHz
+/// (device data sheets, recommended operating conditions)
 #[inline]
-fn xt1_fll_ref_divider(freq: u32) -> (u32, Fllrefdiv) {
-    (freq, FLLREFDIV_1)
+unsafe fn configure_fram(fram: &mut Fram, mclk_freq: u32) {
+    let wait_states = match mclk_freq.saturating_sub(1) / FRAM_NO_WAIT_MAX_HZ {
+        0 => WaitStates::Wait0,
+        1 => WaitStates::Wait1,
+        2 => WaitStates::Wait2,
+        3 => WaitStates::Wait3,
+        4 => WaitStates::Wait4,
+        5 => WaitStates::Wait5,
+        6 => WaitStates::Wait6,
+        _ => WaitStates::Wait7,
+    };
+    fram.set_wait_states(wait_states);
 }
 
 impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
+    /// FLL settings that lock DCOCLKDIV as close to `target` as possible without exceeding it
+    #[inline]
+    fn fll_settings(&self, target: DcoclkFreqSel) -> FllSettings {
+        // The FLL is referenced by XT1CLK only if XT1 has actually been
+        // configured; in every other case it is referenced by REFOCLK.
+        // The typestate API already guarantees `fll_ref` can only be
+        // XT1CLK while XT1 is defined, but resolving the pair here keeps
+        // the hardware configuration consistent by construction.
+        let (selref, ref_freq, ref_div) = match (self.fll_ref, self.xt1clk.fll_reference()) {
+            (Selref::Xt1clk, Some((ref_freq, ref_div))) => (Selref::Xt1clk, ref_freq, ref_div),
+            _ => (Selref::Refoclk, REFOCLK_FREQ_HZ as u32, FLLREFDIV_1),
+        };
+
+        // FLLN is 10 bits wide, so the multiplier (FLLN + 1) only reaches 1024.
+        // A reference too slow for the target (16 MHz from a 10 kHz XT1, say)
+        // would overflow it, so clamp the multiplier and report the frequency
+        // the FLL actually locks to.
+        let multiplier = (target.freq() / ref_freq).clamp(1, 1024);
+
+        FllSettings {
+            selref,
+            ref_div,
+            ref_freq,
+            flln: (multiplier - 1) as u16,
+            freq: multiplier * ref_freq,
+        }
+    }
+
+    /// MCLK frequency, after the MCLK divider
+    #[inline]
+    fn mclk_freq(&self) -> u32 {
+        let source_freq = match self.mclk.0 {
+            MclkSel::Refoclk => REFOCLK_FREQ_HZ as u32,
+            MclkSel::Vloclk => VLOCLK_FREQ_HZ as u32,
+            MclkSel::Dcoclk(target) => self.fll_settings(target).freq,
+            // `xt1clk_off` moves MCLK back to REFO, so XT1 is configured
+            // whenever it is selected here
+            MclkSel::Xt1clk => self.xt1clk.freq().unwrap_or(REFOCLK_FREQ_HZ as u32),
+        };
+        source_freq >> (self.mclk_div as u32)
+    }
+
+    /// The fastest MCLK may run while the clocks are configured. MCLK runs undivided from the
+    /// DCO while the DCO is set up, before the MCLK divider takes effect. A DCO started by the
+    /// factory trim procedure rises from its lowest tap and doesn't overshoot, but the software
+    /// trim tries other trim settings, at up to about twice the target (device data sheets, DCO
+    /// frequency).
+    #[inline]
+    fn mclk_freq_during_config(&self) -> u32 {
+        let dco_freq = match self.mclk.0 {
+            MclkSel::Dcoclk(target) if target.factory_trimmed() => self.fll_settings(target).freq,
+            MclkSel::Dcoclk(target) => self.fll_settings(target).freq / 4 * 9,
+            _ => 0,
+        };
+        dco_freq.max(self.mclk_freq())
+    }
+
+    /// ACLK frequency
+    #[inline]
+    fn aclk_freq(&self) -> u32 {
+        match self.aclk_sel {
+            #[cfg(feature = "vloclk_source")]
+            AclkSel::Vloclk => VLOCLK_FREQ_HZ as u32,
+            AclkSel::Refoclk => REFOCLK_FREQ_HZ as u32,
+            // `xt1clk_off` moves ACLK back to REFO, so XT1 is configured
+            // whenever it is selected here
+            AclkSel::Xt1clk => self.xt1clk.aclk_freq().unwrap_or(REFOCLK_FREQ_HZ as u32),
+        }
+    }
+
     #[inline]
     fn configure_dco_fll(&self) {
-        // Run FLL configuration procedure from the user's guide if we are using DCO
+        // Run the FLL configuration procedure from the user's guide (SLAU445I 3.2.11) if we are
+        // using the DCO
         if let MclkSel::Dcoclk(target_freq) = self.mclk.0 {
-            // The FLL is referenced by XT1CLK only if XT1 has actually been
-            // configured; in every other case it is referenced by REFOCLK.
-            // The typestate API already guarantees `fll_ref` can only be
-            // XT1CLK while XT1 is defined, but resolving the pair here keeps
-            // the hardware configuration consistent by construction.
-            let (selref, ref_freq, ref_div) = match (self.fll_ref, self.xt1clk.freq()) {
-                (Selref::Xt1clk, Some(freq)) => {
-                    let (ref_freq, ref_div) = xt1_fll_ref_divider(freq);
-                    (Selref::Xt1clk, ref_freq, ref_div)
-                }
-                _ => (Selref::Refoclk, REFOCLK_FREQ_HZ as u32, FLLREFDIV_1),
-            };
+            let fll = self.fll_settings(target_freq);
+            let cs = &self.periph;
 
             fll_off();
 
-            self.periph.csctl3()
-                .write(|w| w.selref().variant(selref).fllrefdiv().variant(ref_div));
-            self.periph.csctl0().write(|w| unsafe { w.bits(0) });
-            self.periph
-                .csctl1()
-                .write(|w| w.dcorsel().variant(target_freq.dcorsel()));
+            cs.csctl3()
+                .write(|w| w.selref().variant(fll.selref).fllrefdiv().variant(fll.ref_div));
+            cs.csctl0().write(|w| unsafe { w.bits(0) });
+            if target_freq.factory_trimmed() {
+                cs.csctl1().write(|w| w.dcorsel().variant(target_freq.dcorsel()));
+            } else {
+                // The software trim starts from the middle trim setting with modulation enabled,
+                // as TI's reference routine does
+                let dcorsel = target_freq.dcorsel() as u16;
+                cs.csctl1().write(|w| unsafe {
+                    w.bits(DCOFTRIMEN | DCOFTRIM_START << DCOFTRIM_SHIFT | dcorsel << DCORSEL_SHIFT)
+                });
+            }
 
-            // Use the divided reference frequency to get a precise multiplier
-            let multiplier = (target_freq.freq() / ref_freq) as u16;
-
-            self.periph.csctl2().write(|w| {
-                unsafe { w.flln().bits(multiplier - 1) }
+            cs.csctl2().write(|w| {
+                unsafe { w.flln().bits(fll.flln) }
                     .flld()
                     ._1()
             });
@@ -788,8 +1192,72 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
 
             fll_on();
 
-            while !self.periph.csctl7().read().fllunlock().is_fllunlock_0() {}
+            if target_freq.factory_trimmed() {
+                while fll_unlocked(cs) {}
+            } else {
+                self.trim_dco(&fll);
+            }
         }
+    }
+
+    /// The DCO software trim routine (SLAU445I 3.2.11.2), with the FLL running: find the
+    /// DCOFTRIM setting whose locked DCO tap is closest to the middle of the tap range, so the
+    /// FLL keeps lock over temperature, then lock with it.
+    fn trim_dco(&self, fll: &FllSettings) {
+        let cs = &self.periph;
+        // MCLK runs from the DCO meanwhile
+        let mut delay = SysDelay::new(fll.freq);
+        // The FLL lock status needs 24 reference clock cycles to settle, TI's routine waits 3 ms
+        let settle_ms = ((24_000 + fll.ref_freq - 1) / fll.ref_freq).max(3);
+
+        let mut best_csctl0 = 0;
+        let mut best_csctl1 = 0;
+        let mut best_delta = u16::MAX;
+        let mut prev_tap: Option<u16> = None;
+        loop {
+            // Restart the FLL from the middle of the tap range
+            cs.csctl0().write(|w| unsafe { w.bits(DCO_TAP_MID) });
+            unsafe { cs.csctl7().clear_bits(|w| w.dcoffg().clear_bit()) };
+            delay.delay_ms(settle_ms);
+            // Wait for lock, or for the tap to run into either end of its range (DCOFFG)
+            while fll_unlocked(cs) && cs.csctl7().read().dcoffg().bit_is_clear() {}
+
+            let csctl0 = cs.csctl0().read().bits();
+            let csctl1 = cs.csctl1().read().bits();
+            let tap = csctl0 & DCO_TAP_MASK;
+            let delta = tap.abs_diff(DCO_TAP_MID);
+            if delta < best_delta {
+                best_csctl0 = csctl0;
+                best_csctl1 = csctl1;
+                best_delta = delta;
+            }
+
+            // A tap below the middle means the DCO runs fast with this trim, so lower the trim;
+            // a tap above it means it runs slow, so raise it. Stop once the tap has crossed the
+            // middle between two adjacent trims, or the trim runs out of range.
+            let below_mid = tap < DCO_TAP_MID;
+            let crossed = prev_tap.is_some_and(|prev| (prev < DCO_TAP_MID) != below_mid);
+            let trim = (csctl1 & DCOFTRIM_MASK) >> DCOFTRIM_SHIFT;
+            let next_trim = if below_mid {
+                trim.checked_sub(1)
+            } else {
+                Some(trim + 1).filter(|&trim| trim <= DCOFTRIM_MAX)
+            };
+            match next_trim {
+                Some(next_trim) if !crossed => {
+                    cs.csctl1().write(|w| unsafe {
+                        w.bits(csctl1 & !DCOFTRIM_MASK | next_trim << DCOFTRIM_SHIFT)
+                    });
+                    prev_tap = Some(tap);
+                }
+                _ => break,
+            }
+        }
+
+        // Restore the best trim and tap, and let the FLL lock with them
+        cs.csctl0().write(|w| unsafe { w.bits(best_csctl0) });
+        cs.csctl1().write(|w| unsafe { w.bits(best_csctl1) });
+        while fll_unlocked(cs) {}
     }
 
     #[inline]
@@ -808,21 +1276,38 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         });
     }
 
-    #[inline]
-    unsafe fn configure_fram(fram: &mut Fram, mclk_freq: u32) {
-        if mclk_freq > 16_000_000 {
-            fram.set_wait_states(WaitStates::Wait2);
-        } else if mclk_freq > 8_000_000 {
-            fram.set_wait_states(WaitStates::Wait1);
-        } else {
-            fram.set_wait_states(WaitStates::Wait0);
+    /// Switch REFO to its low-power mode, if requested
+    #[cfg(feature = "enhanced_cs")]
+    fn configure_refo(&self) {
+        if !self.refo_low_power {
+            return;
+        }
+        let cs = &self.periph;
+        unsafe { cs.csctl3().set_bits(|w| w.refolp().set_bit()) };
+
+        let fll_uses_refo = match self.mclk.0 {
+            MclkSel::Dcoclk(target) => matches!(self.fll_settings(target).selref, Selref::Refoclk),
+            _ => false,
+        };
+        let refo_used = matches!(self.mclk.0, MclkSel::Refoclk)
+            || matches!(self.aclk_sel, AclkSel::Refoclk)
+            || fll_uses_refo;
+        // The low-power mode is only valid once REFOREADY is set (SLAU445I Table 3-7). REFO only
+        // runs while something uses it, so there's only something to wait for in that case.
+        if refo_used {
+            while cs.csctl7().read().refoready().bit_is_clear() {}
+        }
+        // Let an FLL referenced to REFO lock to the low-power REFO
+        if fll_uses_refo {
+            while fll_unlocked(cs) {}
         }
     }
 
     /// Commit the configuration to hardware, in the order required by the
-    /// user's guide, and return the resulting MCLK frequency:
+    /// user's guide:
     ///
-    /// 1. FRAM wait states (must be set *before* MCLK exceeds 8 MHz)
+    /// 1. FRAM wait states for the fastest MCLK during configuration (must be
+    ///    set *before* MCLK exceeds 8 MHz)
     /// 2. XT1 bring-up and stabilization (must be stable *before* it can serve
     ///    as FLL reference or system clock source)
     /// 3. DCO and FLL configuration (waits for FLL lock)
@@ -830,28 +1315,68 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
     /// 5. XT1 post-stabilization settings (user drive strength and auto-off,
     ///    applied only after the switch-over so the oscillator never restarts
     ///    in between)
+    /// 6. FRAM wait states for the final MCLK
+    ///
+    /// Returns `false`, before switching any clock, if XT1 does not start
+    /// within `xt1_timeout_ms`.
     #[inline]
-    fn freeze_internal(&self, fram: &mut Fram) -> u32 {
-        let mclk_freq = self.mclk.0.freq() >> (self.mclk_div as u32);
-        unsafe { Self::configure_fram(fram, mclk_freq) };
-        self.xt1clk.start(&self.periph);
+    fn freeze_internal(&self, fram: &mut Fram, xt1_timeout_ms: Option<u16>) -> bool {
+        unsafe { configure_fram(fram, self.mclk_freq_during_config()) };
+        if !self.xt1clk.start(&self.periph, xt1_timeout_ms) {
+            return false;
+        }
         self.configure_dco_fll();
         self.configure_cs();
+        #[cfg(feature = "enhanced_cs")]
+        self.configure_refo();
         self.xt1clk.finalize(&self.periph);
-        mclk_freq
+        // Leave the oscillator fault flags clean, including a DCOFFG raised while trimming the
+        // DCO. A single clear pass leaves a healthy system fault-free; if a genuine fault
+        // remains the hardware simply re-asserts the flags for the user to observe. No loop
+        // here: this must never hang post-configuration.
+        clear_osc_faults();
+        unsafe { configure_fram(fram, self.mclk_freq()) };
+        true
     }
 }
 
-impl<MODE> ClockConfig<MclkDefined, SmclkDefined, Xt1Defined<MODE>> {
+impl<MODE, RANGE: Xt1Range> ClockConfig<MclkDefined, SmclkDefined, Xt1Defined<MODE, RANGE>> {
     /// Apply clock configuration to hardware and return SMCLK, ACLK and XT1CLK clock objects.
     /// Also returns delay provider.
+    ///
+    /// Blocks until XT1 is stable, which is forever if it never starts (a missing crystal,
+    /// say). `try_freeze` gives up after a timeout instead.
     #[inline]
-    pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk, Xt1clk, SysDelay) {
-        let mclk_freq = self.freeze_internal(fram);
+    pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk, Xt1clk<RANGE>, SysDelay) {
+        // Without a timeout this only returns once XT1 is running
+        self.freeze_internal(fram, None);
+        self.clocks()
+    }
+
+    /// Like `freeze`, but give up if XT1 is not stable after roughly `timeout_ms` milliseconds.
+    ///
+    /// On a timeout no clock is switched and the configuration is handed back, so a fallback
+    /// can be frozen instead, for example with `xt1clk_off()`.
+    #[inline]
+    pub fn try_freeze(
+        self,
+        fram: &mut Fram,
+        timeout_ms: u16,
+    ) -> Result<(Smclk, Aclk, Xt1clk<RANGE>, SysDelay), Self> {
+        if self.freeze_internal(fram, Some(timeout_ms)) {
+            Ok(self.clocks())
+        } else {
+            Err(self)
+        }
+    }
+
+    #[inline]
+    fn clocks(&self) -> (Smclk, Aclk, Xt1clk<RANGE>, SysDelay) {
+        let mclk_freq = self.mclk_freq();
         (
             Smclk(mclk_freq >> (self.smclk.0 as u32)),
-            Aclk(self.aclk_sel.freq()),
-            Xt1clk(self.xt1clk.0.frequency),
+            Aclk(self.aclk_freq()),
+            Xt1clk(self.xt1clk.0.frequency, PhantomData),
             SysDelay::new(mclk_freq),
         )
     }
@@ -862,25 +1387,53 @@ impl ClockConfig<MclkDefined, SmclkDefined, Xt1Disabled> {
     /// Also returns delay provider
     #[inline]
     pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk, SysDelay) {
-        let mclk_freq = self.freeze_internal(fram);
+        // Nothing to wait for without XT1
+        self.freeze_internal(fram, None);
+        let mclk_freq = self.mclk_freq();
         (
             Smclk(mclk_freq >> (self.smclk.0 as u32)),
-            Aclk(self.aclk_sel.freq()),
+            Aclk(self.aclk_freq()),
             SysDelay::new(mclk_freq),
         )
     }
 }
 
-impl<MODE> ClockConfig<MclkDefined, SmclkDisabled, Xt1Defined<MODE>> {
+impl<MODE, RANGE: Xt1Range> ClockConfig<MclkDefined, SmclkDisabled, Xt1Defined<MODE, RANGE>> {
     /// Apply clock configuration to hardware and return ACLK and XT1CLK clock objects, as SMCLK
     /// is disabled. Also returns delay provider.
+    ///
+    /// Blocks until XT1 is stable, which is forever if it never starts (a missing crystal,
+    /// say). `try_freeze` gives up after a timeout instead.
     #[inline]
-    pub fn freeze(self, fram: &mut Fram) -> (Aclk, Xt1clk, SysDelay) {
-        let mclk_freq = self.freeze_internal(fram);
+    pub fn freeze(self, fram: &mut Fram) -> (Aclk, Xt1clk<RANGE>, SysDelay) {
+        // Without a timeout this only returns once XT1 is running
+        self.freeze_internal(fram, None);
+        self.clocks()
+    }
+
+    /// Like `freeze`, but give up if XT1 is not stable after roughly `timeout_ms` milliseconds.
+    ///
+    /// On a timeout no clock is switched and the configuration is handed back, so a fallback
+    /// can be frozen instead, for example with `xt1clk_off()`.
+    #[inline]
+    pub fn try_freeze(
+        self,
+        fram: &mut Fram,
+        timeout_ms: u16,
+    ) -> Result<(Aclk, Xt1clk<RANGE>, SysDelay), Self> {
+        if self.freeze_internal(fram, Some(timeout_ms)) {
+            Ok(self.clocks())
+        } else {
+            Err(self)
+        }
+    }
+
+    #[inline]
+    fn clocks(&self) -> (Aclk, Xt1clk<RANGE>, SysDelay) {
         (
-            Aclk(self.aclk_sel.freq()),
-            Xt1clk(self.xt1clk.0.frequency),
-            SysDelay::new(mclk_freq),
+            Aclk(self.aclk_freq()),
+            Xt1clk(self.xt1clk.0.frequency, PhantomData),
+            SysDelay::new(self.mclk_freq()),
         )
     }
 }
@@ -890,8 +1443,9 @@ impl ClockConfig<MclkDefined, SmclkDisabled, Xt1Disabled> {
     /// Also returns delay provider.
     #[inline]
     pub fn freeze(self, fram: &mut Fram) -> (Aclk, SysDelay) {
-        let mclk_freq = self.freeze_internal(fram);
-        (Aclk(self.aclk_sel.freq()), SysDelay::new(mclk_freq))
+        // Nothing to wait for without XT1
+        self.freeze_internal(fram, None);
+        (Aclk(self.aclk_freq()), SysDelay::new(self.mclk_freq()))
     }
 }
 
@@ -899,8 +1453,34 @@ impl ClockConfig<MclkDefined, SmclkDisabled, Xt1Disabled> {
 pub struct Smclk(u32);
 /// ACLK clock object
 pub struct Aclk(u32);
-/// XT1CLK clock object
-pub struct Xt1clk(u32);
+/// XT1CLK clock object, for XT1 in low-frequency mode unless `RANGE` says otherwise
+pub struct Xt1clk<RANGE = LowFrequency>(u32, PhantomData<RANGE>);
+
+impl<RANGE> Xt1clk<RANGE> {
+    /// Whether XT1 has faulted since the fault flags were last cleared.
+    ///
+    /// The flag is sticky: it stays set after the fault has gone. Until the flags are cleared,
+    /// the clocks sourced from XT1 keep running from their fail-safe fallback (REFOCLK, or
+    /// DCOCLKDIV for MCLK and SMCLK with a high-frequency XT1). Call [`Xt1clk::clear_fault`]
+    /// first to sample the current state instead.
+    #[inline]
+    pub fn is_faulted(&self) -> bool {
+        let cs = unsafe { &*_pac::Cs::ptr() };
+        cs.csctl7().read().xt1offg().bit_is_set()
+    }
+
+    /// Clear the oscillator fault flags (XT1OFFG, DCOFFG and OFIFG).
+    ///
+    /// If XT1 is healthy again, the clocks sourced from it switch back from their fail-safe
+    /// fallback. If the fault persists, the hardware sets the flags again straight away. With
+    /// the start counter enabled, XT1 has to run cleanly for 1024 cycles (4096 for a
+    /// high-frequency crystal) after a fault before the flag stays clear; without it the flag
+    /// stays clear as soon as the fault is gone.
+    #[inline]
+    pub fn clear_fault(&mut self) {
+        clear_osc_faults();
+    }
+}
 
 /// Trait for configured clock objects
 pub trait Clock {
@@ -923,7 +1503,7 @@ impl Clock for Aclk {
     }
 }
 
-impl Clock for Xt1clk {
+impl<RANGE> Clock for Xt1clk<RANGE> {
     #[inline]
     fn freq(&self) -> u32 {
         self.0

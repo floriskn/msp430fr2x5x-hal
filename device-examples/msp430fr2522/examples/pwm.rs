@@ -27,7 +27,7 @@ fn main() -> ! {
     let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
+        .aclk_refoclk()
         .freeze(&mut fram);
 
     let pwm = PwmParts3::new(periph.ta0, TimerConfig::smclk(&smclk), 5000);

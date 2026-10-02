@@ -405,9 +405,10 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
     /// Note that the pin's interrupt flags may become set as a result of
     /// this operation.
     ///
-    /// GPIO input/output operations only work after the LOCKLPM5 bit has been set, which is
-    /// ensured when passing `&Pmm` into the method, since a `Pmm` is created only by setting
-    /// LOCKLPM5.
+    /// GPIO input/output operations only work after the LOCKLPM5 bit has been cleared, which
+    /// is ensured when passing `&Pmm` into the method, since [`Pmm::new`] clears LOCKLPM5.
+    /// With [`Pmm::new_locked`] the configuration takes effect once [`Pmm::unlock_lpm5`] is
+    /// called.
     #[inline]
     pub fn split(self, _pmm: &Pmm) -> Parts<PORT, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7> {
         self.write_regs();

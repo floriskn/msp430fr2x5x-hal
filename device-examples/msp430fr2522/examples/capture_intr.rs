@@ -57,7 +57,7 @@ fn main() -> ! {
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_vloclk()
+        .aclk_refoclk()
         .freeze(&mut fram);
 
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
