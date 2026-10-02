@@ -1480,6 +1480,44 @@ impl<RANGE> Xt1clk<RANGE> {
     pub fn clear_fault(&mut self) {
         clear_osc_faults();
     }
+
+    /// Request an interrupt when an oscillator fault occurs, on top of the fail-safe switch.
+    ///
+    /// The interrupt is the user NMI: write an `UNMI` interrupt handler that calls
+    /// [`take_fault_interrupt`]. It covers every oscillator fault, so a DCO fault requests it as
+    /// well. Being non-maskable, it is requested even while interrupts are disabled, so the
+    /// handler must not share data with the rest of the program through a critical section; use
+    /// atomics instead, such as those of the `msp430-atomic` crate. A fault that is still flagged
+    /// requests it as soon as it is enabled, so clear the fault first.
+    #[inline]
+    pub fn enable_fault_interrupt(&mut self) {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+        unsafe { sfr.sfrie1().set_bits(|w| w.ofie().set_bit()) };
+    }
+
+    /// Stop requesting an interrupt when an oscillator fault occurs
+    #[inline]
+    pub fn disable_fault_interrupt(&mut self) {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+        unsafe { sfr.sfrie1().clear_bits(|w| w.ofie().clear_bit()) };
+    }
+}
+
+/// For the `UNMI` interrupt handler: whether an oscillator fault requested the interrupt, see
+/// [`Xt1clk::enable_fault_interrupt`].
+///
+/// If so, this also disables the fault interrupt. The fault flags stay set until they're
+/// cleared, and they can only be cleared once the fault is gone, so the interrupt would
+/// otherwise be requested again straight away. Once [`Xt1clk::clear_fault`] shows that the
+/// fault is gone, [`Xt1clk::enable_fault_interrupt`] turns it back on.
+#[inline]
+pub fn take_fault_interrupt() -> bool {
+    let sfr = unsafe { &*_pac::Sfr::ptr() };
+    let requested = sfr.sfrie1().read().ofie().bit_is_set() && osc_fault_pending();
+    if requested {
+        unsafe { sfr.sfrie1().clear_bits(|w| w.ofie().clear_bit()) };
+    }
+    requested
 }
 
 /// Trait for configured clock objects
