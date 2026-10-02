@@ -490,11 +490,5 @@ pub mod clock {
 
 /* LPM */
 pub(crate) mod lpm {
-    use crate::{gpio::*, lpm::{reset_pin_functions, KeepXt1Pins}};
-
-    /// Return every pin of the device to GPIO before LPMx.5, except the XT1 pins in `keep`
-    pub(crate) fn reset_all_pin_functions(keep: KeepXt1Pins) {
-        reset_pin_functions::<P1>(keep);
-        reset_pin_functions::<P2>(keep);
-    }
+    crate::lpm::reset_all_pin_functions_impl!(P1, P2);
 }

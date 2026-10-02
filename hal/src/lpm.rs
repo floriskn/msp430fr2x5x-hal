@@ -210,6 +210,18 @@ pub(crate) fn reset_pin_functions<PORT: PortNum + 'static>(keep: KeepXt1Pins) {
     port.pxsel1_clear(keep);
 }
 
+/// Define `reset_all_pin_functions()` in a device's `lpm` module, from the list of the device's
+/// ports
+macro_rules! reset_all_pin_functions_impl {
+    ($($port:ident),+ $(,)?) => {
+        /// Return every pin of the device to GPIO before LPMx.5, except the XT1 pins in `keep`
+        pub(crate) fn reset_all_pin_functions(keep: $crate::lpm::KeepXt1Pins) {
+            $($crate::lpm::reset_pin_functions::<$crate::gpio::$port>(keep);)+
+        }
+    };
+}
+pub(crate) use reset_all_pin_functions_impl;
+
 /// Configuration common to LPM3.5 and 4.5
 fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // Take peripherals. Execution won't return from this fn.
