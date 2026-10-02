@@ -15,6 +15,9 @@
 //! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
 //! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
 //!
+//! On the MSP430FR2x5x, eUSCI_A1's pins in alternate function 2 (`to_alternate2()`) invert the polarity of TXD and
+//! RXD, and a rising edge then starts a character (data sheet, eUSCI_A1 UART polarity configurations).
+//!
 //! Begin configuration by calling [`SerialConfig::new()`]. After configuration, [`Rx`] and/or [`Tx`] structs are produced by
 //! providing the corresponding GPIO pins.
 //!
@@ -32,11 +35,19 @@
 //! For writing multiple bytes, embedded_io's [`Write::write_all`](embedded_io::Write::write_all) and
 //! [`Read::read_exact`](embedded_io::Read::read_exact) methods are useful.
 //!
+//! Besides plain UART, [`SerialConfig::mode`] selects the multiprocessor formats, which mark address characters
+//! ([`Tx::send_address`], [`Rx::set_dormant`]), and automatic baud-rate detection from a LIN break and synch
+//! field. [`SerialConfig::irda`] adds IrDA encoding and decoding, and [`SerialConfig::deglitch`] sets how short a
+//! pulse on RXD is ignored.
+//!
 
 #[cfg(feature = "eusci_aclk")]
 use crate::clock::Aclk;
 use crate::clock::{Clock, Smclk};
-use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel};
+use crate::hw_traits::eusci::{
+    EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel, UCADDR_UCIDLE, UCDORM, UCSTTIFG, UCTXADDR, UCTXBRK,
+    UCTXCPTIFG,
+};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
 use core::fmt::Display;
@@ -149,6 +160,139 @@ impl Loopback {
     }
 }
 
+/// How short a pulse on RXD the receiver ignores (UCGLIT)
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum UartDeglitch {
+    /// About 2 ns
+    _2ns = 0,
+    /// About 50 ns
+    _50ns = 1,
+    /// About 100 ns
+    _100ns = 2,
+    /// About 200 ns, as after reset
+    #[default]
+    _200ns = 3,
+}
+
+/// The length of the break delimiter sent before the synch field in automatic baud-rate mode (UCDELIM)
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum BreakDelimiter {
+    /// 1 bit time
+    #[default]
+    _1Bit = 0,
+    /// 2 bit times
+    _2Bits = 1,
+    /// 3 bit times
+    _3Bits = 2,
+    /// 4 bit times
+    _4Bits = 3,
+}
+
+/// The UART mode (UCMODE, user's guide 22.3.3 and 22.3.4)
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum UartMode {
+    /// Plain UART
+    #[default]
+    Uart,
+    /// Idle-line multiprocessor format: the first character after an idle line of 10 or more bits is an
+    /// address
+    IdleLineMultiprocessor,
+    /// Address-bit multiprocessor format: each character has an extra bit that marks addresses
+    AddressBitMultiprocessor,
+    /// Automatic baud-rate detection, as in LIN: a received break and synch field (0x55) set the baud rate.
+    /// For LIN, use 8 data bits, LSB first, no parity and one stop bit. The receiver measures with the
+    /// transmitter's baud-rate generator, so it can't measure a break and synch field it sends itself, in
+    /// loopback for example.
+    AutoBaud {
+        /// The length of the break delimiter [`Tx::send_break`] sends
+        delimiter: BreakDelimiter,
+    },
+}
+
+impl UartMode {
+    #[inline(always)]
+    fn ucmode(self) -> u8 {
+        match self {
+            UartMode::Uart => 0b00,
+            UartMode::IdleLineMultiprocessor => 0b01,
+            UartMode::AddressBitMultiprocessor => 0b10,
+            UartMode::AutoBaud { .. } => 0b11,
+        }
+    }
+}
+
+/// The clock the IrDA transmit pulse length is counted in (UCIRTXCLK)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IrdaClock {
+    /// The baud-rate clock, BRCLK
+    Brclk,
+    /// 16 times the baud rate (BITCLK16). This needs oversampling, which the baud-rate calculation uses when
+    /// the clock is at least 16 times the baud rate; otherwise BRCLK is used.
+    BitClk16,
+}
+
+/// IrDA encoding and decoding (UCAxIRCTL, user's guide 22.3.5)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IrdaConfig {
+    /// Transmit pulse length: (tx_pulse + 1) / (2 * pulse clock), with `tx_pulse` from 0 to 63 (UCIRTXPL)
+    pub tx_pulse: u8,
+    /// The clock the transmit pulse length is counted in
+    pub pulse_clock: IrdaClock,
+    /// Ignore received pulses shorter than (filter + 4) / (2 * pulse clock), with the filter from 0 to 63, or
+    /// `None` to accept all (UCIRRXFE, UCIRRXFL)
+    pub rx_filter: Option<u8>,
+    /// The transceiver gives a low pulse for light, instead of a high pulse (UCIRRXPL)
+    pub rx_inverted: bool,
+}
+
+impl IrdaConfig {
+    /// The standard IrDA pulse of 3/16 of a bit time, from 6 half periods of BITCLK16
+    pub const fn standard() -> Self {
+        IrdaConfig { tx_pulse: 5, pulse_clock: IrdaClock::BitClk16, rx_filter: None, rx_inverted: false }
+    }
+
+    #[inline(always)]
+    fn irctl(&self) -> u16 {
+        let filter = match self.rx_filter {
+            Some(len) => (len.min(63) as u16) << 10 | 1 << 8,
+            None => 0,
+        };
+        filter
+            | (self.rx_inverted as u16) << 9
+            | (self.tx_pulse.min(63) as u16) << 2
+            | ((self.pulse_clock == IrdaClock::BitClk16) as u16) << 1
+            | 1
+    }
+}
+
+/// The highest-priority pending UART interrupt among the enabled ones, as read from UCAxIV by
+/// `interrupt_source()`
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UartVector {
+    /// No interrupt pending
+    None,
+    /// A character was received (UCRXIFG). Reading it clears the flag.
+    RxBufFull,
+    /// The Tx buffer is empty (UCTXIFG). Writing to it clears the flag.
+    TxBufEmpty,
+    /// A start bit was received (UCSTTIFG)
+    StartBit,
+    /// A character was sent completely (UCTXCPTIFG)
+    TxComplete,
+}
+
+#[inline(always)]
+fn read_uart_iv<USCI: EUsciUart>(usci: &USCI) -> UartVector {
+    match usci.iv_rd() {
+        0x02 => UartVector::RxBufFull,
+        0x04 => UartVector::TxBufEmpty,
+        0x06 => UartVector::StartBit,
+        0x08 => UartVector::TxComplete,
+        _ => UartVector::None,
+    }
+}
+
 /// Marks a USCI type that can be used as a serial UART
 pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// Pin used for serial UCLK
@@ -201,6 +345,10 @@ where USCI: SerialUsci<M>
     stopbits: StopBits,
     parity: Parity,
     loopback: Loopback,
+    mode: UartMode,
+    deglitch: UartDeglitch,
+    irda: Option<IrdaConfig>,
+    break_interrupts: bool,
     state: S,
     _map: PhantomData<M>,
 }
@@ -214,10 +362,49 @@ macro_rules! serial_config {
             stopbits: $conf.stopbits,
             parity: $conf.parity,
             loopback: $conf.loopback,
+            mode: $conf.mode,
+            deglitch: $conf.deglitch,
+            irda: $conf.irda,
+            break_interrupts: $conf.break_interrupts,
             state: $state,
             _map: core::marker::PhantomData,
         }
     };
+}
+
+impl<USCI, S, M> SerialConfig<USCI, S, M>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Select the UART mode: plain UART, a multiprocessor format or automatic baud-rate detection.
+    #[inline]
+    pub fn mode(mut self, mode: UartMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Set how short a pulse on RXD the receiver ignores. After reset that's about 200 ns.
+    #[inline]
+    pub fn deglitch(mut self, deglitch: UartDeglitch) -> Self {
+        self.deglitch = deglitch;
+        self
+    }
+
+    /// Encode transmitted and decode received bits as IrDA pulses, for an infrared transceiver.
+    #[inline]
+    pub fn irda(mut self, irda: IrdaConfig) -> Self {
+        self.irda = Some(irda);
+        self
+    }
+
+    /// Report received breaks: a break then reads as [`RecvError::Break`] (UCBRKIE). In automatic baud-rate
+    /// mode, the break and synch field are reported that way.
+    #[inline]
+    pub fn break_interrupts(mut self) -> Self {
+        self.break_interrupts = true;
+        self
+    }
 }
 
 impl<USCI, M> SerialConfig<USCI, NoClockSet, M>
@@ -244,6 +431,10 @@ where
             parity,
             loopback,
             usci,
+            mode: UartMode::Uart,
+            deglitch: UartDeglitch::_200ns,
+            irda: None,
+            break_interrupts: false,
             state: NoClockSet { baudrate: NonZeroU32::new(baudrate).unwrap_or(ONE) },
             _map: PhantomData,
         }
@@ -434,15 +625,23 @@ where
         usci.brw_settings(baud_config.br);
         usci.mctlw_settings(baud_config.ucos16, baud_config.brs, baud_config.brf);
         usci.loopback(self.loopback.to_bool());
+        usci.ctl1_wr(self.deglitch as u16);
+        usci.abctl_wr(match self.mode {
+            UartMode::AutoBaud { delimiter } => (delimiter as u16) << 4 | 1,
+            _ => 0,
+        });
+        usci.irctl_wr(self.irda.map_or(0, |irda| irda.irctl()));
         usci.ctl0_settings(UcaCtlw0 {
             ucpen: self.parity.ucpen(),
             ucpar: self.parity.ucpar(),
             ucmsb: self.order.to_bool(),
             uc7bit: self.cnt.to_bool(),
             ucspb: self.stopbits.to_bool(),
+            ucmode: self.mode.ucmode(),
             ucssel: clksel,
             // We want erroneous bytes to trigger RXIFG so all errors can be caught
             ucrxeie: true,
+            ucbrkie: self.break_interrupts,
         });
         // Everything is configured while UCSWRST is set, then the eUSCI is released (user's guide,
         // eUSCI_A initialization)
@@ -500,11 +699,65 @@ where
         usci.txie_clear();
     }
 
-    // Internal flush function
+    /// Enable interrupts when a character has been sent completely (UCTXCPTIE). Due to erratum
+    /// USCI42 the flag is set after each character, even while the next one waits in the Tx buffer.
+    #[inline(always)]
+    pub fn enable_tx_complete_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.ie_set_bits(UCTXCPTIFG);
+    }
+
+    /// Disable interrupts when a character has been sent completely (UCTXCPTIE)
+    #[inline(always)]
+    pub fn disable_tx_complete_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.ie_clr_bits(UCTXCPTIFG);
+    }
+
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones (UCAxIV), shared with
+    /// [`Rx::interrupt_source`]. Reading it clears the start-bit and transmit-complete flags.
+    #[inline(always)]
+    pub fn interrupt_source(&mut self) -> UartVector {
+        let usci = unsafe { USCI::steal() };
+        read_uart_iv(&usci)
+    }
+
+    /// Send an address character, in the multiprocessor modes (UCTXADDR): preceded by an idle line in the
+    /// idle-line format, with the address bit set in the address-bit format. Returns `WouldBlock` until the Tx
+    /// buffer is free.
+    #[inline]
+    pub fn send_address(&mut self, address: u8) -> nb::Result<(), Infallible> {
+        let usci = unsafe { USCI::steal() };
+        if !usci.txifg_rd() {
+            return Err(nb::Error::WouldBlock);
+        }
+        usci.ctl0_set_bits(UCTXADDR);
+        usci.tx_wr(address);
+        Ok(())
+    }
+
+    /// Send a break: all bits low for a character time, or in automatic baud-rate mode a 13-bit break, the
+    /// break delimiter and the synch field 0x55, as LIN needs (UCTXBRK). Returns `WouldBlock` until the Tx
+    /// buffer is free.
+    #[inline]
+    pub fn send_break(&mut self) -> nb::Result<(), Infallible> {
+        let usci = unsafe { USCI::steal() };
+        if !usci.txifg_rd() {
+            return Err(nb::Error::WouldBlock);
+        }
+        let auto_baud = usci.ctl0_rd() >> 9 & 0b11 == 0b11;
+        usci.ctl0_set_bits(UCTXBRK);
+        usci.tx_wr(if auto_baud { 0x55 } else { 0x00 });
+        Ok(())
+    }
+
+    // Internal flush function: done once the Tx buffer is empty and the last character has left the
+    // shift register. UCBUSY also covers a character being received, so this can wait for that too.
+    // (UCTXCPTIFG can't be used: erratum USCI42 sets it after each character.)
     #[inline]
     fn flush(&mut self) -> nb::Result<(), Infallible> {
         let usci = unsafe { USCI::steal() };
-        if usci.txifg_rd() {
+        if usci.txifg_rd() && !usci.statw_rd().ucbusy() {
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -558,6 +811,62 @@ where
         usci.rxie_clear();
     }
 
+    /// Enable interrupts when a start bit is received (UCSTTIE), for example to wake up from a low-power
+    /// mode in time for the character
+    #[inline(always)]
+    pub fn enable_start_bit_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.ifg_clr_bits(UCSTTIFG);
+        usci.ie_set_bits(UCSTTIFG);
+    }
+
+    /// Disable interrupts when a start bit is received (UCSTTIE)
+    #[inline(always)]
+    pub fn disable_start_bit_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.ie_clr_bits(UCSTTIFG);
+    }
+
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones (UCAxIV), shared with
+    /// [`Tx::interrupt_source`]. Reading it clears the start-bit and transmit-complete flags.
+    #[inline(always)]
+    pub fn interrupt_source(&mut self) -> UartVector {
+        let usci = unsafe { USCI::steal() };
+        read_uart_iv(&usci)
+    }
+
+    /// In the multiprocessor and automatic baud-rate modes, receive only address characters, or the character
+    /// after a break and synch field, while dormant (UCDORM). After receiving one that's for this device, leave
+    /// the dormant state to receive the data that follows.
+    #[inline(always)]
+    pub fn set_dormant(&mut self, dormant: bool) {
+        let usci = unsafe { USCI::steal() };
+        if dormant {
+            usci.ctl0_set_bits(UCDORM);
+        } else {
+            usci.ctl0_clr_bits(UCDORM);
+        }
+    }
+
+    /// Like reading a character, but also returns whether it's an address character, in the multiprocessor
+    /// modes (UCADDR, UCIDLE).
+    #[inline]
+    pub fn read_with_address_flag(&mut self) -> nb::Result<(u8, bool), RecvError> {
+        let usci = unsafe { USCI::steal() };
+        // The flag is cleared when the character is read, so read it first
+        let address = usci.statw_bits() & UCADDR_UCIDLE != 0;
+        self.recv().map(|data| (data, address))
+    }
+
+    /// In automatic baud-rate mode: whether a break was longer than 22 bit times (UCBTOE), and whether a synch
+    /// field was too long to measure (UCSTOE).
+    #[inline]
+    pub fn auto_baud_errors(&self) -> (bool, bool) {
+        let usci = unsafe { USCI::steal() };
+        let abctl = usci.abctl_rd();
+        (abctl & 1 << 2 != 0, abctl & 1 << 3 != 0)
+    }
+
     /// Reads raw value from Rx buffer with no checks for validity
     /// # Safety
     /// May read duplicate data
@@ -575,7 +884,9 @@ where
             let statw = usci.statw_rd();
             let data = usci.rx_rd();
 
-            if statw.ucfe() {
+            if statw.ucbrk() {
+                Err(nb::Error::Other(RecvError::Break))
+            } else if statw.ucfe() {
                 Err(nb::Error::Other(RecvError::Framing))
             } else if statw.ucpe() {
                 Err(nb::Error::Other(RecvError::Parity))
@@ -594,6 +905,8 @@ where
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub enum RecvError {
+    /// A break was received: all bits low, see [`SerialConfig::break_interrupts`]
+    Break,
     /// Framing error
     Framing,
     /// Parity error
@@ -624,6 +937,7 @@ mod emb_io {
     impl Error for RecvError {
         fn kind(&self) -> embedded_io::ErrorKind {
             match self {
+                RecvError::Break        => embedded_io::ErrorKind::Other,
                 RecvError::Framing      => embedded_io::ErrorKind::Other,
                 RecvError::Parity       => embedded_io::ErrorKind::Other,
                 RecvError::Overrun(_)   => embedded_io::ErrorKind::Other,
@@ -729,6 +1043,7 @@ mod ehal_nb1 {
     impl Error for RecvError {
         fn kind(&self) -> ErrorKind {
             match self {
+                RecvError::Break        => ErrorKind::FrameFormat,
                 RecvError::Framing      => ErrorKind::FrameFormat,
                 RecvError::Parity       => ErrorKind::Parity,
                 RecvError::Overrun(_)   => ErrorKind::Overrun,

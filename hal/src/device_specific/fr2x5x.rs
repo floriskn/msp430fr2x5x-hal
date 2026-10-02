@@ -105,7 +105,15 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    impl AdcTriggerTimer for crate::pac::Tb1 {}
+
+    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {}
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {}
+    impl<DIR> VrefOutputPin for Pin<P1, Pin7, Alternate3<DIR>> {}
 
     impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);
     impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);
@@ -545,10 +553,13 @@ mod serial {
     /// Tx pin for E_USCI_A1
     pub struct UsciA1TxPin;
     impl_serial_pin!(UsciA1TxPin, P4, Pin3);
+    // Alternate function 2 inverts the polarity of TXD and RXD (data sheet, Table 6-15 and pin functions)
+    impl_serial_pin!(UsciA1TxPin, P4, Pin3, Alternate2);
 
     /// Rx pin for E_USCI_A1
     pub struct UsciA1RxPin;
     impl_serial_pin!(UsciA1RxPin, P4, Pin2);
+    impl_serial_pin!(UsciA1RxPin, P4, Pin2, Alternate2);
 }
 
 /* SPI */
@@ -801,6 +812,16 @@ mod timer {
     impl CascadedTimer for Tb1 {
         type Source = Tb0;
     }
+
+    // The TBxOUTH trigger is eCOMP0 or the TBxTRG pin for TB0 and TB1, eCOMP1 or the pin for TB2,
+    // and only eCOMP1 for TB3 (data sheet, Table 6-20; SLAU445I SYSCFG2)
+    impl HighImpedanceTimer for Tb0 { const TRGSEL: u16 = 1 << 15; }
+    impl HighImpedanceTimer for Tb1 { const TRGSEL: u16 = 1 << 14; }
+    impl HighImpedanceTimer for Tb2 { const TRGSEL: u16 = 1 << 13; }
+    impl HighImpedanceTimer for Tb3 { const TRGSEL: u16 = 1 << 12; }
+    impl<PULL> HighImpedancePin<Tb0> for Pin<P1, Pin2, Alternate2<Input<PULL>>> {}
+    impl<PULL> HighImpedancePin<Tb1> for Pin<P2, Pin3, Alternate1<Input<PULL>>> {}
+    impl<PULL> HighImpedancePin<Tb2> for Pin<P5, Pin3, Alternate1<Input<PULL>>> {}
 }
 
 pub mod clock {
@@ -821,4 +842,23 @@ pub mod clock {
 /* LPM */
 pub(crate) mod lpm {
     crate::lpm::reset_all_pin_functions_impl!(P1, P2, P3, P4, P5, P6);
+}
+
+/* Infrared modulation */
+pub mod ir {
+    use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
+
+    /// The eUSCI whose TXD pin carries the modulated signal
+    pub type IrUsci = EUsciA0;
+    /// The pin mapping of that TXD pin
+    pub type IrMapping = DefaultMapping;
+
+    // The CCR2 outputs of Tb0 and Tb1 feed the modulator (data sheet: timer signal connections)
+    impl IrInputTimer for Tb0 {}
+    impl IrInputTimer for Tb1 {}
+    impl IrFirstTimer for Tb0 {}
+    impl IrSecondTimer for Tb1 {}
+
+    // eUSCI_A0's TXD pin (data sheet: timer signal connections)
+    impl<DIR> IrOutputPin for Pin<P1, Pin7, Alternate1<DIR>> {}
 }

@@ -62,7 +62,15 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    impl AdcTriggerTimer for crate::pac::Timer1A3 {}
+
+    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, AdcMode<DIR>> {}
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, AdcMode<DIR>> {}
+    impl<DIR> VrefOutputPin for Pin<P1, Pin4, AdcMode<DIR>> {}
 
     impl_adc_channel_pin!(P1, Pin0, AdcMode => 0);
     impl_adc_channel_pin!(P1, Pin1, AdcMode => 1);
@@ -80,7 +88,7 @@ pub const BAK_MEM_SIZE: usize = 32;
 
 /* Capture */
 mod capture {
-    use crate::{capture::CapturePeriph, gpio::*, pac::*};
+    use crate::{capture::{CapturePeriph, NoCapturePin}, gpio::*, pac::*};
 
     impl CapturePeriph for Timer0A3 {
         type Gpio0 = ();
@@ -100,6 +108,28 @@ mod capture {
         type Gpio4 = ();
         type Gpio5 = ();
         type Gpio6 = ();
+    }
+
+    // TA2 and TA3 have no pins. Input B of TA3's capture pins 0 and 1 are the CCR0 and CCR1 outputs of
+    // TA2 (data sheet, Tables 6-13 and 6-14), and both timers can capture from software.
+    impl CapturePeriph for Timer2A2 {
+        type Gpio0 = NoCapturePin;
+        type Gpio1 = NoCapturePin;
+        type Gpio2 = NoCapturePin;
+        type Gpio3 = NoCapturePin;
+        type Gpio4 = NoCapturePin;
+        type Gpio5 = NoCapturePin;
+        type Gpio6 = NoCapturePin;
+    }
+
+    impl CapturePeriph for Timer3A2 {
+        type Gpio0 = NoCapturePin;
+        type Gpio1 = NoCapturePin;
+        type Gpio2 = NoCapturePin;
+        type Gpio3 = NoCapturePin;
+        type Gpio4 = NoCapturePin;
+        type Gpio5 = NoCapturePin;
+        type Gpio6 = NoCapturePin;
     }
 }
 
@@ -504,4 +534,23 @@ pub mod clock {
 /* LPM */
 pub(crate) mod lpm {
     crate::lpm::reset_all_pin_functions_impl!(P1, P2, P3);
+}
+
+/* Infrared modulation */
+pub mod ir {
+    use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
+
+    /// The eUSCI whose TXD pin carries the modulated signal
+    pub type IrUsci = UsciA0UartMode;
+    /// The pin mapping of that TXD pin
+    pub type IrMapping = DefaultMapping;
+
+    // The CCR2 outputs of Timer0A3 and Timer1A3 feed the modulator (data sheet: timer signal connections)
+    impl IrInputTimer for Timer0A3 {}
+    impl IrInputTimer for Timer1A3 {}
+    impl IrFirstTimer for Timer0A3 {}
+    impl IrSecondTimer for Timer1A3 {}
+
+    // eUSCI_A0's TXD pin (data sheet: Timer1_A3 signal connections)
+    impl<DIR> IrOutputPin for Pin<P1, Pin4, Alternate1<DIR>> {}
 }

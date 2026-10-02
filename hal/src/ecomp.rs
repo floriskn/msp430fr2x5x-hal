@@ -17,7 +17,9 @@
 //! The voltage reference of the DAC can be chosen as either VCC or the internal shared reference
 //! (provided it has been previously configured).
 //!
-//! Interrupts can be triggered on rising, falling, or both edges of the comparator output.
+//! Interrupts can be triggered on rising, falling, or both edges of the comparator output. Each edge also sets a
+//! flag, which [`Comparator::interrupt_source()`] reads and clears in the `ECOMP0` (MSP430FR247x) or
+//! `ECOMP0_ECOMP1` (MSP430FR2x5x) interrupt handler.
 //!
 //! See the simplified diagram below:
 //!
@@ -36,6 +38,10 @@
 //! | MSP430FR247x | eCOMP0 |         |         | `P1.1`  | `P2.2`  | `P5.7`  | `P6.0`  | `P3.4`   |
 //!
 //! Only the MSP430FR2355 and MSP430FR2353 have SACs.
+//!
+//! After reset, a high comparator output also switches the outputs of some Timer_B peripherals to high impedance:
+//! eCOMP0 those of TB0 and TB1, eCOMP1 those of TB2 and TB3. See
+//! [`TimerConfig::high_impedance_trigger`](crate::timer::TimerConfig::high_impedance_trigger) to turn that off.
 
 pub use crate::device_specific::ecomp::{NegativeInput, PositiveInput};
 use crate::{
@@ -114,6 +120,40 @@ impl<COMP: ECompInputs> Comparator<COMP> {
     /// Disable falling-edge interrupts (CPIIFG).
     #[inline(always)]
     pub fn disable_falling_interrupts(&mut self) { COMP::dis_cpiie(); }
+
+    /// Whether the output rose since the flag was last cleared (CPIFG), whether or not its interrupt is enabled.
+    #[inline(always)]
+    pub fn rising_edge_flag(&self) -> bool { COMP::int_flags() & 0b01 != 0 }
+
+    /// Whether the output fell since the flag was last cleared (CPIIFG), whether or not its interrupt is enabled.
+    #[inline(always)]
+    pub fn falling_edge_flag(&self) -> bool { COMP::int_flags() & 0b10 != 0 }
+
+    /// Clear both edge flags. Clear them before enabling interrupts, or an edge from before requests one.
+    #[inline(always)]
+    pub fn clear_edge_flags(&mut self) { COMP::clear_int_flags(0b11); }
+
+    /// The highest-priority pending interrupt among the enabled ones (CPxIV). Reading it clears its flag.
+    #[inline(always)]
+    pub fn interrupt_source(&mut self) -> ComparatorVector {
+        match COMP::iv() {
+            0x02 => ComparatorVector::RisingEdge,
+            0x04 => ComparatorVector::FallingEdge,
+            _ => ComparatorVector::None,
+        }
+    }
+}
+
+/// The highest-priority pending comparator interrupt, as read from CPxIV by [`Comparator::interrupt_source()`]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ComparatorVector {
+    /// No interrupt pending
+    None,
+    /// The output rose (CPIFG)
+    RisingEdge,
+    /// The output fell (CPIIFG)
+    FallingEdge,
 }
 
 /// Represents a configuration for the DAC in an eCOMP peripheral

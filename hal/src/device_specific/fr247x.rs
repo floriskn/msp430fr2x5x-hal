@@ -113,7 +113,15 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    impl AdcTriggerTimer for crate::pac::Ta1 {}
+
+    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {}
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {}
+    impl<DIR> VrefOutputPin for Pin<P1, Pin4, Alternate3<DIR>> {}
 
     impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);
     impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);
@@ -297,7 +305,7 @@ pub mod ecomp {
         }
     }
 
-    impl_ecomp!(EComp0, cp0ctl0, cp0ctl1, cp0dacctl, cp0dacdata, cpint, cpiv);
+    impl_ecomp!(EComp0, cp0ctl0, cp0ctl1, cp0dacctl, cp0dacdata, cp0int, cp0iv);
 }
 
 /* eUSCI */
@@ -1064,6 +1072,10 @@ mod timer {
     impl CascadedTimer for Ta3 {
         type Source = Ta2;
     }
+
+    // The TB0OUTH trigger is eCOMP0 or the TB0TRG pin, P3.5 (data sheet, Table 9-17)
+    impl HighImpedanceTimer for Tb0 { const TRGSEL: u16 = 1 << 15; }
+    impl<PULL> HighImpedancePin<Tb0> for Pin<P3, Pin5, Alternate2<Input<PULL>>> {}
 }
 
 pub mod clock {
@@ -1084,4 +1096,25 @@ pub mod clock {
 /* LPM */
 pub(crate) mod lpm {
     crate::lpm::reset_all_pin_functions_impl!(P1, P2, P3, P4, P5, P6);
+}
+
+/* Infrared modulation */
+pub mod ir {
+    use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
+
+    /// The eUSCI whose TXD pin carries the modulated signal
+    pub type IrUsci = EUsciA0;
+    /// The pin mapping of that TXD pin
+    pub type IrMapping = DefaultMapping;
+
+    // The CCR2 outputs of Ta0 and Ta1 feed the modulator (data sheet: timer signal connections)
+    impl IrInputTimer for Ta0 {}
+    impl IrInputTimer for Ta1 {}
+    impl IrFirstTimer for Ta0 {}
+    impl IrSecondTimer for Ta1 {}
+
+    // eUSCI_A0's TXD pin in the default mapping. Measured on an MSP430FR2476: with eUSCI_A0 remapped,
+    // neither P1.4 nor P5.2 carries the modulated signal. (The data sheet figure gives P2.0, which isn't a
+    // TXD pin on this device.)
+    impl<DIR> IrOutputPin for Pin<P1, Pin4, Alternate1<DIR>> {}
 }

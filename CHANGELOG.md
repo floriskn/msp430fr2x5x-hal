@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Breaking: `ClockConfig::aclk_vloclk()` is no longer available on the MSP430FR25x2, which can't source ACLK from VLO.
 - Fixed XT1 pins on the MSP430FR2x5x, which need alternate function 2.
 - Fixed LPM3.5 entry stopping XT1 on devices other than the MSP430FR2x5x, and not resetting `P2SEL1`. LPMx.5 entry now also clears ACLKREQEN, as the user's guide requires.
-- Fixed `delay_ns()` and `delay_us()` never waiting longer than 1 ms.
+- Fixed `delay_ns()` and `delay_us()`, which waited whole milliseconds, at most 1 ms. They now wait about the requested time, counted in MCLK cycles.
 - Fixed the TB0 clock input pin (TB0CLK) on the MSP430FR247x, which is P6.1, not P2.7.
 - Fixed `InfoMemory::write()` and `into_unprotected()` switching off the program FRAM write protection (PFWP) until the next reset. `write()` now runs with interrupts disabled, as the user's guide recommends.
 - Fixed `Spi::change_mode()` disabling the SPI interrupts.
@@ -56,6 +56,32 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add `Fram::set_writable_program_fram()` on the MSP430FR2x5x and MSP430FR2522, which leaves the start of program FRAM writable (FRWPOA).
 - Add `ClockConfig::reset_on_fll_unlock()`, which resets the device if the DCO runs too fast for the FLL.
 - Fixed `Fram::set_wait_states()` leaving the FRAM controller registers unlocked.
+- Add ADC reference selection: `Adc::with_reference()` measures against the internal reference or external references on the VeREF+ and VeREF- pins instead of AVCC and AVSS.
+- Add ADC sequences, repeated conversions and hardware triggers: `Adc::start()` takes a `ConversionConfig` (conversion mode, trigger source among software, the RTC, a timer and eCOMP0, pulse or extended sampling, back-to-back conversions), and `Adc::result()` and `Adc::stop()` go with it. `PwmUninit::into_adc_trigger()` sets up the timer trigger without a pin.
+- Add the ADC window comparator, `Adc::set_window()`, and ADC interrupts: `Adc::enable_interrupts()`, `Adc::interrupt_flags()` and `Adc::interrupt_source()`.
+- Add signed ADC results, through `AdcConfig::data_format`.
+- Add `Pmm::enable_vref_output()`, which outputs the 1.2 V reference on the VREF+ pin.
+- Add the `tlv` module with the factory calibration data. `TempSensorCalibration` converts temperature sensor readings with it, and the temperature sensor examples now use it instead of typical values, some of which were wrong.
+- Add eCOMP edge flags, `Comparator::rising_edge_flag()`, `falling_edge_flag()` and `clear_edge_flags()`, and `Comparator::interrupt_source()` for the interrupt handler.
+- Add center-aligned PWM, `PwmParts3::new_center_aligned()` and `PwmParts7::new_center_aligned()`, and `Pwm::set_polarity()` for active-low outputs.
+- Add `period_output` to `PwmParts3` and `PwmParts7`: the CCR0 output, a square wave at half the PWM frequency, on the timers that have a pin for it (TA2, TA3 and TB0 on the MSP430FR247x).
+- PWM duty cycle changes on a Timer_B now take effect at the start of the next period, through its compare latches, so no period is cut short.
+- Add `TimerConfig::high_impedance_trigger()`. After reset, a high eCOMP output switches the outputs of some Timer_B peripherals to high impedance (eCOMP0 those of TB0 and TB1, eCOMP1 those of TB2 and TB3), which stops their PWM; this selects the TBxTRG pin instead, or nothing.
+- Add `TimerConfig::counter_length()` for Timer_B, and `Timer::start_up_down()` for up/down counting. `Timer::resume()` now keeps the counting mode instead of switching to up mode.
+- Add captures started from software: the `config_capN_software()` methods and `Capture::trigger_capture()`.
+- Add `CaptureParts2`, for the timers with two capture/compare registers: TA2 and TA3 on the MSP430FR2433, where TA3 can capture the outputs of TA2.
+- Add the UART multiprocessor formats and automatic baud-rate detection, through `SerialConfig::mode()`, with `Tx::send_address()`, `Tx::send_break()`, `Rx::set_dormant()`, `Rx::read_with_address_flag()` and `Rx::auto_baud_errors()`.
+- Add `SerialConfig::irda()` for IrDA, `SerialConfig::deglitch()`, and `SerialConfig::break_interrupts()`, which reports received breaks as the new `RecvError::Break` (breaking for exhaustive matches).
+- Add UART start-bit and transmit-complete interrupts, and `interrupt_source()` on `Tx` and `Rx`.
+- Fixed UART `flush()` returning while the last character was still being sent. It now waits until the eUSCI is idle.
+- Add the inverted UART of eUSCI_A1 on the MSP430FR2x5x: its pins P4.2 and P4.3 in alternate function 2.
+- Add `SpiConfig::seven_bit_characters()`, and `SpiConfig::single_slave_bus()`, where the eUSCI drives the slave's enable signal on STE.
+- Add I2C settings: `clock_low_timeout()`, `byte_counter()` (with an automatic STOP for masters) and `ack_last_byte()`, and for slaves `general_call()`, three more own addresses (`own_address()`), `address_mask()`, `software_address_ack()` with `I2cRoleSlave::acknowledge_address()`, `early_tx_interrupt()` and `I2cRoleSlave::received_address()`.
+- Add the `ir` module for the infrared modulator: `IrModulator` combines the CCR2 outputs of two timers (from `PwmUninit::into_ir_input()`) and data from software or eUSCI_A0's UART into an ASK or FSK signal on eUSCI_A0's TXD pin. Only one TXD pin carries it, in the pin mapping `ir::IrMapping`: on the MSP430FR247x it's P1.4, as eUSCI_A0's remapped pin P5.2 doesn't. The MSP430FR2476 example `ir_remote` sends NEC remote control frames.
+- Add the `icc` module on the MSP430FR2x5x: the Interrupt Compare Controller, which gives each interrupt source one of four priorities and lets higher priorities interrupt lower ones.
+- Add the `mfm` module on the MSP430FR2x5x: the Manchester Function Module on P5.0 and P5.1, with eUSCI_B1 as its SPI slave through `SpiConfig::mfm_slave()`. Not tested on hardware yet.
+- Add `ClockConfig::mclk_dcoclk_hz()`, which runs the DCO at any frequency from 1 MHz up to the device maximum. The FLL locks to the largest multiple of its reference that doesn't exceed the target, with the DCO in the range whose nominal frequency is closest to it.
+- Fixed `I2cRoleSlave::poll()` panicking when the start flag had been cleared, by reading the interrupt vector say, while a received byte was still unread and the master had started reading. It now reports `OverrunWrite`.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

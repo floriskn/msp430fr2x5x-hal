@@ -40,6 +40,14 @@ pub enum ReferenceVoltage {
 #[derive(Debug)]
 pub struct InternalTempSensor<'a>(PhantomData<&'a InternalVRef>);
 
+/// Marker trait for the VREF+ pin in its analog mode, which can output the 1.2 V reference: P1.7 on the
+/// MSP430FR2x5x, P1.4 on the MSP430FR247x and MSP430FR2433, P1.1 on the MSP430FR25x2 (data sheets)
+pub trait VrefOutputPin {}
+
+/// The 1.2 V reference output on the VREF+ pin, see [`Pmm::enable_vref_output()`]. Pass it to
+/// [`Adc::read_count()`](crate::adc::Adc::read_count) to measure it with the pin's ADC channel.
+pub struct VrefOutput<PIN>(pub(crate) PIN);
+
 /// A reason for a reset, in priority order (SYSRSTIV, data sheets: System Module Interrupt Vector
 /// Registers). A brownout reset (BOR) resets the most, then a power-on reset (POR), then a power-up
 /// clear (PUC) (SLAU445I 1.2).
@@ -225,5 +233,21 @@ impl Pmm {
     /// Disables the internal temperature sensor
     pub fn disable_internal_temp_sensor(&mut self, _tsense: InternalTempSensor) {
         self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.tsensoren().clear_bit()) });
+    }
+
+    /// Output the 1.2 V reference on the VREF+ pin, buffered (PMMCTL2.EXTREFEN). It can supply up to
+    /// 1 mA (data sheets: VREF+). The 1.5 V, 2.0 V and 2.5 V internal shared reference can't be output.
+    ///
+    /// Waits until the buffered reference is ready (REFBGRDY).
+    pub fn enable_vref_output<PIN: VrefOutputPin>(&mut self, pin: PIN) -> VrefOutput<PIN> {
+        self.unlocked(|pmm| unsafe { pmm.pmmctl2().set_bits(|w| w.extrefen().set_bit()) });
+        while self.0.pmmctl2().read().refbgrdy().bit_is_clear() {}
+        VrefOutput(pin)
+    }
+
+    /// Stop outputting the 1.2 V reference, and return the pin.
+    pub fn disable_vref_output<PIN>(&mut self, output: VrefOutput<PIN>) -> PIN {
+        self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.extrefen().clear_bit()) });
+        output.0
     }
 }

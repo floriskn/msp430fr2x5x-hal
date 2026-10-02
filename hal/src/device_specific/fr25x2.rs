@@ -67,7 +67,15 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    impl AdcTriggerTimer for crate::pac::Ta1 {}
+
+    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, AdcMode<DIR>> {}
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, AdcMode<DIR>> {}
+    impl<DIR> VrefOutputPin for Pin<P1, Pin1, AdcMode<DIR>> {}
 
     impl_adc_channel_pin!(P1, Pin0, AdcMode => 0);
     impl_adc_channel_pin!(P1, Pin1, AdcMode => 1);
@@ -511,4 +519,24 @@ pub mod clock {
 /* LPM */
 pub(crate) mod lpm {
     crate::lpm::reset_all_pin_functions_impl!(P1, P2);
+}
+
+/* Infrared modulation */
+pub mod ir {
+    use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
+
+    /// The eUSCI whose TXD pin carries the modulated signal
+    pub type IrUsci = EUsciA0;
+    /// The pin mapping of that TXD pin
+    pub type IrMapping = RemappedMapping;
+
+    // The CCR2 outputs of Ta0 and Ta1 feed the modulator (data sheet: timer signal connections)
+    impl IrInputTimer for Ta0 {}
+    impl IrInputTimer for Ta1 {}
+    impl IrFirstTimer for Ta0 {}
+    impl IrSecondTimer for Ta1 {}
+
+    // eUSCI_A0's TXD pin in the remapped mapping, where the data sheet figure (Timer0_A3 and Timer1_A3
+    // signal connections) shows the modulator output. Not tested on hardware.
+    impl<DIR> IrOutputPin for Pin<P2, Pin0, Alternate1<DIR>> {}
 }

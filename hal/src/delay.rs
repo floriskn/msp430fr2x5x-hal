@@ -1,21 +1,70 @@
 //! Embedded hal delay implementation
-use msp430::asm;
+//!
+//! The delays count MCLK cycles in a loop, so they last at least as long as requested; interrupts
+//! during a delay make it longer.
 
 /// Delay provider struct
 #[derive(Copy, Clone)]
 pub struct SysDelay {
-    nops_per_ms: u16,
+    /// Loop iterations per millisecond
+    iters_per_ms: u16,
+    /// Loop iterations per microsecond, in 1/4096ths
+    iters_per_us_q12: u32,
 }
 
-impl SysDelay {
-    /// Create a new delay object
-    pub(crate) fn new(freq: u32) -> Self {
-        // ~210 nops needed per 2^20 Hz to delay 1 ms
-        // The clock could be REFOCLK or VLOCLK, so be careful of small frequencies
-        // => 1 nop per 2^20 / 210 = 4993.21.. = ~4993 Hz
-        let nops_per_ms: u16 = (freq / 4993).max(1) as u16;
+/// MCLK cycles per iteration of the delay loop: `SUB #1, Rn` takes 1 cycle and `JNZ` 2 (SLAU445I 4.5.1.5)
+const CYCLES_PER_ITER: u32 = 3;
 
-        SysDelay { nops_per_ms }
+impl SysDelay {
+    /// Create a new delay object for an MCLK of `freq` Hz
+    pub(crate) fn new(freq: u32) -> Self {
+        // Round up, so delays don't fall short. The clock could be REFOCLK or VLOCLK, so be careful
+        // of small frequencies.
+        let iters_per_ms = freq.div_ceil(1000 * CYCLES_PER_ITER).max(1) as u16;
+        let iters_per_us_q12 = (freq.div_ceil(1000) * 4096).div_ceil(1000 * CYCLES_PER_ITER);
+        SysDelay { iters_per_ms, iters_per_us_q12 }
+    }
+
+    /// Spin for `iters` iterations of [`CYCLES_PER_ITER`] cycles
+    #[inline(always)]
+    fn spin(iters: u16) {
+        if iters == 0 {
+            return;
+        }
+        unsafe {
+            core::arch::asm!(
+                "1:",
+                "sub #1, {n}",
+                "jnz 1b",
+                n = inout(reg) iters => _,
+                options(nomem, nostack),
+            );
+        }
+    }
+
+    #[inline]
+    fn ms(&self, ms: u32) {
+        for _ in 0..ms {
+            Self::spin(self.iters_per_ms);
+        }
+    }
+
+    /// Spin for `us` microseconds, which is below 1000
+    #[inline]
+    fn short_us(&self, us: u16) {
+        // At most 999 * 32768 for a 24 MHz MCLK, which fits
+        Self::spin(((us as u32 * self.iters_per_us_q12 + 4095) >> 12) as u16);
+    }
+
+    #[inline]
+    fn us(&self, us: u32) {
+        // Divide only for long delays, where it takes a small part of the time
+        if us < 1000 {
+            self.short_us(us as u16);
+        } else {
+            self.ms(us / 1000);
+            self.short_us((us % 1000) as u16);
+        }
     }
 }
 
@@ -24,25 +73,25 @@ mod ehal1 {
     use embedded_hal::delay::DelayNs;
 
     impl DelayNs for SysDelay {
+        /// Pauses execution for at least `ns` nanoseconds, rounded up to whole microseconds. At low MCLK
+        /// frequencies the call itself takes a few microseconds.
         #[inline]
-        /// Pauses execution for approximately `ns / 1_000_000` milliseconds (but always at least 1 ms). Recommend using delay_ms instead.
         fn delay_ns(&mut self, ns: u32) {
-            let ms = (ns >> 20).max(1);
-            self.delay_ms(ms)
-        }
-        /// Pauses execution for approximately `us / 1_000` milliseconds (but always at least 1 ms). Recommend using delay_ms instead.
-        fn delay_us(&mut self, us: u32) {
-            let ms = (us >> 10).max(1);
-            self.delay_ms(ms)
-        }
-        /// Pauses execution for approximately `ms` milliseconds.
-        fn delay_ms(&mut self, ms: u32) {
-            for _ in 0..ms {
-                for _ in 0..self.nops_per_ms {
-                    asm::nop();
-                }
+            if ns <= 1000 {
+                self.us(1);
+            } else {
+                self.us(ns.div_ceil(1000));
             }
         }
+
+        /// Pauses execution for at least `us` microseconds. At low MCLK frequencies the call itself
+        /// takes a few microseconds.
+        #[inline]
+        fn delay_us(&mut self, us: u32) { self.us(us) }
+
+        /// Pauses execution for at least `ms` milliseconds.
+        #[inline]
+        fn delay_ms(&mut self, ms: u32) { self.ms(ms) }
     }
 }
 
@@ -57,9 +106,7 @@ mod ehal02 {
                 #[inline]
                 fn delay_ms(&mut self, ms: $typ) {
                     for _ in 0..ms {
-                        for _ in 0..self.nops_per_ms {
-                            asm::nop();
-                        }
+                        SysDelay::spin(self.iters_per_ms);
                     }
                 }
             }

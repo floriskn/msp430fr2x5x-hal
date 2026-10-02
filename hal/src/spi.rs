@@ -133,11 +133,9 @@ where
             ucmsb: msb_first,
             ucsync: true,
             ucswrst: true,
-            // UCSTEM = 1 isn't useful for us, since the STE acts like a CS pin in this case, but
-            // it asserts and de-asserts after each byte automatically, and unfortunately
-            // ehal::SpiBus requires support for multi-byte transactions.
+            // UCSTEM = 1 is only used by `single_slave_bus`, see there
             ucstem: false,
-            uc7bit: false, // Not supported
+            uc7bit: false,
             ..Default::default()
         };
 
@@ -207,6 +205,34 @@ where
     USCI: SpiUsci<M>,
     M: PinMap,
 {
+    /// For an SPI bus with a single slave, whose enable signal the eUSCI generates on the STE pin (UCSTEM).
+    ///
+    /// The eUSCI asserts STE while it transfers: bytes written as soon as the Tx buffer is free keep it asserted
+    /// (measured on an MSP430FR2476), but it's released whenever the eUSCI runs out of data. Slaves that need
+    /// their enable signal held for a whole transaction need a GPIO pin instead.
+    pub fn single_slave_bus<MOSI, MISO, SCLK, STE>(
+        mut self,
+        _miso: MISO,
+        _mosi: MOSI,
+        _sclk: SCLK,
+        _ste: STE,
+        ste_pol: StePolarity,
+    ) -> Spi<USCI, M>
+    where
+        MOSI: Into<USCI::MOSI>,
+        MISO: Into<USCI::MISO>,
+        SCLK: Into<USCI::SCLK>,
+        STE: Into<USCI::STE>,
+    {
+        self.ctlw0.ucmode = match ste_pol {
+            StePolarity::EnabledWhenHigh => Ucmode::FourPinSPI1,
+            StePolarity::EnabledWhenLow  => Ucmode::FourPinSPI0,
+        };
+        self.ctlw0.ucstem = true;
+        self.configure_hw();
+        Spi { usci: self.usci, _pin_map: PhantomData }
+    }
+
     // Note: Errata USCI50 makes this mode a real pain to implement. Leave out for now.
     // /// For an SPI bus with more than one master.
     // /// The STE pin is used by the other master to turn SCLK and MOSI high impedance, so the other master can talk on the bus.
@@ -285,6 +311,14 @@ where
     USCI: SpiUsci<M>,
     M: PinMap,
 {
+    /// Transfer 7-bit characters instead of 8-bit ones (UC7BIT). The top bit of each byte is then not sent,
+    /// and reads as 0.
+    #[inline]
+    pub fn seven_bit_characters(mut self) -> Self {
+        self.ctlw0.uc7bit = true;
+        self
+    }
+
     #[inline]
     fn configure_hw(&self) {
         USCI::configure_pin_mapping();
@@ -299,6 +333,22 @@ where
 
         self.usci.clear_transmit_interrupt();
         self.usci.clear_receive_interrupt();
+    }
+}
+
+#[cfg(feature = "mfm")]
+impl<M: PinMap> SpiConfig<crate::pac::EUsciB1, Slave, M>
+where crate::pac::EUsciB1: SpiUsci<M>
+{
+    /// Set eUSCI_B1 up as the 4-wire SPI slave of the Manchester Function Module, see [`crate::mfm`]. The MFM
+    /// connects to it internally, so its own pins aren't needed.
+    pub fn mfm_slave(mut self, ste_pol: StePolarity) -> SpiSlave<crate::pac::EUsciB1, M> {
+        self.ctlw0.ucmode = match ste_pol {
+            StePolarity::EnabledWhenHigh => Ucmode::FourPinSPI1,
+            StePolarity::EnabledWhenLow  => Ucmode::FourPinSPI0,
+        };
+        self.configure_hw();
+        SpiSlave { usci: self.usci, _pin_map: PhantomData }
     }
 }
 

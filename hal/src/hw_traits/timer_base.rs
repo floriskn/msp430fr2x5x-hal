@@ -74,6 +74,12 @@ pub trait TimerBase: Steal {
     fn upmode(&self);
     /// Set to continuous mode, reset timer, and clear interrupts
     fn continuous(&self);
+    /// Set to up/down mode, reset timer, and clear interrupts
+    fn updown_mode(&self);
+    /// The counting mode (MC)
+    fn mode_rd(&self) -> u8;
+    /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none.
+    fn set_cntl(&self, cntl: u8);
 
     /// Apply clock select settings
     fn config_clock(&self, tbssel: Tbssel, div: TimerDiv);
@@ -106,6 +112,7 @@ pub trait TimerBase: Steal {
     fn get_tbxr(&self) -> u16;
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RunningMode {
     Up = 0b01,
@@ -136,6 +143,18 @@ pub trait CCRn<C>: Steal {
     fn cov_ccifg_rd(&self) -> (bool, bool);
     fn cov_ccifg_clr(&self);
     fn cov_clr(&self);
+
+    /// The output mode (OUTMOD)
+    fn outmod_rd(&self) -> u8;
+    /// Switch between an output mode and its inverse (set, reset or toggle ↔ toggle/reset ↔
+    /// toggle/set, set/reset ↔ reset/set) by setting or clearing the top OUTMOD bit. The other two bits
+    /// stay, so this never passes through mode 0 (SLAU445I 13.2.5.1.3).
+    fn set_outmod_high_bit(&self, set: bool);
+    /// Switch the capture input between GND and VCC (CCIS bit 0), for a software capture
+    fn toggle_ccis_low_bit(&self);
+    /// Set when the compare latch loads (Timer_B CLLD: 0 = at once, 1 = when the timer counts to 0).
+    /// Timer_A has no compare latch.
+    fn set_clld(&self, clld: u8);
 }
 
 /// Label for capture-compare register 0
@@ -153,8 +172,24 @@ pub struct CCR5;
 /// Label for capture-compare register 6
 pub struct CCR6;
 
+// Write a Timer_B-only field, or nothing for Timer_A
+macro_rules! timer_b_field {
+    (A, $reg:expr, $field:ident, $value:expr) => { let _ = $value; };
+    (B, $reg:expr, $field:ident, $value:expr) => {
+        $reg.modify(|_, w| unsafe { w.$field().bits($value) });
+    };
+}
+pub(crate) use timer_b_field;
+
+// Mark Timer_B peripherals
+macro_rules! timer_b_marker {
+    (A, $TBx:ident) => {};
+    (B, $TBx:ident) => { impl crate::timer::TimerB for $TBx {} };
+}
+pub(crate) use timer_b_marker;
+
 macro_rules! ccrn_impl {
-    ($TBx:ident, $CCRn:ident, $tbxcctln:ident, $tbxccrn:ident) => {
+    ($kind:ident, $TBx:ident, $CCRn:ident, $tbxcctln:ident, $tbxccrn:ident) => {
         impl CCRn<$CCRn> for $TBx {
             #[inline(always)]
             fn set_ccrn(&self, count: u16) { self.$tbxccrn().write(|w| unsafe { w.bits(count) }); }
@@ -210,6 +245,30 @@ macro_rules! ccrn_impl {
                         .cov().clear_bit())
                 };
             }
+
+            #[inline(always)]
+            fn outmod_rd(&self) -> u8 { (self.$tbxcctln().read().bits() >> 5) as u8 & 0b111 }
+
+            #[inline(always)]
+            fn set_outmod_high_bit(&self, set: bool) {
+                // OUTMOD is bits 7..5
+                if set {
+                    unsafe { self.$tbxcctln().set_bits(|w| w.bits(1 << 7)) };
+                } else {
+                    unsafe { self.$tbxcctln().clear_bits(|w| w.bits(!(1 << 7))) };
+                }
+            }
+
+            #[inline(always)]
+            fn toggle_ccis_low_bit(&self) {
+                // CCIS is bits 13..12
+                self.$tbxcctln().modify(|r, w| unsafe { w.bits(r.bits() ^ (1 << 12)) });
+            }
+
+            #[inline(always)]
+            fn set_clld(&self, clld: u8) {
+                $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxcctln(), clld, clld);
+            }
         }
     };
 }
@@ -217,6 +276,7 @@ pub(crate) use ccrn_impl;
 
 macro_rules! timer_base_impl {
     (
+        $kind:ident, // A for Timer_A, B for Timer_B
         $TBx:ident, $tbx:ident, $tbxctl:ident, $tbxex:ident, $tbxiv:ident, $tbxr:ident, // Timer registers
         $txclr:ident, $txifg:ident, $txidex:ident, $txie:ident, $txssel:ident, // Register field names (differ between TimerA and TimerB)
         $([$CCRn:ident, $tbxcctln:ident, $tbxccrn:ident]),* // CCR registers
@@ -254,6 +314,27 @@ macro_rules! timer_base_impl {
                         .mc().bits(Mode::Continuous as u8)
                     }
                 });
+            }
+
+            #[inline(always)]
+            fn updown_mode(&self) {
+                self.$tbxctl().modify(|r, w| {
+                    unsafe { w.bits(r.bits())
+                        .$txclr().set_bit()
+                        .$txifg().clear_bit()
+                        .mc().bits(Mode::UpDown as u8)
+                    }
+                });
+            }
+
+            #[inline(always)]
+            fn mode_rd(&self) -> u8 {
+                self.$tbxctl().read().mc().bits()
+            }
+
+            #[inline(always)]
+            fn set_cntl(&self, cntl: u8) {
+                $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), cntl, cntl);
             }
 
             #[inline(always)]
@@ -321,7 +402,9 @@ macro_rules! timer_base_impl {
             }
         }
 
-        $(ccrn_impl!($TBx, $CCRn, $tbxcctln, $tbxccrn);)*
+        $crate::hw_traits::timer_base::timer_b_marker!($kind, $TBx);
+
+        $($crate::hw_traits::timer_base::ccrn_impl!($kind, $TBx, $CCRn, $tbxcctln, $tbxccrn);)*
     };
 }
 pub(crate) use timer_base_impl;

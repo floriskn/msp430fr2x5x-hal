@@ -6,10 +6,13 @@
 //! Due to hardware constraints, the configurations for all capture pins derived from a timer must
 //! be decided before any of them can be used. This differs from `Pwm`, where pins are initialized
 //! on an individual basis.
+//!
+//! A capture can also be started from software, see [`Capture::trigger_capture`], which records the
+//! timer count at that moment.
 
 use crate::hw_traits::timer_base::{CCRn, Ccis, Cm};
 use crate::pin_mapping::*;
-use crate::timer::{read_tbxiv, CapCmpTimer3, CapCmpTimer7, TimerVector};
+use crate::timer::{read_tbxiv, CapCmpTimer2, CapCmpTimer3, CapCmpTimer7, TimerVector};
 use core::marker::PhantomData;
 
 pub use crate::timer::{
@@ -49,6 +52,11 @@ impl Default for PinConfig {
     }
 }
 
+/// The capture input A of capture pins that have none, such as those of TA2 and TA3 on the MSP430FR2433
+///
+/// It has no values, so input A can't be selected for these capture pins.
+pub enum NoCapturePin {}
+
 /// Extension trait for creating capture pins from timer peripherals
 pub trait CapturePeriph<M: PinMap = DefaultMapping>: TimerPeriph<M> {
     /// GPIO pin that supplies input A for capture pin 0
@@ -68,7 +76,7 @@ pub trait CapturePeriph<M: PinMap = DefaultMapping>: TimerPeriph<M> {
 }
 
 macro_rules! config_fn {
-    (methods $config_sel_b:ident, $config_trigger:ident, $pin:ident) => {
+    (methods $config_sel_b:ident, $config_trigger:ident, $config_sw:ident, $pin:ident) => {
         #[allow(non_snake_case)]
         #[inline(always)]
         /// Configure the capture input select of the capture pin as capture input B
@@ -83,9 +91,18 @@ macro_rules! config_fn {
             self.$pin.trigger = trigger;
             self
         }
+
+        #[inline(always)]
+        /// Configure the capture pin for captures started from software, see
+        /// [`Capture::trigger_capture`]: its input starts at GND and it captures on both edges.
+        pub fn $config_sw(mut self) -> Self {
+            self.$pin.select = Ccis::Gnd;
+            self.$pin.trigger = CapTrigger::BothEdges;
+            self
+        }
     };
 
-    ($config_sel_a:ident, $config_sel_b:ident, $config_trigger:ident, $pin:ident, $gpio:ident) => {
+    ($config_sel_a:ident, $config_sel_b:ident, $config_trigger:ident, $config_sw:ident, $pin:ident, $gpio:ident) => {
         #[allow(non_snake_case)]
         #[inline(always)]
         /// Configure the capture input select of the capture pin as capture input A, which
@@ -94,10 +111,10 @@ macro_rules! config_fn {
             self.$pin.select = Ccis::InputA;
             self
         }
-        config_fn!(methods $config_sel_b, $config_trigger, $pin);
+        config_fn!(methods $config_sel_b, $config_trigger, $config_sw, $pin);
     };
 
-    ($config_sel_a:ident, $config_sel_b:ident, $config_trigger:ident, $pin:ident) => {
+    ($config_sel_a:ident, $config_sel_b:ident, $config_trigger:ident, $config_sw:ident, $pin:ident) => {
         #[allow(non_snake_case)]
         #[inline(always)]
         /// Configure the capture input select of the capture pin as capture input A
@@ -105,8 +122,52 @@ macro_rules! config_fn {
             self.$pin.select = Ccis::InputA;
             self
         }
-        config_fn!(methods $config_sel_b, $config_trigger, $pin);
+        config_fn!(methods $config_sel_b, $config_trigger, $config_sw, $pin);
     };
+}
+
+/// Builder object for configuring capture ports derived from timer peripherals with 2
+/// capture-compare registers, see [`CaptureConfig3`]
+pub struct CaptureConfig2<T, M = DefaultMapping>
+where
+    T: CapturePeriph<M> + CapCmpTimer2<M>,
+    M: PinMap,
+{
+    timer: T,
+    config: TimerConfig<T, M>,
+    cap0: PinConfig,
+    cap1: PinConfig,
+}
+
+impl<T, M> CaptureParts2<T, M>
+where
+    T: CapturePeriph<M> + CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Create capture configuration
+    pub fn config(timer: T, config: TimerConfig<T, M>) -> CaptureConfig2<T, M> {
+        CaptureConfig2 { timer, config, cap0: PinConfig::default(), cap1: PinConfig::default() }
+    }
+}
+
+impl<T, M> CaptureConfig2<T, M>
+where
+    T: CapturePeriph<M> + CapCmpTimer2<M>,
+    M: PinMap,
+{
+    config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, config_cap0_software, cap0, Gpio0);
+    config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, config_cap1_software, cap1, Gpio1);
+
+    /// Writes all previously configured timer and capture settings into peripheral registers
+    pub fn commit(self) -> CaptureParts2<T, M> {
+        let timer = self.timer;
+        self.config.write_regs(&timer);
+        CCRn::<CCR0>::config_cap_mode(&timer, self.cap0.trigger.into(), self.cap0.select);
+        CCRn::<CCR1>::config_cap_mode(&timer, self.cap1.trigger.into(), self.cap1.select);
+        timer.continuous();
+
+        CaptureParts2 { cap0: Capture::new(), cap1: Capture::new(), tbxiv: TBxIV(PhantomData, PhantomData) }
+    }
 }
 
 /// Builder object for configuring capture ports derived from timer peripherals with 3
@@ -150,9 +211,9 @@ where
     T: CapturePeriph<M> + CapCmpTimer3<M>,
     M: PinMap,
 {
-    config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, cap0, Gpio0);
-    config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, cap1, Gpio1);
-    config_fn!(config_cap2_input_A, config_cap2_input_B, config_cap2_trigger, cap2, Gpio2);
+    config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, config_cap0_software, cap0, Gpio0);
+    config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, config_cap1_software, cap1, Gpio1);
+    config_fn!(config_cap2_input_A, config_cap2_input_B, config_cap2_trigger, config_cap2_software, cap2, Gpio2);
 
     /// Writes all previously configured timer and capture settings into peripheral registers
     pub fn commit(self) -> CaptureParts3<T, M> {
@@ -221,13 +282,13 @@ where
     T: CapturePeriph<M> + CapCmpTimer7<M>,
     M: PinMap,
 {
-    config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, cap0, Gpio0);
-    config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, cap1, Gpio1);
-    config_fn!(config_cap2_input_A, config_cap2_input_B, config_cap2_trigger, cap2, Gpio2);
-    config_fn!(config_cap3_input_A, config_cap3_input_B, config_cap3_trigger, cap3, Gpio3);
-    config_fn!(config_cap4_input_A, config_cap4_input_B, config_cap4_trigger, cap4, Gpio4);
-    config_fn!(config_cap5_input_A, config_cap5_input_B, config_cap5_trigger, cap5, Gpio5);
-    config_fn!(config_cap6_input_A, config_cap6_input_B, config_cap6_trigger, cap6, Gpio6);
+    config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, config_cap0_software, cap0, Gpio0);
+    config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, config_cap1_software, cap1, Gpio1);
+    config_fn!(config_cap2_input_A, config_cap2_input_B, config_cap2_trigger, config_cap2_software, cap2, Gpio2);
+    config_fn!(config_cap3_input_A, config_cap3_input_B, config_cap3_trigger, config_cap3_software, cap3, Gpio3);
+    config_fn!(config_cap4_input_A, config_cap4_input_B, config_cap4_trigger, config_cap4_software, cap4, Gpio4);
+    config_fn!(config_cap5_input_A, config_cap5_input_B, config_cap5_trigger, config_cap5_software, cap5, Gpio5);
+    config_fn!(config_cap6_input_A, config_cap6_input_B, config_cap6_trigger, config_cap6_software, cap6, Gpio6);
 
     /// Writes all previously configured timer and capture settings into peripheral registers
     pub fn commit(self) -> CaptureParts7<T, M> {
@@ -253,6 +314,20 @@ where
             tbxiv: TBxIV(PhantomData, PhantomData),
         }
     }
+}
+
+/// Collection of capture pins derived from timer peripheral with 2 capture-compare registers
+pub struct CaptureParts2<T, M = DefaultMapping>
+where
+    T: CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Capture pin 0 (derived from capture-compare register 0)
+    pub cap0: Capture<T, CCR0>,
+    /// Capture pin 1 (derived from capture-compare register 1)
+    pub cap1: Capture<T, CCR1>,
+    /// Interrupt vector register
+    pub tbxiv: TBxIV<T, M>,
 }
 
 /// Collection of capture pins derived from timer peripheral with 3 capture-compare registers
@@ -350,6 +425,15 @@ impl<T: CapCmp<C>, C> Capture<T, C> {
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
+    }
+
+    #[inline]
+    /// Start a capture from software, on a capture pin set up with its `config_capN_software()` method:
+    /// switches the capture input between GND and VCC (user's guide 13.2.4.1.1). The capture records the
+    /// timer count at the next timer clock edge; read it with [`capture()`](CapturePin::capture).
+    pub fn trigger_capture(&mut self) {
+        let timer = unsafe { T::steal() };
+        timer.toggle_ccis_low_bit();
     }
 }
 

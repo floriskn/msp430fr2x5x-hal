@@ -4,9 +4,10 @@
 use embedded_hal::digital::*;
 use msp430_rt::entry;
 use msp430_hal::{
-    adc::{AdcConfig, ClockDivider, Predivider, Resolution, SampleTime, SamplingRate},
+    adc::{AdcConfig, ClockDivider, NegativeReference, PositiveReference, Predivider, Resolution, SampleTime, SamplingRate},
     gpio::Batch,
     pmm::{Pmm, ReferenceVoltage},
+    tlv::TempSensorCalibration,
     watchdog::Wdt,
 };
 use nb::block;
@@ -23,11 +24,12 @@ fn main() -> ! {
     let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
     let mut led = port1.pin0.to_output();
+    led.set_low().ok();
 
     // ADC setup.
     // Temp sensor needs >= 30 us sample time.
     // MODCLK is < ~4.6MHz, so 256 cycles / 4.6 MHz = 55 us sample time.
-    let mut adc = AdcConfig::new(
+    let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
         Resolution::_12BIT,
@@ -40,17 +42,18 @@ fn main() -> ! {
     let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
-    loop {
-        // Get the voltage of the internal temp sensor, assuming the ADC reference voltage is 3300mV
-        let reading_mv = block!( adc.read_voltage_mv(&mut t_sense, 3300) ).unwrap();
+    // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
+    // against the internal 1.5 V reference at full resolution, so measure the same way. This is much more
+    // accurate than the typical sensor voltage and slope from the data sheet.
+    let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
+    let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
 
-        // Equation 11 gives us this equation for calculating temperature from the temp sensor voltage:
-        // T = 0.00355 × (V_t – V_30C) + 30C, and V_30C = 788 mV (8.12.5.1).
-        // Note integer division, so multiply first (beware overflow!), divide last to maximise accuracy
-        let temp_celcius = (((355 * (reading_mv as i32 - 788)) + 30_000) / 1000) as i16;
+    loop {
+        let count = block!(adc.read_count(&mut t_sense)).unwrap();
+        let temp_decicelsius = calibration.decicelsius(count);
 
         // Turn on LED if temp between 20 and 25C
-        if (20..=25).contains(&temp_celcius) {
+        if (200..=250).contains(&temp_decicelsius) {
             led.set_high().ok();
         } else {
             led.set_low().ok();

@@ -6,6 +6,14 @@
 //!
 //! This module also contains traits used by other HAL modules that depend on TimerB, such as
 //! `Capture` and `Pwm`.
+//!
+//! # Timer_B outputs and the comparators
+//!
+//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while it is
+//! high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (data sheets: TBxOUTH). Measured on an MSP430FR2476, a TB0
+//! PWM output stops whenever eCOMP0's output is high, even with the comparator used for something else.
+//! [`TimerConfig::high_impedance_trigger`] selects the TBxTRG
+//! pin instead, or nothing.
 
 use crate::clock::{Aclk, Smclk};
 use crate::hw_traits::timer_base::{CCRn, Outmod, RunningMode, Tbssel, TimerBase};
@@ -56,6 +64,48 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     + CapCmp<CCR5>
     + CapCmp<CCR6>
 {}
+
+// Trait effectively sealed by TimerBase
+/// Trait indicating a Timer_B. Its counter length can be changed, see [`TimerConfig::counter_length`], and its
+/// compare registers are buffered, which PWM uses to change duty cycles at the start of a period.
+pub trait TimerB: TimerBase {}
+
+/// The number of bits a Timer_B counts with (CNTL), which sets its highest count in continuous mode
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CounterLength {
+    /// 16 bits, up to 0xFFFF, as after reset
+    #[default]
+    _16Bit = 0,
+    /// 12 bits, up to 0x0FFF
+    _12Bit = 1,
+    /// 10 bits, up to 0x03FF
+    _10Bit = 2,
+    /// 8 bits, up to 0x00FF
+    _8Bit = 3,
+}
+
+/// What switches all outputs of a Timer_B to high impedance (TBxOUTH, SYSCFG2.TBxTRGSEL, data sheets:
+/// TBxOUTH), for example to stop a motor driver on a fault
+pub enum HighImpedanceTrigger<'a, T> {
+    /// The output of an eCOMP comparator: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3. This is the setting after
+    /// reset, so the outputs stop whenever that comparator's output is high, even if it's used for something else.
+    Comparator,
+    /// The timer's TBxTRG pin, in its trigger function: the outputs stop while it's high.
+    Pin(&'a dyn HighImpedancePin<T>),
+    /// Nothing switches the outputs to high impedance.
+    None,
+}
+
+/// Marker trait for the TBxTRG pin of a Timer_B in its trigger function, see [`HighImpedanceTrigger::Pin`]
+pub trait HighImpedancePin<T> {}
+
+/// Trait indicating a Timer_B whose outputs can be switched to high impedance, see
+/// [`TimerConfig::high_impedance_trigger`]: TB0 to TB3 on the MSP430FR2x5x, TB0 on the MSP430FR247x
+pub trait HighImpedanceTimer: TimerB {
+    #[doc(hidden)]
+    /// The TBxTRGSEL bit in SYSCFG2
+    const TRGSEL: u16;
+}
 
 // Traits effectively sealed by TimerBase
 /// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
@@ -118,6 +168,9 @@ where
     sel: Tbssel,
     div: TimerDiv,
     ex_div: TimerExDiv,
+    cntl: u8,
+    /// SYSCFG2 bit to change, and whether to set it
+    trgsel: Option<(u16, bool)>,
     _pin_map: PhantomData<M>,
 }
 
@@ -133,6 +186,8 @@ where
             sel,
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
+            cntl: CounterLength::_16Bit as u8,
+            trgsel: None,
             _pin_map: PhantomData,
         }
     }
@@ -152,13 +207,7 @@ where
     /// Configure the normal clock divider and expansion clock divider settings
     #[inline]
     pub fn clk_div(self, div: TimerDiv, ex_div: TimerExDiv) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: self.sel,
-            div,
-            ex_div,
-            _pin_map: PhantomData,
-        }
+        TimerConfig { div, ex_div, ..self }
     }
 
     #[inline]
@@ -167,6 +216,41 @@ where
         timer.reset();
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
+        timer.set_cntl(self.cntl);
+        if let Some((bit, set)) = self.trgsel {
+            let sys = unsafe { &*crate::_pac::Sys::ptr() };
+            if set {
+                unsafe { sys.syscfg2().set_bits(|w| w.bits(bit)) };
+            } else {
+                unsafe { sys.syscfg2().clear_bits(|w| w.bits(!bit)) };
+            }
+        }
+    }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + TimerB,
+    M: PinMap,
+{
+    /// Set how many bits this Timer_B counts with (CNTL). In continuous mode it then counts up to 0xFF,
+    /// 0x3FF, 0xFFF or 0xFFFF before it starts over.
+    #[inline]
+    pub fn counter_length(self, length: CounterLength) -> Self { TimerConfig { cntl: length as u8, ..self } }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + HighImpedanceTimer,
+    M: PinMap,
+{
+    /// Select what switches all outputs of this Timer_B to high impedance, see [`HighImpedanceTrigger`].
+    #[inline]
+    pub fn high_impedance_trigger(self, trigger: HighImpedanceTrigger<T>) -> Self {
+        // TBxTRGSEL selects the comparator (0) or the pin (1). Selecting the pin without putting it in its
+        // trigger function disables the trigger.
+        let external = !matches!(trigger, HighImpedanceTrigger::Comparator);
+        TimerConfig { trgsel: Some((T::TRGSEL, external)), ..self }
     }
 }
 
@@ -309,14 +393,19 @@ where
 }
 
 /// Main periodic countdown timer
-pub struct Timer<T: TimerPeriph<M>, M: PinMap = DefaultMapping>(PhantomData<T>, PhantomData<M>);
+pub struct Timer<T: TimerPeriph<M>, M: PinMap = DefaultMapping> {
+    /// The mode it counts in once started, for `resume()`
+    mode: RunningMode,
+    _timer: PhantomData<T>,
+    _pin_map: PhantomData<M>,
+}
 
 impl<T, M> Timer<T, M>
 where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    fn new() -> Self { Self(PhantomData, PhantomData) }
+    fn new() -> Self { Self { mode: RunningMode::Up, _timer: PhantomData, _pin_map: PhantomData } }
 }
 
 /// Sub-timer associated with a main timer
@@ -402,6 +491,19 @@ where
         timer.stop();
         timer.set_ccrn(count);
         timer.upmode();
+        self.mode = RunningMode::Up;
+    }
+
+    #[inline]
+    /// Clears the timer and starts it counting up to `count` and back down to 0 (up/down mode), so a
+    /// period lasts `2 * count` timer cycles. [`wait()`](Timer::wait) returns once per period, when the
+    /// count gets back to 0, and sub-timers fire twice per period, on the way up and on the way down.
+    pub fn start_up_down(&mut self, count: u16) {
+        let timer = unsafe { T::steal() };
+        timer.stop();
+        timer.set_ccrn(count);
+        timer.updown_mode();
+        self.mode = RunningMode::UpDown;
     }
 
     #[inline]
@@ -424,10 +526,10 @@ where
     }
 
     #[inline]
-    /// Resume counting from the current value
+    /// Resume counting from the current value, in the direction and mode it was counting in
     pub fn resume(&mut self) {
         let timer = unsafe { T::steal() };
-        timer.resume(RunningMode::Up);
+        timer.resume(self.mode);
     }
 
     #[inline]

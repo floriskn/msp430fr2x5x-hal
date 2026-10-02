@@ -11,7 +11,14 @@
 //! As a convenience, [`read_voltage_mv()`](Adc::read_voltage_mv()) combines [`read_count()`](Adc::read_count()) and
 //! [`count_to_mv()`](Adc::count_to_mv()).
 //!
-//! Currently the only supported ADC voltage reference is `AVCC`, the operating voltage of the MSP430.
+//! The ADC measures against AVCC, the operating voltage of the MSP430, unless
+//! [`with_reference()`](Adc::with_reference()) selects the internal shared reference or an external one on the
+//! VeREF+ (P1.0) and VeREF- (P1.2) pins.
+//!
+//! Besides single conversions with [`read_count()`](Adc::read_count()), [`start()`](Adc::start()) converts a
+//! sequence of channels and repeats conversions, started by software, the RTC, a timer or the comparator. The
+//! window comparator ([`set_window()`](Adc::set_window())) flags results outside or inside a range, and
+//! [`enable_interrupts()`](Adc::enable_interrupts()) requests the `ADC` interrupt for these events.
 //!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
 //! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
@@ -33,9 +40,9 @@
 use crate::_pac;
 use crate::{
     clock::{Aclk, Smclk},
-    pmm::{InternalTempSensor, InternalVRef},
+    pmm::{InternalTempSensor, InternalVRef, VrefOutput},
 };
-use core::convert::Infallible;
+use core::{convert::Infallible, marker::PhantomData};
 
 #[cfg(feature = "embedded-hal-02")]
 pub use embedded_hal_02::adc::Channel;
@@ -224,6 +231,19 @@ impl SamplingRate {
     }
 }
 
+/// How conversion results and window comparator thresholds are formatted (ADCDF).
+///
+/// Default: unsigned
+#[derive(Default, Copy, Clone, PartialEq, Eq)]
+pub enum DataFormat {
+    /// Unsigned and right-aligned: from 0 at VR- up to 255, 1023 or 4095 at VR+.
+    #[default]
+    Unsigned,
+    /// Two's complement and left-aligned, as an `i16` would read it: from -32768 at VR- up to just below 32768 at VR+.
+    /// The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit.
+    Signed,
+}
+
 // Pins corresponding to an ADC channel. Pin types can have `::channel()` called on them to get their ADC channel index.
 macro_rules! impl_adc_channel_pin {
     ($port: ty, $pin: ty, $mode:tt => $channel: literal ) => {
@@ -256,6 +276,13 @@ macro_rules! impl_adc_channel_extra {
 impl_adc_channel_extra!(InternalTempSensor<'_>, 12);
 impl_adc_channel_extra!(InternalVRef, 13);
 
+// The VREF+ output is measured through its pin's channel
+impl<PIN: Channel<Adc, ID = u8>> Channel<Adc> for VrefOutput<PIN> {
+    type ID = u8;
+
+    fn channel() -> Self::ID { PIN::channel() }
+}
+
 // Users needn't deal with the structs themselves so it just adds noise to the docs. We instead document the functions below.
 #[doc(hidden)]
 pub struct AdcVssChannel;
@@ -278,13 +305,12 @@ pub struct ClockSet(ClockSource);
 
 /// Configuration object for an ADC.
 ///
-/// Currently the only supported voltage reference is AVCC.
-///
 /// The default configuration is based on the default register values:
 /// - Predivider = 1 and clock divider = 1
 /// - 10-bit resolution
 /// - 8 cycle sample time
 /// - Max 200 ksps sample rate
+/// - Unsigned results
 #[derive(Clone, PartialEq, Eq)]
 pub struct AdcConfig<STATE> {
     state: STATE,
@@ -298,6 +324,8 @@ pub struct AdcConfig<STATE> {
     pub sampling_rate: SamplingRate,
     /// Determines the number of ADCCLK cycles the sampling time takes.
     pub sample_time: SampleTime,
+    /// The format of conversion results and window comparator thresholds.
+    pub data_format: DataFormat,
 }
 
 // Only implement Default for NoClockSet
@@ -310,6 +338,7 @@ impl Default for AdcConfig<NoClockSet> {
             resolution: Default::default(),
             sampling_rate: Default::default(),
             sample_time: Default::default(),
+            data_format: Default::default(),
         }
     }
 }
@@ -330,6 +359,7 @@ impl AdcConfig<NoClockSet> {
             resolution,
             sampling_rate,
             sample_time,
+            data_format: DataFormat::Unsigned,
         }
     }
     /// Configure the ADC to use SMCLK
@@ -341,6 +371,7 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            data_format: self.data_format,
         }
     }
     /// Configure the ADC to use ACLK
@@ -352,6 +383,7 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            data_format: self.data_format,
         }
     }
     /// Configure the ADC to use MODCLK
@@ -363,6 +395,7 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            data_format: self.data_format,
         }
     }
 }
@@ -374,6 +407,8 @@ impl AdcConfig<ClockSet> {
 
         let adcsht = self.sample_time.adcsht();
         adc_reg.adcctl0().write(|w| unsafe { w.adcsht().bits(adcsht) });
+        // AVCC and AVSS as reference, as the returned `Adc` says, and channel 0
+        adc_reg.adcmctl0().write(|w| unsafe { w.bits(0) });
 
         let adcssel = self.state.0.adcssel();
         let adcdiv = self.clock_divider.adcdiv();
@@ -386,24 +421,178 @@ impl AdcConfig<ClockSet> {
         let adcpdiv = self.predivider.adcpdiv();
         let adcres = self.resolution.adcres();
         let adcsr = self.sampling_rate.adcsr();
+        let adcdf = self.data_format == DataFormat::Signed;
         adc_reg.adcctl2().write(|w| { unsafe { w
             .adcpdiv().bits(adcpdiv)
             .adcres().bits(adcres)
-            .adcsr().bit(adcsr) 
+            .adcdf().bit(adcdf)
+            .adcsr().bit(adcsr)
         }});
 
-        Adc { adc_reg, pending: None }
+        Adc { adc_reg, pending: None, reference: PhantomData }
     }
 }
 
+/// Typestate for an ADC that measures against AVCC and AVSS, as after reset
+pub struct AvccReference;
+/// Typestate for an ADC with a reference selected by [`Adc::with_reference()`], which borrows the
+/// internal reference or the VeREF pins for `'a`
+pub struct SelectedReference<'a>(PhantomData<&'a ()>);
+
+/// Marker trait for the VeREF+ pin (P1.0) in its analog mode, which supplies an external positive reference
+pub trait VeRefPlusPin {}
+/// Marker trait for the VeREF- pin (P1.2) in its analog mode, which supplies an external negative reference
+pub trait VeRefMinusPin {}
+
+/// The positive reference of the ADC, VR+: an input at or above it converts to the full-scale count (ADCSREF,
+/// user's guide 21.2.3)
+pub enum PositiveReference<'a> {
+    /// AVCC, as after reset
+    Avcc,
+    /// The internal shared reference, see [`Pmm::enable_internal_reference()`](crate::pmm::Pmm::enable_internal_reference)
+    Internal(&'a InternalVRef),
+    /// An external reference on the VeREF+ pin, through the ADC's reference buffer
+    ExternalBuffered(&'a dyn VeRefPlusPin),
+    /// An external reference on the VeREF+ pin, unbuffered
+    External(&'a dyn VeRefPlusPin),
+}
+
+/// The negative reference of the ADC, VR-: an input at or below it converts to 0 (ADCSREF, user's guide 21.2.3)
+pub enum NegativeReference<'a> {
+    /// AVSS, as after reset
+    Avss,
+    /// An external reference on the VeREF- pin
+    External(&'a dyn VeRefMinusPin),
+}
+
+/// How conversions repeat (ADCCONSEQ, user's guide 21.2.7)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ConversionMode {
+    /// Convert the channel once. With a hardware trigger, start again for the next conversion.
+    #[default]
+    Single,
+    /// Convert the channels from the selected one down to channel 0, once
+    Sequence,
+    /// Convert the channel once for each trigger, until stopped
+    RepeatSingle,
+    /// Convert the channels from the selected one down to channel 0 for each trigger, until stopped
+    RepeatSequence,
+}
+
+/// Marker trait for the timer whose capture/compare register 1 output starts conversions with
+/// [`TriggerSource::Timer`]: TB1 on the MSP430FR2x5x, TA1 on the other devices (data sheets: ADC Trigger Signal
+/// Connections)
+pub trait AdcTriggerTimer {}
+
+/// What starts conversions (ADCSHS, data sheets: ADC Trigger Signal Connections)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TriggerSource {
+    /// Software, through [`Adc::start()`] (ADCSC)
+    #[default]
+    Software,
+    /// RTC counter overflows
+    Rtc,
+    /// The output of capture/compare register 1 of TB1 on the MSP430FR2x5x, or TA1 on the other devices. Set
+    /// that timer up for PWM, with a pin or with
+    /// [`PwmUninit::into_adc_trigger()`](crate::pwm::PwmUninit::into_adc_trigger).
+    Timer,
+    /// The output of eCOMP0
+    #[cfg(feature = "ecomp")]
+    Comparator,
+}
+
+/// How a trigger controls the sampling (ADCSHP, ADCISSH, user's guide 21.2.5)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SampleMode {
+    /// A rising edge starts sampling for the configured sample time (pulse sample mode)
+    #[default]
+    RisingEdge,
+    /// A falling edge starts sampling for the configured sample time (pulse sample mode, inverted trigger)
+    FallingEdge,
+    /// Sample while the trigger is high, and convert when it goes low (extended sample mode). The trigger must
+    /// stay high for at least 4 ADCCLK cycles. Hardware triggers only.
+    WhileHigh,
+    /// Sample while the trigger is low, and convert when it goes high (extended sample mode, inverted trigger).
+    /// Hardware triggers only.
+    WhileLow,
+}
+
+/// Settings for [`Adc::start()`]. The default converts once, started by software.
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ConversionConfig {
+    /// How conversions repeat
+    pub mode: ConversionMode,
+    /// What starts the conversions
+    pub trigger: TriggerSource,
+    /// How the trigger controls sampling
+    pub sample_mode: SampleMode,
+    /// In the sequence and repeat modes, convert back to back after the first trigger, as fast as possible,
+    /// instead of waiting for a trigger for each conversion (ADCMSC). In the repeat modes the conversions
+    /// then continue until stopped.
+    pub back_to_back: bool,
+}
+
+bitflags::bitflags! {
+    /// ADC interrupt sources, for [`Adc::enable_interrupts()`] and [`Adc::interrupt_flags()`] (ADCIE, ADCIFG)
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub struct AdcInterruptFlags: u16 {
+        /// ADCIFG0. A conversion result is ready. Reading it clears this flag.
+        const ResultReady  = 1 << 0;
+        /// ADCINIFG. The result is inside the window: from the low threshold up to the high threshold.
+        const InsideWindow = 1 << 1;
+        /// ADCLOIFG. The result is below the low threshold of the window.
+        const BelowWindow  = 1 << 2;
+        /// ADCHIIFG. The result is above the high threshold of the window.
+        const AboveWindow  = 1 << 3;
+        /// ADCOVIFG. A result overwrote one that hadn't been read.
+        const Overflow     = 1 << 4;
+        /// ADCTOVIFG. A trigger arrived before the conversion had finished.
+        const TimeOverflow = 1 << 5;
+    }
+}
+
+/// The highest-priority pending ADC interrupt, as read from ADCIV by [`Adc::interrupt_source()`]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AdcVector {
+    /// No interrupt pending
+    None,
+    /// A result overwrote one that hadn't been read
+    Overflow,
+    /// A trigger arrived before the conversion had finished
+    TimeOverflow,
+    /// The result is above the high threshold of the window
+    AboveWindow,
+    /// The result is below the low threshold of the window
+    BelowWindow,
+    /// The result is inside the window
+    InsideWindow,
+    /// A conversion result is ready. This flag stays set until the result is read.
+    ResultReady,
+}
+
+// ADCCTL0, ADCCTL1 and ADCMCTL0 fields (user's guide 21.3)
+const ADCMSC: u16 = 1 << 7;
+const ADCENC: u16 = 1 << 1;
+const ADCSC: u16 = 1 << 0;
+const ADCSHS_MASK: u16 = 0b11 << 10;
+const ADCSHP: u16 = 1 << 9;
+const ADCISSH: u16 = 1 << 8;
+const ADCCONSEQ_MASK: u16 = 0b11 << 1;
+const ADCSREF_MASK: u16 = 0b111 << 4;
+const ADCINCH_MASK: u16 = 0b1111;
+
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
-pub struct Adc {
+///
+/// `REF` tracks the reference selected with [`Adc::with_reference()`].
+pub struct Adc<REF = AvccReference> {
     adc_reg: _pac::Adc,
     /// Channel of the conversion that was started but not read yet
     pending: Option<u8>,
+    reference: PhantomData<REF>,
 }
 
-impl Adc {
+impl<REF> Adc<REF> {
     /// Whether the ADC is currently sampling or converting.
     pub fn adc_is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
@@ -424,7 +613,7 @@ impl Adc {
 
     /// Selects which pin to sample.
     fn set_pin<PIN>(&mut self, _pin: &PIN)
-    where PIN: Channel<Self, ID = u8> {
+    where PIN: Channel<Adc, ID = u8> {
         self.adc_reg.adcmctl0().modify(|_, w|
             unsafe { w.adcinch().bits(PIN::channel()) }
         );
@@ -446,7 +635,7 @@ impl Adc {
     /// A conversion that is still pending for another channel is finished first and its result
     /// discarded.
     pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
-    where PIN: Channel<Self, ID = u8> {
+    where PIN: Channel<Adc, ID = u8> {
         if let Some(pending) = self.pending {
             if self.adc_is_busy() {
                 return Err(nb::Error::WouldBlock);
@@ -457,6 +646,11 @@ impl Adc {
             }
         }
         self.disable();
+        // A single conversion started by software, as `start()` may have set otherwise
+        self.adc_reg.adcctl1().modify(|r, w| unsafe {
+            w.bits(r.bits() & !(ADCSHS_MASK | ADCISSH | ADCCONSEQ_MASK) | ADCSHP)
+        });
+        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCMSC) });
         self.set_pin(pin);
         self.enable();
 
@@ -469,15 +663,24 @@ impl Adc {
     ///
     /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. The full-scale count
     /// (255, 1023 or 4095) corresponds to the reference voltage (user's guide, ADC conversion
-    /// formula).
+    /// formula). With an external negative reference, this is the voltage above VR-. A count in the
+    /// signed [`DataFormat`] is converted too.
     pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
-        let full_scale = match self.adc_reg.adcctl2().read().adcres().variant() {
-            Adcres::Adcres0 => 255,  //  8-bit
-            Adcres::Adcres1 => 1023, // 10-bit
-            Adcres::Adcres2 => 4095, // 12-bit
-            Adcres::Adcres3 => 4095, // Reserved, unreachable
+        let ctl2 = self.adc_reg.adcctl2().read();
+        let bits = match ctl2.adcres().variant() {
+            Adcres::Adcres0 => 8,
+            Adcres::Adcres1 => 10,
+            Adcres::Adcres2 => 12,
+            Adcres::Adcres3 => 12, // Reserved, unreachable
         };
+        let count = if ctl2.adcdf().bit_is_set() {
+            // Left-aligned two's complement, offset by half the range
+            (((count as i16) >> (16 - bits)) + (1 << (bits - 1))) as u16
+        } else {
+            count
+        };
+        let full_scale = (1u32 << bits) - 1;
         ((count as u32 * ref_voltage_mv as u32) / full_scale) as u16
     }
 
@@ -486,12 +689,159 @@ impl Adc {
     /// If the result is ready it is returned as a voltage in millivolts based on `ref_voltage_mv`, otherwise returns `WouldBlock`.
     ///
     /// If you instead want a raw count you should use the `.read_count()` method.
-    pub fn read_voltage_mv<PIN: Channel<Self, ID = u8>>(
+    pub fn read_voltage_mv<PIN: Channel<Adc, ID = u8>>(
         &mut self,
         pin: &mut PIN,
         ref_voltage_mv: u16,
     ) -> nb::Result<u16, Infallible> {
         self.read_count(pin).map(|count| self.count_to_mv(count, ref_voltage_mv))
+    }
+
+    /// Select the reference voltages the ADC measures against (ADCSREF). An input at or below the
+    /// negative reference converts to 0, one at or above the positive reference to the full-scale count.
+    ///
+    /// The internal reference must stay enabled, and the VeREF pins in their analog mode, while the ADC
+    /// uses them, so the returned ADC borrows them. Waits for a conversion in progress to finish.
+    pub fn with_reference<'a>(
+        mut self,
+        positive: PositiveReference<'a>,
+        negative: NegativeReference<'a>,
+    ) -> Adc<SelectedReference<'a>> {
+        let vr_plus: u16 = match positive {
+            PositiveReference::Avcc => 0b00,
+            PositiveReference::Internal(_) => 0b01,
+            PositiveReference::ExternalBuffered(_) => 0b10,
+            PositiveReference::External(_) => 0b11,
+        };
+        let vr_minus: u16 = match negative {
+            NegativeReference::Avss => 0,
+            NegativeReference::External(_) => 1,
+        };
+        while self.adc_is_busy() {}
+        self.disable();
+        self.pending = None;
+        self.adc_reg.adcmctl0().modify(|r, w| unsafe {
+            w.bits(r.bits() & !ADCSREF_MASK | (vr_minus << 6 | vr_plus << 4))
+        });
+        Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData }
+    }
+
+    /// Start conversions of `pin`'s channel, or in the sequence modes of the channels from it down to
+    /// channel 0, as `config` describes. Read the results with [`result()`](Adc::result()).
+    ///
+    /// A sequence converts every channel down to 0, so their pins should be in their analog mode too.
+    /// Conversions already running are stopped first, and their results discarded.
+    pub fn start<PIN>(&mut self, _pin: &mut PIN, config: ConversionConfig)
+    where PIN: Channel<Adc, ID = u8> {
+        self.disable();
+        self.pending = None;
+
+        let shs: u16 = match config.trigger {
+            TriggerSource::Software => 0b00,
+            TriggerSource::Rtc => 0b01,
+            TriggerSource::Timer => 0b10,
+            #[cfg(feature = "ecomp")]
+            TriggerSource::Comparator => 0b11,
+        };
+        let sample = match (config.trigger, config.sample_mode) {
+            // The software trigger is a pulse
+            (TriggerSource::Software, _) => ADCSHP,
+            (_, SampleMode::RisingEdge) => ADCSHP,
+            (_, SampleMode::FallingEdge) => ADCSHP | ADCISSH,
+            (_, SampleMode::WhileHigh) => 0,
+            (_, SampleMode::WhileLow) => ADCISSH,
+        };
+        let conseq: u16 = match config.mode {
+            ConversionMode::Single => 0b00,
+            ConversionMode::Sequence => 0b01,
+            ConversionMode::RepeatSingle => 0b10,
+            ConversionMode::RepeatSequence => 0b11,
+        };
+        self.adc_reg.adcctl1().modify(|r, w| unsafe {
+            w.bits(r.bits() & !(ADCSHS_MASK | ADCSHP | ADCISSH | ADCCONSEQ_MASK) | shs << 10 | sample | conseq << 1)
+        });
+        let msc = if config.back_to_back { ADCMSC } else { 0 };
+        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCMSC | msc) });
+        self.adc_reg.adcmctl0().modify(|r, w| unsafe {
+            w.bits(r.bits() & !ADCINCH_MASK | PIN::channel() as u16)
+        });
+        // Discard results and flags of earlier conversions
+        self.adc_reg.adcifg().write(|w| unsafe { w.bits(0) });
+
+        self.enable();
+        let start = match config.trigger {
+            TriggerSource::Software => ADCENC | ADCSC,
+            _ => ADCENC,
+        };
+        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() | start) });
+    }
+
+    /// The next result of the conversions started with [`start()`](Adc::start()), or `WouldBlock` if
+    /// none is ready (ADCIFG0). Reading a result clears the flag.
+    ///
+    /// Results that aren't read before the next one arrives are lost, see
+    /// [`AdcInterruptFlags::Overflow`].
+    pub fn result(&mut self) -> nb::Result<u16, Infallible> {
+        if self.adc_reg.adcifg().read().adcifg0().bit_is_clear() {
+            return Err(nb::Error::WouldBlock);
+        }
+        Ok(self.adc_get_result())
+    }
+
+    /// Stop the conversions started with [`start()`](Adc::start()), after the current conversion in the
+    /// single modes and after the current sequence in the sequence modes (user's guide 21.2.7.6).
+    pub fn stop(&mut self) {
+        let single = self.adc_reg.adcctl1().read().bits() & ADCCONSEQ_MASK == 0;
+        if single {
+            // Clearing ADCENC would cut a single conversion short
+            while self.adc_is_busy() {}
+        }
+        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCENC) });
+    }
+
+    /// Set the window comparator thresholds (ADCLO, ADCHI), in the configured [`DataFormat`]. Each result
+    /// then sets one of the flags [`AdcInterruptFlags::BelowWindow`], [`InsideWindow`](AdcInterruptFlags::InsideWindow)
+    /// and [`AboveWindow`](AdcInterruptFlags::AboveWindow).
+    ///
+    /// The ADC only sets these flags, so clear them with [`clear_interrupt_flags()`](Adc::clear_interrupt_flags())
+    /// once handled.
+    pub fn set_window(&mut self, low: u16, high: u16) {
+        self.adc_reg.adclo().write(|w| unsafe { w.bits(low) });
+        self.adc_reg.adchi().write(|w| unsafe { w.bits(high) });
+    }
+
+    /// Request the `ADC` interrupt for `flags`, besides those already enabled (ADCIE).
+    pub fn enable_interrupts(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() | flags.bits()) });
+    }
+
+    /// Stop requesting the `ADC` interrupt for `flags` (ADCIE).
+    pub fn disable_interrupts(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
+    }
+
+    /// The interrupt flags that are set, whether or not their interrupt is enabled (ADCIFG).
+    pub fn interrupt_flags(&self) -> AdcInterruptFlags {
+        AdcInterruptFlags::from_bits_truncate(self.adc_reg.adcifg().read().bits())
+    }
+
+    /// Clear `flags` (ADCIFG).
+    pub fn clear_interrupt_flags(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcifg().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
+    }
+
+    /// The highest-priority pending interrupt among the enabled ones (ADCIV). Reading it clears its flag,
+    /// except [`AdcVector::ResultReady`], which reading the result clears.
+    pub fn interrupt_source(&mut self) -> AdcVector {
+        match self.adc_reg.adciv().read().bits() {
+            0x02 => AdcVector::Overflow,
+            0x04 => AdcVector::TimeOverflow,
+            0x06 => AdcVector::AboveWindow,
+            0x08 => AdcVector::BelowWindow,
+            0x0A => AdcVector::InsideWindow,
+            0x0C => AdcVector::ResultReady,
+            _ => AdcVector::None,
+        }
     }
 }
 
@@ -508,8 +858,8 @@ mod ehal02 {
     use super::*;
     use embedded_hal_02::adc::{Channel, OneShot};
 
-    impl<PIN> OneShot<Adc, u16, PIN> for Adc
-    where PIN: Channel<Self, ID = u8>
+    impl<REF, PIN> OneShot<Adc, u16, PIN> for Adc<REF>
+    where PIN: Channel<Adc, ID = u8>
     {
         type Error = Infallible; // Only returns WouldBlock
 

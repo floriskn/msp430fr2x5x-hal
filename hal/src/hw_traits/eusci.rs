@@ -112,9 +112,22 @@ pub struct UcaCtlw0 {
     pub ucmsb: bool,
     pub uc7bit: bool,
     pub ucspb: bool,
+    /// UART mode: 0 UART, 1 idle-line multiprocessor, 2 address-bit multiprocessor, 3 automatic baud rate
+    pub ucmode: u8,
     pub ucssel: Ucssel,
     pub ucrxeie: bool,
+    pub ucbrkie: bool,
 }
+
+// UCAxCTLW0 bits
+pub const UCDORM: u16 = 1 << 3;
+pub const UCTXADDR: u16 = 1 << 2;
+pub const UCTXBRK: u16 = 1 << 1;
+// UCAxIE and UCAxIFG bits
+pub const UCTXCPTIFG: u16 = 1 << 3;
+pub const UCSTTIFG: u16 = 1 << 2;
+// UCAxSTATW bits
+pub const UCADDR_UCIDLE: u16 = 1 << 1;
 
 reg_struct! {
 pub struct UcbCtlw0, UcbCtlw0_rd, UcbCtlw0_wr {
@@ -211,12 +224,32 @@ pub trait EUsciUart: Steal {
     fn txie_clear(&self);
     fn rxie_set(&self);
     fn rxie_clear(&self);
+
+    /// Write UCAxCTLW1 (the deglitch time)
+    fn ctl1_wr(&self, val: u16);
+    fn ctl0_rd(&self) -> u16;
+    fn ctl0_set_bits(&self, mask: u16);
+    fn ctl0_clr_bits(&self, mask: u16);
+    /// UCAxABCTL (automatic baud rate)
+    fn abctl_rd(&self) -> u16;
+    fn abctl_wr(&self, val: u16);
+    /// Write UCAxIRCTL (IrDA)
+    fn irctl_wr(&self, val: u16);
+    fn statw_bits(&self) -> u16;
+    fn ie_set_bits(&self, mask: u16);
+    fn ie_clr_bits(&self, mask: u16);
+    fn ifg_bits(&self) -> u16;
+    fn ifg_set_bits(&self, mask: u16);
+    fn ifg_clr_bits(&self, mask: u16);
 }
 
 pub trait EUsciI2C: Steal {
     type IfgOut: I2CUcbIfgOut;
 
     fn transmit_ack(&self);
+    /// Write UCBxCTLW0 with UCTXACK clear, which continues without acknowledging the address
+    fn clear_txack(&self);
+    fn clear_txifg0(&self);
     fn transmit_nack(&self);
     fn transmit_start(&self);
     fn transmit_stop(&self);
@@ -504,8 +537,10 @@ macro_rules! eusci_uart_impl {
                     .ucmsb().bit(reg.ucmsb)
                     .uc7bit().bit(reg.uc7bit)
                     .ucspb().bit(reg.ucspb)
+                    .ucmode().bits(reg.ucmode)
                     .ucssel().bits(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
+                    .ucbrkie().bit(reg.ucbrkie)
                     .ucswrst().set_bit()
                 });
             }
@@ -572,6 +607,53 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn iv_rd(&self) -> u16 { self.$ucaxiv().read().bits() }
+
+            #[inline(always)]
+            fn ctl1_wr(&self, val: u16) { self.$ucaxctlw1().write(|w| unsafe { w.bits(val) }); }
+
+            #[inline(always)]
+            fn ctl0_rd(&self) -> u16 { self.$ucaxctlw0().read().bits() }
+
+            #[inline(always)]
+            fn ctl0_set_bits(&self, mask: u16) { unsafe { self.$ucaxctlw0().set_bits(|w| w.bits(mask)) }; }
+
+            #[inline(always)]
+            fn ctl0_clr_bits(&self, mask: u16) { unsafe { self.$ucaxctlw0().clear_bits(|w| w.bits(!mask)) }; }
+
+            // UCAxABCTL and UCAxIRCTL are at offsets 10h and 12h from UCAxCTLW0 (user's guide, eUSCI_A
+            // UART registers). Not every PAC has them.
+            #[inline(always)]
+            fn abctl_rd(&self) -> u16 {
+                unsafe { (self.$ucaxctlw0().as_ptr() as *const u16).add(8).read_volatile() }
+            }
+
+            #[inline(always)]
+            fn abctl_wr(&self, val: u16) {
+                unsafe { (self.$ucaxctlw0().as_ptr() as *mut u16).add(8).write_volatile(val) }
+            }
+
+            #[inline(always)]
+            fn irctl_wr(&self, val: u16) {
+                unsafe { (self.$ucaxctlw0().as_ptr() as *mut u16).add(9).write_volatile(val) }
+            }
+
+            #[inline(always)]
+            fn statw_bits(&self) -> u16 { u16::from(self.$ucaxstatw().read().bits()) }
+
+            #[inline(always)]
+            fn ie_set_bits(&self, mask: u16) { unsafe { self.$ucaxie().set_bits(|w| w.bits(mask)) }; }
+
+            #[inline(always)]
+            fn ie_clr_bits(&self, mask: u16) { unsafe { self.$ucaxie().clear_bits(|w| w.bits(!mask)) }; }
+
+            #[inline(always)]
+            fn ifg_bits(&self) -> u16 { self.$ucaxifg().read().bits() }
+
+            #[inline(always)]
+            fn ifg_set_bits(&self, mask: u16) { unsafe { self.$ucaxifg().set_bits(|w| w.bits(mask)) }; }
+
+            #[inline(always)]
+            fn ifg_clr_bits(&self, mask: u16) { unsafe { self.$ucaxifg().clear_bits(|w| w.bits(!mask)) }; }
         }
 
         impl UartUcxStatw for $Statw {
@@ -619,6 +701,16 @@ macro_rules! eusci_i2c_impl {
             #[inline(always)]
             fn transmit_ack(&self) {
                 unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxack().set_bit()) }
+            }
+
+            #[inline(always)]
+            fn clear_txack(&self) {
+                unsafe { self.$ucbxctlw0().clear_bits(|w| w.uctxack().clear_bit()) }
+            }
+
+            #[inline(always)]
+            fn clear_txifg0(&self) {
+                unsafe { self.$ucbxifg().clear_bits(|w| w.uctxifg0().clear_bit()) }
             }
 
             #[inline(always)]

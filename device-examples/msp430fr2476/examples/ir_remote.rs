@@ -1,0 +1,100 @@
+//! Infrared remote control: the infrared modulator sends an NEC remote control frame (address 0x00,
+//! command 0xA5) on P1.4 every 108 ms, as a remote control does to drive its IR LED.
+//!
+//! TA0's CCR2 output is the 38 kHz carrier, and TA1's CCR2 output, the envelope, is held low. In ASK
+//! mode the modulator then outputs the carrier while the data bit is 1, and stays low while it's 0.
+//! P1.4 is eUSCI_A0's TXD pin, which the modulator takes over.
+//!
+//! An NEC frame is a 9 ms burst, a 4.5 ms space, then 32 bits, least significant bit first: the
+//! address, its inverse, the command and its inverse. Each bit is a 562 µs burst followed by a 562 µs
+//! space for 0 or a 1687 µs space for 1, and a last 562 µs burst ends the frame.
+//!
+//! To see it on an oscilloscope:
+//! 1. P1.4 goes to the debug probe's backchannel UART through the TXD jumper of J101, the jumper
+//!    block between the debug probe and the MSP430. Pull that jumper off and connect the probe tip to
+//!    the TXD pin on the MSP430 side, away from the USB connector. Connect the ground clip to GND, for
+//!    example pin 20 of the BoosterPack headers.
+//! 2. Set the channel to 1 V/div and the time base to 10 ms/div, and trigger on a rising edge at
+//!    1.5 V in normal mode.
+//! 3. The frame shows as blocks: the long first burst, the space, then the 32 bits. At 20 µs/div a
+//!    burst shows the carrier, a square wave with a period of 26 µs.
+//! 4. Put the TXD jumper back for the examples that use the backchannel UART.
+#![no_main]
+#![no_std]
+
+use embedded_hal::delay::DelayNs;
+use msp430_rt::entry;
+use msp430_hal::{
+    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv},
+    fram::Fram,
+    gpio::Batch,
+    ir::{IrMode, IrModulator, SoftwareData},
+    pmm::Pmm,
+    pwm::{PwmParts3, TimerConfig},
+    watchdog::Wdt,
+};
+use panic_msp430 as _;
+
+/// 38 kHz carrier period, in cycles of the 8 MHz SMCLK
+const CARRIER_PERIOD: u16 = 210;
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr247x::Peripherals::take().unwrap();
+
+    let mut fram = Fram::new(periph.frctl);
+    Wdt::constrain(periph.wdt_a);
+
+    let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    let p1 = Batch::new(periph.p1).split(&pmm);
+
+    let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
+        .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
+        .smclk_on(SmclkDiv::_1)
+        .aclk_refoclk()
+        .freeze(&mut fram);
+
+    // The carrier, high for half of each period
+    let carrier = PwmParts3::new(periph.ta0, TimerConfig::smclk(&smclk), CARRIER_PERIOD - 1)
+        .pwm2
+        .into_ir_input(CARRIER_PERIOD / 2);
+    // The envelope stays low, so the data bit alone switches the carrier on and off
+    let envelope = PwmParts3::new(periph.ta1, TimerConfig::smclk(&smclk), CARRIER_PERIOD - 1)
+        .pwm2
+        .into_ir_input(0);
+    let mut ir = IrModulator::with_software_data(&carrier, &envelope, IrMode::Ask, false, p1.pin4.to_alternate1());
+
+    loop {
+        send_nec(&mut ir, &mut delay, 0x00, 0xA5);
+        // Frames start every 108 ms; this one took about 68 ms
+        delay.delay_ms(40);
+    }
+}
+
+/// Send one NEC frame
+fn send_nec(ir: &mut IrModulator<SoftwareData>, delay: &mut impl DelayNs, address: u8, command: u8) {
+    burst(ir, delay, 9000, 4500);
+    for byte in [address, !address, command, !command] {
+        for bit in 0..8 {
+            let space_us = if byte >> bit & 1 == 1 { 1687 } else { 562 };
+            burst(ir, delay, 562, space_us);
+        }
+    }
+    burst(ir, delay, 562, 0);
+}
+
+/// Send the carrier for `on_us`, then nothing for `off_us`
+fn burst(ir: &mut IrModulator<SoftwareData>, delay: &mut impl DelayNs, on_us: u32, off_us: u32) {
+    ir.set_data(true);
+    delay.delay_us(on_us);
+    ir.set_data(false);
+    delay.delay_us(off_us);
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}

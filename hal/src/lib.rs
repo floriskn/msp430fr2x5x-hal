@@ -53,7 +53,12 @@ pub mod crc;
 pub mod delay;
 pub mod fram;
 pub mod gpio;
+#[cfg(feature = "icc")]
+pub mod icc;
+pub mod ir;
 pub mod lpm;
+#[cfg(feature = "mfm")]
+pub mod mfm;
 pub mod pin_mapping;
 pub mod pmm;
 pub mod prelude;
@@ -63,6 +68,7 @@ pub mod serial;
 pub mod spi;
 pub mod sys;
 pub mod timer;
+pub mod tlv;
 pub mod watchdog;
 
 #[cfg(feature = "adc")]

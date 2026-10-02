@@ -7,11 +7,11 @@
 //! configuration is optional but, when enabled, provides a high-precision source for
 //! system clocks or the FLL reference.
 //!
-//! DCO with FLL is supported on MCLK for select frequencies. The FLL can be referenced by
-//! either the internal REFO or XT1. The highest DCO range of the device uses the factory DCO
-//! trim; every other range is trimmed in software while the clocks are configured, as the
-//! user's guide recommends, so the FLL locks reliably. Supporting arbitrary frequencies on the
-//! DCO requires calibration routines not supported by the HAL.
+//! DCO with FLL is supported on MCLK, at the frequencies of [`DcoclkFreqSel`] or at any frequency
+//! from 1 MHz up to the device maximum ([`ClockConfig::mclk_dcoclk_hz`]). The FLL can be
+//! referenced by either the internal REFO or XT1. The highest frequency of the device uses the
+//! factory DCO trim; every other frequency is trimmed in software while the clocks are
+//! configured, as the user's guide recommends, so the FLL locks reliably.
 //!
 //! XT1 runs in low-frequency mode, with a 32.768 kHz watch crystal or clock input, on every
 //! device. Devices with high-frequency XT1 support also accept 1 MHz to 24 MHz crystals and
@@ -71,6 +71,26 @@ const XT1_HF_MAX_HZ: u32 = 16_000_000;
 /// wait state (device data sheets, recommended operating conditions).
 const FRAM_NO_WAIT_MAX_HZ: u32 = 8_000_000;
 
+/// Highest MCLK frequency (device data sheets, recommended operating conditions, fSYSTEM)
+#[cfg(feature = "enhanced_cs")]
+const MCLK_MAX_HZ: u32 = 24_000_000;
+#[cfg(not(feature = "enhanced_cs"))]
+const MCLK_MAX_HZ: u32 = 16_000_000;
+
+/// Lowest DCOCLK target `mclk_dcoclk_hz` accepts, the nominal frequency of the lowest DCO range
+const DCO_MIN_HZ: u32 = 1_000_000;
+/// Nominal frequency of each DCO range, by DCORSEL (SLAU445I CSCTL1)
+const DCO_RANGE_NOMINAL_HZ: [u32; 8] = [
+    1_000_000, 2_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000, 20_000_000, 24_000_000,
+];
+/// The targets above which `mclk_dcoclk_hz` moves to the next DCO range: the geometric means of
+/// neighbouring nominal frequencies, so every target gets the range whose nominal frequency is
+/// closest to it. Each range then reaches the targets it gets with its taps near the middle at
+/// some trim setting (device data sheets, DCO frequency), so the software trim can center them.
+const DCO_RANGE_BOUNDARY_HZ: [u32; 7] = [
+    1_414_214, 2_828_427, 5_656_854, 9_797_959, 13_856_406, 17_888_544, 21_908_902,
+];
+
 // CSCTL0 and CSCTL1 fields used by the DCO software trim. They're accessed as raw bits because
 // the PACs name them differently.
 /// CSCTL0 DCO tap bits
@@ -94,7 +114,7 @@ const DCORSEL_SHIFT: u16 = 1;
 enum MclkSel {
     Refoclk,
     Vloclk,
-    Dcoclk(DcoclkFreqSel),
+    Dcoclk(DcoTarget),
     Xt1clk,
 }
 
@@ -141,7 +161,8 @@ impl AclkSel {
 
 /// Selectable DCOCLK frequencies. With REFO as FLL reference the DCO locks to the frequency in
 /// brackets: the largest multiple of 32.768 kHz that doesn't exceed the target, so the clock
-/// stays within the device limits (1 MHz keeps the reset default instead).
+/// stays within the device limits (1 MHz keeps the reset default instead). Other frequencies
+/// are available through [`ClockConfig::mclk_dcoclk_hz`].
 #[derive(Clone, Copy)]
 pub enum DcoclkFreqSel {
     /// 1 MHz (1.048576 MHz)
@@ -213,6 +234,65 @@ impl DcoclkFreqSel {
     #[inline]
     pub fn freq(self) -> u32 {
         (self.multiplier() as u32) * (REFOCLK_FREQ_HZ as u32)
+    }
+
+    /// The highest frequency of the device
+    #[cfg(feature = "enhanced_cs")]
+    const HIGHEST: Self = DcoclkFreqSel::_24MHz;
+    #[cfg(not(feature = "enhanced_cs"))]
+    const HIGHEST: Self = DcoclkFreqSel::_16MHz;
+}
+
+/// What the FLL locks DCOCLKDIV to
+#[derive(Clone, Copy)]
+struct DcoTarget {
+    /// The FLL locks to the largest multiple of its reference that doesn't exceed this
+    freq: u32,
+    /// DCO range
+    range: Dcorsel,
+    /// Lock with the factory DCO trim instead of trimming in software
+    factory_trim: bool,
+}
+
+impl From<DcoclkFreqSel> for DcoTarget {
+    #[inline(always)]
+    fn from(sel: DcoclkFreqSel) -> Self {
+        DcoTarget { freq: sel.freq(), range: sel.dcorsel(), factory_trim: sel.factory_trimmed() }
+    }
+}
+
+impl DcoTarget {
+    /// The target for `freq` Hz: the DCO range whose nominal frequency is closest to it, trimmed
+    /// in software. Targets from the highest [`DcoclkFreqSel`] frequency up lock like it does,
+    /// with the factory trim the user's guide recommends there (SLAU445I 3.2.11).
+    #[inline(always)]
+    fn from_hz(freq: u32) -> Self {
+        let highest = DcoTarget::from(DcoclkFreqSel::HIGHEST);
+        if freq >= highest.freq {
+            return DcoTarget { freq, ..highest };
+        }
+        let range = match DCO_RANGE_BOUNDARY_HZ.iter().filter(|&&boundary| freq > boundary).count() {
+            0 => Dcorsel::Dcorsel0,
+            1 => Dcorsel::Dcorsel1,
+            2 => Dcorsel::Dcorsel2,
+            3 => Dcorsel::Dcorsel3,
+            4 => Dcorsel::Dcorsel4,
+            #[cfg(not(feature = "enhanced_cs"))]
+            _ => Dcorsel::Dcorsel5,
+            #[cfg(feature = "enhanced_cs")]
+            5 => Dcorsel::Dcorsel5,
+            #[cfg(feature = "enhanced_cs")]
+            6 => Dcorsel::Dcorsel6,
+            #[cfg(feature = "enhanced_cs")]
+            _ => Dcorsel::Dcorsel7,
+        };
+        DcoTarget { freq, range, factory_trim: false }
+    }
+
+    /// Nominal frequency of the DCO range
+    #[inline(always)]
+    fn range_freq(self) -> u32 {
+        DCO_RANGE_NOMINAL_HZ[self.range as usize]
     }
 }
 
@@ -944,7 +1024,8 @@ impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
     }
 
     /// Select DCOCLK for MCLK with FLL for stabilization. Frequency is `target_freq / mclk_div` Hz.
-    /// Only a select few frequency targets can be selected, see [`DcoclkFreqSel`].
+    /// See [`DcoclkFreqSel`] for the frequencies, and [`mclk_dcoclk_hz`](Self::mclk_dcoclk_hz) for
+    /// any other.
     ///
     /// With XT1 as the FLL reference (see `fll_ref_xt1`) the FLL locks to the multiple of the
     /// XT1 frequency closest to `target_freq` without exceeding it, and the returned clock
@@ -957,7 +1038,38 @@ impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
     ) -> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
         ClockConfig {
             mclk_div,
-            ..make_clkconf!(self, MclkDefined(MclkSel::Dcoclk(target_freq)), self.smclk, self.xt1clk, self.fll_ref)
+            ..make_clkconf!(self, MclkDefined(MclkSel::Dcoclk(target_freq.into())), self.smclk, self.xt1clk, self.fll_ref)
+        }
+    }
+
+    /// Select DCOCLK for MCLK with FLL for stabilization, at any frequency from 1 MHz to 24 MHz
+    /// (16 MHz without the enhanced clock system). MCLK runs at the locked frequency /
+    /// `mclk_div`.
+    ///
+    /// The FLL locks DCOCLKDIV to the largest multiple of its reference that doesn't exceed
+    /// `target_hz`: with REFO a multiple of 32.768 kHz, so 5 MHz becomes 4.980736 MHz. The
+    /// returned clock objects report the locked frequency. The DCO runs in the range whose
+    /// nominal frequency is closest to the target, trimmed in software while the clocks are
+    /// configured; from the highest [`DcoclkFreqSel`] frequency up it locks like that one, with
+    /// the factory trim.
+    ///
+    /// # Panics
+    ///
+    /// If `target_hz` is outside the range above. With a constant, valid frequency the check is
+    /// optimised away.
+    #[inline]
+    pub fn mclk_dcoclk_hz(
+        self,
+        target_hz: u32,
+        mclk_div: MclkDiv,
+    ) -> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
+        assert!(
+            (DCO_MIN_HZ..=MCLK_MAX_HZ).contains(&target_hz),
+            "DCO frequency out of range"
+        );
+        ClockConfig {
+            mclk_div,
+            ..make_clkconf!(self, MclkDefined(MclkSel::Dcoclk(DcoTarget::from_hz(target_hz))), self.smclk, self.xt1clk, self.fll_ref)
         }
     }
 
@@ -1104,7 +1216,7 @@ unsafe fn configure_fram(fram: &mut Fram, mclk_freq: u32) {
 impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
     /// FLL settings that lock DCOCLKDIV as close to `target` as possible without exceeding it
     #[inline]
-    fn fll_settings(&self, target: DcoclkFreqSel) -> FllSettings {
+    fn fll_settings(&self, target: DcoTarget) -> FllSettings {
         // The FLL is referenced by XT1CLK only if XT1 has actually been
         // configured; in every other case it is referenced by REFOCLK.
         // The typestate API already guarantees `fll_ref` can only be
@@ -1119,7 +1231,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         // A reference too slow for the target (16 MHz from a 10 kHz XT1, say)
         // would overflow it, so clamp the multiplier and report the frequency
         // the FLL actually locks to.
-        let multiplier = (target.freq() / ref_freq).clamp(1, 1024);
+        let multiplier = (target.freq / ref_freq).clamp(1, 1024);
 
         FllSettings {
             selref,
@@ -1147,13 +1259,14 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
     /// The fastest MCLK may run while the clocks are configured. MCLK runs undivided from the
     /// DCO while the DCO is set up, before the MCLK divider takes effect. A DCO started by the
     /// factory trim procedure rises from its lowest tap and doesn't overshoot, but the software
-    /// trim tries other trim settings, at up to about twice the target (device data sheets, DCO
-    /// frequency).
+    /// trim tries other trim settings, which run at up to about 2.2 times the nominal frequency
+    /// of the range (device data sheets, DCO frequency). The bound is 2.25 times the nominal
+    /// frequency or the target, whichever is higher.
     #[inline]
     fn mclk_freq_during_config(&self) -> u32 {
         let dco_freq = match self.mclk.0 {
-            MclkSel::Dcoclk(target) if target.factory_trimmed() => self.fll_settings(target).freq,
-            MclkSel::Dcoclk(target) => self.fll_settings(target).freq / 4 * 9,
+            MclkSel::Dcoclk(target) if target.factory_trim => self.fll_settings(target).freq,
+            MclkSel::Dcoclk(target) => target.freq.max(target.range_freq()) / 4 * 9,
             _ => 0,
         };
         dco_freq.max(self.mclk_freq())
@@ -1176,8 +1289,8 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
     fn configure_dco_fll(&self) {
         // Run the FLL configuration procedure from the user's guide (SLAU445I 3.2.11) if we are
         // using the DCO
-        if let MclkSel::Dcoclk(target_freq) = self.mclk.0 {
-            let fll = self.fll_settings(target_freq);
+        if let MclkSel::Dcoclk(target) = self.mclk.0 {
+            let fll = self.fll_settings(target);
             let cs = &self.periph;
 
             fll_off();
@@ -1185,12 +1298,12 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
             cs.csctl3()
                 .write(|w| w.selref().variant(fll.selref).fllrefdiv().variant(fll.ref_div));
             cs.csctl0().write(|w| unsafe { w.bits(0) });
-            if target_freq.factory_trimmed() {
-                cs.csctl1().write(|w| w.dcorsel().variant(target_freq.dcorsel()));
+            if target.factory_trim {
+                cs.csctl1().write(|w| w.dcorsel().variant(target.range));
             } else {
                 // The software trim starts from the middle trim setting with modulation enabled,
                 // as TI's reference routine does
-                let dcorsel = target_freq.dcorsel() as u16;
+                let dcorsel = target.range as u16;
                 cs.csctl1().write(|w| unsafe {
                     w.bits(DCOFTRIMEN | DCOFTRIM_START << DCOFTRIM_SHIFT | dcorsel << DCORSEL_SHIFT)
                 });
@@ -1208,7 +1321,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
 
             fll_on();
 
-            if target_freq.factory_trimmed() {
+            if target.factory_trim {
                 while fll_unlocked(cs) {}
             } else {
                 self.trim_dco(&fll);
@@ -1233,7 +1346,15 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         loop {
             // Restart the FLL from the middle of the tap range
             cs.csctl0().write(|w| unsafe { w.bits(DCO_TAP_MID) });
-            unsafe { cs.csctl7().clear_bits(|w| w.dcoffg().clear_bit()) };
+            // Clear DCOFFG until it reads back clear, as TI's routine does. Right after the FLL
+            // is enabled it takes several writes (measured on an MSP430FR2476), and a flag left
+            // set would end the lock wait below at once, recording a tap that hasn't settled.
+            loop {
+                unsafe { cs.csctl7().clear_bits(|w| w.dcoffg().clear_bit()) };
+                if cs.csctl7().read().dcoffg().bit_is_clear() {
+                    break;
+                }
+            }
             delay.delay_ms(settle_ms);
             // Wait for lock, or for the tap to run into either end of its range (DCOFFG)
             while fll_unlocked(cs) && cs.csctl7().read().dcoffg().bit_is_clear() {}

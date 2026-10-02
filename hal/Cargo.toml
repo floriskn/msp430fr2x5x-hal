@@ -27,7 +27,7 @@ msp430fr2512 = ["25x2"]           # 2kB RAM up to 8 self-capacitive and 16 mutua
 msp430fr2522 = ["25x2", "frwpoa"] # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
 
 # Derived features. Do not provide these.
-2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk", "frwpoa"]
+2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk", "frwpoa", "icc", "mfm"]
 247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "rtc_aclk"]
 25x2 = ["dep:msp430fr25x2", "eusci_aclk", "info_mem", "adc", "adcpctl", "eusci_b", "rtc_aclk"]
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
@@ -47,6 +47,8 @@ vloclk_source = [] # ACLK can be sourced from VLOCLK (data sheet: ACLK from XT1,
 xt1_high_frequency = [] # XT1 supports 1 MHz to 24 MHz crystals and inputs besides 32 kHz (data sheet: XT1 up to 24 MHz)
 enhanced_cs = [] # Enhanced clock system: 20/24 MHz DCO, XT1FAULTOFF, low-power REFO (SLAU445I Table 3-1)
 rtc_aclk = [] # RTC can be sourced from ACLK, through SYSCFG2.RTCCKSEL (data sheet: clock distribution)
+icc = [] # Interrupt Compare Controller (data sheet)
+mfm = [] # Manchester Function Module (data sheet)
 frwpoa = [] # Part of the program FRAM can be left writable, through SYSCFG0.FRWPOA (SLAU445I 1.16, SYSCFG0)
 
 [dependencies]
