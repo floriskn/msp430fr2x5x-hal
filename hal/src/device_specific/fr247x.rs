@@ -101,6 +101,14 @@ pub mod gpio {
     gpio_impl!(p4: P4 => p4in, p4out, p4dir, p4ren, p4selc, p4sel0, p4sel1, [p4ies, p4ie, p4ifg, p4iv]);
     gpio_impl!(p5: P5 => p5in, p5out, p5dir, p5ren, p5selc, p5sel0, p5sel1, [p5ies, p5ie, p5ifg, p5iv]);
     gpio_impl!(p6: P6 => p6in, p6out, p6dir, p6ren, p6selc, p6sel0, p6sel1, [p6ies, p6ie, p6ifg, p6iv]);
+
+    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    impl_port_pins!(P1, 8);
+    impl_port_pins!(P2, 8);
+    impl_port_pins!(P3, 8);
+    impl_port_pins!(P4, 8);
+    impl_port_pins!(P5, 8);
+    impl_port_pins!(P6, 3);
 }
 
 /* ADC */
@@ -194,13 +202,13 @@ mod capture {
         type Gpio3 = Pin<P5, Pin1, Alternate2<Input<Floating>>>;
         type Gpio4 = Pin<P5, Pin2, Alternate2<Input<Floating>>>;
         type Gpio5 = Pin<P4, Pin3, Alternate2<Input<Floating>>>;
-        type Gpio6 = Pin<P4, Pin6, Alternate2<Input<Floating>>>;
+        type Gpio6 = Pin<P4, Pin4, Alternate2<Input<Floating>>>;
     }
 }
 
 /* Clocks */
-/// MODCLK frequency
-pub const MODCLK_FREQ_HZ: u32 = 5_000_000;
+/// MODCLK frequency, typical (data sheet: 3.0 MHz to 4.6 MHz)
+pub const MODCLK_FREQ_HZ: u32 = 3_800_000;
 
 /* eCOMP */
 pub mod ecomp {
@@ -412,7 +420,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB0 {
@@ -422,7 +430,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
         }
     }
 
@@ -433,7 +441,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB1 {
@@ -443,7 +451,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
         }
     }
 }
@@ -454,7 +462,27 @@ pub const INFO_MEM_SIZE: usize = 512;
 
 /* PWM */
 mod pwm {
-    use crate::{gpio::*, pac::*, pwm::*};
+    use crate::{gpio::*, pac::*, pin_mapping::RemappedMapping, pwm::*};
+
+    // TA2 and TA3 outputs with TAxRMP set (data sheet, Table 9-16)
+    impl PwmPeriph<CCR0, RemappedMapping> for Ta2 {
+        type Gpio = Pin<P5, Pin6, Alternate2<Output>>;
+    }
+    impl PwmPeriph<CCR1, RemappedMapping> for Ta2 {
+        type Gpio = Pin<P5, Pin7, Alternate1<Output>>;
+    }
+    impl PwmPeriph<CCR2, RemappedMapping> for Ta2 {
+        type Gpio = Pin<P6, Pin0, Alternate1<Output>>;
+    }
+    impl PwmPeriph<CCR0, RemappedMapping> for Ta3 {
+        type Gpio = Pin<P5, Pin3, Alternate2<Output>>;
+    }
+    impl PwmPeriph<CCR1, RemappedMapping> for Ta3 {
+        type Gpio = Pin<P4, Pin6, Alternate2<Output>>;
+    }
+    impl PwmPeriph<CCR2, RemappedMapping> for Ta3 {
+        type Gpio = Pin<P4, Pin5, Alternate2<Output>>;
+    }
 
     // TA0
     impl PwmPeriph<CCR1> for Ta0 {
@@ -491,7 +519,7 @@ mod pwm {
         type Gpio = Pin<P4, Pin0, Alternate1<Output>>;
     }
     impl PwmPeriph<CCR2> for Ta3 {
-        type Gpio = Pin<P3, Pin7, Alternate2<Output>>;
+        type Gpio = Pin<P3, Pin7, Alternate1<Output>>;
     }
 
     // TB0
@@ -559,7 +587,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
         }
     }
     impl SerialUsci<RemappedMapping> for EUsciA0 {
@@ -569,7 +597,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
         }
     }
 
@@ -691,7 +719,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
         }
     }
 
@@ -703,7 +731,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
         }
     }
 
@@ -722,7 +750,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
         }
     }
 
@@ -734,7 +762,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
         }
     }
 
@@ -746,7 +774,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
         }
     }
 
@@ -758,7 +786,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
         }
     }
     /// SPI MISO pin for eUSCI A0 (P1.5) (default mapping)
@@ -793,34 +821,34 @@ mod spi {
     pub struct UsciA0STEPinRemapped;
     impl_spi_pin!(UsciA0STEPinRemapped, P4, Pin7);
 
-    /// SPI MISO pin for eUSCI A1 (P2.5) (default mapping)
+    /// SPI MISO pin for eUSCI A1 (P2.5)
     pub struct UsciA1MISOPin;
     impl_spi_pin!(UsciA1MISOPin, P2, Pin5);
 
-    /// SPI MISO pin for eUSCI A1 (P2.6) (default mapping)
+    /// SPI MOSI pin for eUSCI A1 (P2.6)
     pub struct UsciA1MOSIPin;
     impl_spi_pin!(UsciA1MOSIPin, P2, Pin6);
 
-    /// SPI SCLK pin for eUSCI A1 (P2.4) (default mapping)
+    /// SPI SCLK pin for eUSCI A1 (P2.4)
     pub struct UsciA1SCLKPin;
     impl_spi_pin!(UsciA1SCLKPin, P2, Pin4);
-    /// SPI STE pin for eUSCI A1 (P3.1) (default mapping)
+    /// SPI STE pin for eUSCI A1 (P3.1)
     pub struct UsciA1STEPin;
     impl_spi_pin!(UsciA1STEPin, P3, Pin1);
 
-    /// SPI MISO pin for eUSCI B0 (P1.2) (default mapping)
+    /// SPI MISO pin for eUSCI B0 (P1.3) (default mapping)
     pub struct UsciB0MISOPinDefault;
     impl_spi_pin!(UsciB0MISOPinDefault, P1, Pin3);
 
-    /// SPI MISO pin for eUSCI A0 (P4.5) (remapped mapping)
+    /// SPI MISO pin for eUSCI B0 (P4.5) (remapped mapping)
     pub struct UsciB0MISOPinRemapped;
     impl_spi_pin!(UsciB0MISOPinRemapped, P4, Pin5);
 
-    /// SPI MOSI pin for eUSCI B0 (P1.3) (default mapping)
+    /// SPI MOSI pin for eUSCI B0 (P1.2) (default mapping)
     pub struct UsciB0MOSIPinDefault;
     impl_spi_pin!(UsciB0MOSIPinDefault, P1, Pin2);
 
-    /// SPI MOSI pin for eUSCI A0 (P4.6) (remapped mapping)
+    /// SPI MOSI pin for eUSCI B0 (P4.6) (remapped mapping)
     pub struct UsciB0MOSIPinRemapped;
     impl_spi_pin!(UsciB0MOSIPinRemapped, P4, Pin6);
 
@@ -828,7 +856,7 @@ mod spi {
     pub struct UsciB0SCLKPinDefault;
     impl_spi_pin!(UsciB0SCLKPinDefault, P1, Pin1);
 
-    /// SPI SCLK pin for eUSCI A0 (P5.5) (remapped mapping)
+    /// SPI SCLK pin for eUSCI B0 (P5.5) (remapped mapping)
     pub struct UsciB0SCLKPinRemapped;
     impl_spi_pin!(UsciB0SCLKPinRemapped, P5, Pin5);
 
@@ -836,11 +864,11 @@ mod spi {
     pub struct UsciB0STEPinDefault;
     impl_spi_pin!(UsciB0STEPinDefault, P1, Pin0);
 
-    /// SPI STE pin for eUSCI A0 (P5.6) (remapped mapping)
+    /// SPI STE pin for eUSCI B0 (P5.6) (remapped mapping)
     pub struct UsciB0STEPinRemapped;
     impl_spi_pin!(UsciB0STEPinRemapped, P5, Pin6);
 
-    /// SPI MISO pin for eUSCI B1 (P3.2) (default mapping)
+    /// SPI MISO pin for eUSCI B1 (P3.6) (default mapping)
     pub struct UsciB1MISOPinDefault;
     impl_spi_pin!(UsciB1MISOPinDefault, P3, Pin6);
 
@@ -848,7 +876,7 @@ mod spi {
     pub struct UsciB1MISOPinRemapped;
     impl_spi_pin!(UsciB1MISOPinRemapped, P4, Pin3);
 
-    /// SPI MOSI pin for eUSCI B1 (P3.6) (default mapping)
+    /// SPI MOSI pin for eUSCI B1 (P3.2) (default mapping)
     pub struct UsciB1MOSIPinDefault;
     impl_spi_pin!(UsciB1MOSIPinDefault, P3, Pin2);
 
@@ -987,7 +1015,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta2rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.ta2rmp().clear_bit()) };
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta2 {
@@ -995,7 +1023,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta2rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.ta2rmp().set_bit()) };
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta2 {}
@@ -1006,7 +1034,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta3rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.ta3rmp().clear_bit()) };
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta3 {
@@ -1014,7 +1042,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta3rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.ta3rmp().set_bit()) };
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta3 {}

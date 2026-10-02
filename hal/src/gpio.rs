@@ -73,6 +73,51 @@ impl<PORT: GpioPeriph> PortNum for PORT {}
 pub trait IntrPortNum: IntrPeriph {}
 impl<PORT: IntrPeriph> IntrPortNum for PORT {}
 
+/// Typestate of a pin slot that has no pin on this device, such as P3.3 to P3.7 on the
+/// MSP430FR2433. Its [`Pin`] has no methods.
+pub struct Unavailable;
+
+/// The typestates each pin slot of a port starts in: `Input<Floating>` for the pins that exist,
+/// [`Unavailable`] for the ones the device doesn't have
+#[doc(hidden)]
+pub trait PortPins {
+    type Init0;
+    type Init1;
+    type Init2;
+    type Init3;
+    type Init4;
+    type Init5;
+    type Init6;
+    type Init7;
+}
+
+// Implement PortPins for a port with `$count` pins. The pins a device lacks are always the top ones.
+macro_rules! impl_port_pins {
+    (@impl $Px:ty, $i0:ty, $i1:ty, $i2:ty, $i3:ty, $i4:ty, $i5:ty, $i6:ty, $i7:ty) => {
+        impl $crate::gpio::PortPins for $Px {
+            type Init0 = $i0;
+            type Init1 = $i1;
+            type Init2 = $i2;
+            type Init3 = $i3;
+            type Init4 = $i4;
+            type Init5 = $i5;
+            type Init6 = $i6;
+            type Init7 = $i7;
+        }
+    };
+    ($Px:ty, 8) => { impl_port_pins!(@impl $Px, In, In, In, In, In, In, In, In); };
+    ($Px:ty, 7) => { impl_port_pins!(@impl $Px, In, In, In, In, In, In, In, Unavailable); };
+    ($Px:ty, 5) => { impl_port_pins!(@impl $Px, In, In, In, In, In, Unavailable, Unavailable, Unavailable); };
+    ($Px:ty, 3) => {
+        impl_port_pins!(@impl $Px, In, In, In, Unavailable, Unavailable, Unavailable, Unavailable, Unavailable);
+    };
+}
+pub(crate) use impl_port_pins;
+
+/// Starting typestate of the pins that exist
+#[doc(hidden)]
+pub type In = Input<Floating>;
+
 /// Pin number 0
 pub struct Pin0;
 impl PinNum for Pin0 {
@@ -201,7 +246,7 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Set interrupt trigger to falling edge, the default, and clear interrupt flag.
+    /// Set interrupt trigger to falling edge and clear interrupt flag.
     #[inline]
     pub fn select_falling_edge_trigger(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -213,6 +258,10 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     /// Enable interrupts on input pin.
     /// Note that changing other GPIO configurations while interrupts are enabled can cause
     /// spurious interrupts.
+    ///
+    /// The trigger edge (PxIES) is undefined after a reset, so select it first with
+    /// [`select_rising_edge_trigger`](Self::select_rising_edge_trigger) or
+    /// [`select_falling_edge_trigger`](Self::select_falling_edge_trigger).
     #[inline]
     pub fn enable_interrupts(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -305,10 +354,33 @@ pub enum GpioVector {
 }
 
 impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
-    /// Configures pin as output
+    /// Configures pin as output.
+    ///
+    /// The pin drives whatever its PxOUT bit holds, which is undefined after a reset, or the
+    /// pull-up/pull-down selection of an input with a pull resistor. Use
+    /// [`to_output_low`](Self::to_output_low) or [`to_output_high`](Self::to_output_high) to
+    /// start from a known level.
     #[inline]
     pub fn to_output(self) -> Pin<PORT, PIN, Output> {
         let p = unsafe { PORT::steal() };
+        p.pxdir_set(PIN::SET_MASK);
+        make_pin!()
+    }
+
+    /// Configures pin as output, driving it low from the start
+    #[inline]
+    pub fn to_output_low(self) -> Pin<PORT, PIN, Output> {
+        let p = unsafe { PORT::steal() };
+        p.pxout_clear(PIN::CLR_MASK);
+        p.pxdir_set(PIN::SET_MASK);
+        make_pin!()
+    }
+
+    /// Configures pin as output, driving it high from the start
+    #[inline]
+    pub fn to_output_high(self) -> Pin<PORT, PIN, Output> {
+        let p = unsafe { PORT::steal() };
+        p.pxout_set(PIN::SET_MASK);
         p.pxdir_set(PIN::SET_MASK);
         make_pin!()
     }

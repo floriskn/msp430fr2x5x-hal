@@ -60,16 +60,27 @@
 //! [`read_rx_buf_as_slave()`](I2cMasterSlave::read_rx_buf_as_slave) allow for writing to the Rx and Tx buffers. These methods don't have the
 //! bus arbitration and slave addressing checks that the `_as_master` variants do, so these should only be called in slave mode.
 //!
-//! Pins used:
+//! Pins used (pins with `RemappedMapping` in brackets). The external clock pin can optionally clock the bus in
+//! master modes.
 //!
-//! eUSCI_B0: {SCL: `P1.3`, SDA: `P1.2`}. `P1.1` can optionally be used as an external clock source in master modes.
+//! | Device       | eUSCI | SCL             | SDA             | External clock  |
+//! |:-------------|:-----:|:---------------:|:---------------:|:---------------:|
+//! | MSP430FR2x5x | B0    | `P1.3`          | `P1.2`          | `P1.1`          |
+//! | MSP430FR2x5x | B1    | `P4.7`          | `P4.6`          | `P4.5`          |
+//! | MSP430FR2433 | B0    | `P1.3`          | `P1.2`          | `P1.1`          |
+//! | MSP430FR247x | B0    | `P1.3` (`P4.5`) | `P1.2` (`P4.6`) | `P1.1` (`P5.5`) |
+//! | MSP430FR247x | B1    | `P3.6` (`P4.3`) | `P3.2` (`P4.4`) | `P3.5` (`P5.3`) |
+//! | MSP430FR25x2 | B0    | `P1.3` (`P2.6`) | `P1.2` (`P2.5`) | `P1.1` (`P2.4`) |
 //!
-//! eUSCI_B1: {SCL: `P4.7`, SDA: `P4.6`}. `P4.5` can optionally be used as an external clock source in master modes.
+//! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
+//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
 //!
 
 use core::convert::Infallible;
 
-use crate::clock::{Aclk, Smclk};
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::Aclk;
+use crate::clock::Smclk;
 use crate::hw_traits::eusci::{
     EUsciI2C, I2CUcbIfgOut, UcbCtlw0, UcbCtlw1, UcbI2coa, Ucmode, Ucssel,
 };
@@ -154,11 +165,15 @@ pub trait I2cUsci<M: PinMap = DefaultMapping>: EUsciI2C {
 }
 
 // Allows a GPIO pin to be converted into an I2C object
+// The pin's alternate function defaults to Alternate1
 macro_rules! impl_i2c_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
-        impl<DIR> From<Pin<$port, $pin, Alternate1<DIR>>> for $struct_name {
+        impl_i2c_pin!($struct_name, $port, $pin, Alternate1);
+    };
+    ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
             #[inline(always)]
-            fn from(_val: Pin<$port, $pin, Alternate1<DIR>>) -> Self { $struct_name }
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
         }
     };
 }
@@ -189,6 +204,21 @@ impl I2cMarker for MultiMaster {}
 /// Typestate for an I2C bus being configured as a master on a bus that has other master devices present that may address this device.
 pub struct MasterSlave;
 impl I2cMarker for MasterSlave {}
+
+/// The smallest clock divider for a master role: the bit clock can be at most BRCLK/4 for a single master, and BRCLK/8
+/// with several masters on the bus (user's guide, I2C clock generation)
+trait MinClkDivisor {
+    const MIN_CLK_DIVISOR: u16;
+}
+impl MinClkDivisor for SingleMaster {
+    const MIN_CLK_DIVISOR: u16 = 4;
+}
+impl MinClkDivisor for MultiMaster {
+    const MIN_CLK_DIVISOR: u16 = 8;
+}
+impl MinClkDivisor for MasterSlave {
+    const MIN_CLK_DIVISOR: u16 = 8;
+}
 
 macro_rules! return_self_config {
     ($self: ident) => {
@@ -272,7 +302,9 @@ where
     /// Configure this eUSCI peripheral as an I2C master on a bus with other master devices.
     ///
     /// The address comparison unit is disabled so this device can't be addressed as a slave,
-    /// though the other masters may still contest the bus.
+    /// though the other masters may still contest the bus. The user's guide asks multi-master
+    /// devices to program their own address; use [`as_master_slave`](Self::as_master_slave) for
+    /// a device that other masters can address.
     pub fn as_multi_master(mut self) -> I2cConfig<USCI, NoClockSet, MultiMaster, M> {
         self.ctlw0 = UcbCtlw0 { ucmst: true, ucmm: true, ..self.ctlw0 };
 
@@ -307,46 +339,66 @@ where
 }
 
 #[allow(private_bounds)]
-impl<USCI, M, ROLE: I2cMarker> I2cConfig<USCI, NoClockSet, ROLE, M>
+impl<USCI, M, ROLE: I2cMarker + MinClkDivisor> I2cConfig<USCI, NoClockSet, ROLE, M>
 where
     USCI: I2cUsci<M>,
     M: PinMap,
 {
+    #[inline(always)]
+    fn set_clock(&mut self, ucssel: Ucssel, clk_divisor: u16) {
+        assert!(clk_divisor >= ROLE::MIN_CLK_DIVISOR, "I2C clock divisor too small for this role");
+        self.ctlw0.ucssel = ucssel;
+        self.divisor = clk_divisor;
+    }
+
     /// Configures this peripheral to use SMCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
     #[inline]
     pub fn use_smclk(
         mut self,
         _smclk: &Smclk,
         clk_divisor: u16,
     ) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::Smclk;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::Smclk, clk_divisor);
         return_self_config!(self)
     }
 
     #[cfg(feature = "eusci_aclk")]
     /// Configures this peripheral to use ACLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
     #[inline]
     pub fn use_aclk(
         mut self,
         _aclk: &Aclk,
         clk_divisor: u16,
     ) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::DeviceSpecific;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::DeviceSpecific, clk_divisor);
         return_self_config!(self)
     }
 
     #[cfg(feature = "eusci_modclk")]
     /// Configures this peripheral to use MODCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
     #[inline]
     pub fn use_modclk(mut self, clk_divisor: u16) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::DeviceSpecific;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::DeviceSpecific, clk_divisor);
         return_self_config!(self)
     }
 
     /// Configures this peripheral to use UCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
     #[inline]
     pub fn use_uclk<Pin>(
         mut self,
@@ -355,8 +407,7 @@ where
     ) -> I2cConfig<USCI, ClockSet, ROLE, M>
     where Pin: Into<USCI::ExternalClockPin>,
     {
-        self.ctlw0.ucssel = Ucssel::Uclk;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::Uclk, clk_divisor);
         return_self_config!(self)
     }
 }
@@ -532,8 +583,8 @@ mod sealed {
         }
 
         fn zero_byte_write(&mut self) -> Result<(), Self::ErrorType> {
-            self.usci().transmit_start();
-            self.usci().transmit_stop();
+            // To send only the address, set UCTXSTT and UCTXSTP at the same time (user's guide)
+            self.usci().transmit_start_stop();
             self.usci().uctxbuf_wr(0); // Bus stalls if nothing in Tx, even if a stop is scheduled
             while self.usci().uctxstt_rd() || self.usci().uctxstp_rd() {
                 self.handle_errs(&self.usci().ifg_rd(), 0)?;
@@ -681,12 +732,6 @@ use sealed::*;
 pub trait I2cRoleCommon<M>: I2cRoleBase<M>
 where M: PinMap
 {
-    /// Queue a NACK to be sent on the I2C bus. If this is called in response to a packet being received the NACK will be sent on the following byte.
-    ///
-    /// Used as part of the non-blocking / interrupt-based interface. Only use during a receive operation.
-    #[inline(always)]
-    fn send_nack(&mut self) { self.usci().transmit_nack(); }
-
     /// Get the number of bytes received/transmitted since the last Start or Repeated Start condition.
     #[inline(always)]
     fn byte_count(&mut self) -> u8 { self.usci().byte_count() }
@@ -800,6 +845,13 @@ where M: PinMap
     fn is_being_addressed(&mut self) -> bool {
         !self.usci().is_master() && self.usci().ifg_rd().ucsttifg()
     }
+
+    /// Queue a NACK to be sent on the I2C bus. If this is called in response to a packet being received the NACK will be sent on the following byte.
+    ///
+    /// Used as part of the non-blocking / interrupt-based interface. NACKs can only be sent as a slave receiver (user's
+    /// guide, UCTXNACK), so only use this while receiving as a slave.
+    #[inline(always)]
+    fn send_nack(&mut self) { self.usci().transmit_nack(); }
 }
 
 /// Common methods available to all multi-master-aware I2C roles.

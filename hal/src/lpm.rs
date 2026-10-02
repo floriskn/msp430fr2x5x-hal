@@ -39,7 +39,7 @@
 //! LPM4.5 is an extension of LPM3.5 that also disables the very low power oscillators, backup memory, and RTC. Barely anything
 //! is powered in this mode. The only methods to wake from LPM4.5 are a GPIO interrupt, the reset pin, or a power cycle.
 //! Like LPM3.5, all internal state is lost and program execution restarts from the beginning when a wake-up occurs. Unlike LPM3.5,
-//! the backup memory is unpowered, so can't be used to store state. The 512-byte section of non-volatile Information Memory can however
+//! the backup memory is unpowered, so can't be used to store state. The non-volatile Information Memory (`INFO_MEM_SIZE` bytes) can however
 //! be used to store data while the MCU is in active mode, and can be read back after a wake-up event.
 //!
 //! Unlike with LPM3 and 4, a peripheral requesting a clock source like SMCLK or ACLK will not stop LPM4.5 from being entered.
@@ -59,7 +59,23 @@ use crate::{
     watchdog::{WatchdogSelect, Wdt},
 };
 
-pub use crate::_pac::pmm::pmmctl0::Svshe as SvsState;
+/// Whether the high-side supply voltage supervisor (SVSH) stays on in the low-power modes (SVSHE)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SvsState {
+    /// SVSH is off in LPM2, LPM3, LPM4, LPM3.5 and LPM4.5, which saves power. It stays on in active
+    /// mode, LPM0 and LPM1.
+    Disabled = 0,
+    /// SVSH is always on
+    Enabled = 1,
+}
+
+#[allow(non_upper_case_globals)]
+impl SvsState {
+    /// The same as [`SvsState::Disabled`], under the name most PACs use
+    pub const Svshe0: SvsState = SvsState::Disabled;
+    /// The same as [`SvsState::Enabled`], under the name most PACs use
+    pub const Svshe1: SvsState = SvsState::Enabled;
+}
 
 // Status register:
 // SCG1 SCG0 OSC_OFF CPU_OFF GIE N Z C
@@ -76,15 +92,37 @@ fn set_sr_bits<const MASK: u8>() {
     unsafe { asm!("bis.b #{mask}, SR", mask = const MASK, options(nomem, nostack)) };
 }
 
+/// Enter a low-power mode by setting the status register bits in `MASK`. Unlike `set_sr_bits` it
+/// is a compiler barrier, so memory accesses aren't moved across the sleep. With GIE in the mask,
+/// interrupts are enabled in the same instruction that starts the sleep, followed by the NOP TI
+/// recommends after enabling interrupts.
+#[inline(always)]
+fn sleep<const MASK: u8>() {
+    unsafe { asm!("bis.b #{mask}, SR", "nop", mask = const MASK, options(nostack)) };
+}
+
 /// Enter Low Power Mode 0 (LPM0).
 ///
 /// In LPM0 the CPU and MCLK are disabled.
 ///
 /// Power draw in LPM0: Approx 40 uA / MHz.
+///
+/// Only an interrupt wakes the CPU, so interrupts must be enabled already. To check a condition
+/// and then sleep without missing an interrupt that arrives in between, check it with interrupts
+/// disabled and use [`enter_lpm0_with_interrupts`] instead.
 #[inline(always)]
 pub fn enter_lpm0() {
     const LPM0: u8 = CPU_OFF;
-    set_sr_bits::<LPM0>();
+    sleep::<LPM0>();
+}
+
+/// Enable interrupts and enter Low Power Mode 0 (LPM0) in one instruction, as the user's guide
+/// does (`BIS #GIE+CPUOFF,SR`). An interrupt that is already pending is taken right after, so it
+/// can't be missed between checking a condition and going to sleep.
+#[inline(always)]
+pub fn enter_lpm0_with_interrupts() {
+    const LPM0: u8 = CPU_OFF | GIE;
+    sleep::<LPM0>();
 }
 
 /// Request Low Power Mode 3 (LPM3).
@@ -95,10 +133,20 @@ pub fn enter_lpm0() {
 /// In LPM3 the CPU, FLL, and all clocks (except ACLK) are disabled.
 ///
 /// Power draw in LPM3: Approx 1.4 uA.
+///
+/// Interrupts must be enabled already; see [`request_lpm3_with_interrupts`].
 #[inline(always)]
 pub fn request_lpm3() {
     const LPM3: u8 = SCG1 | SCG0 | CPU_OFF;
-    set_sr_bits::<LPM3>();
+    sleep::<LPM3>();
+}
+
+/// Enable interrupts and request Low Power Mode 3 (LPM3) in one instruction, like
+/// [`enter_lpm0_with_interrupts`].
+#[inline(always)]
+pub fn request_lpm3_with_interrupts() {
+    const LPM3: u8 = SCG1 | SCG0 | CPU_OFF | GIE;
+    sleep::<LPM3>();
 }
 
 /// Request Low Power Mode 4 (LPM4).
@@ -111,10 +159,20 @@ pub fn request_lpm3() {
 /// In LPM4 the CPU, FLL, and all clocks (except optionally the very low power oscillators VLOCLK or XTCLK) are disabled.
 ///
 /// Power draw in LPM4: Approx 820 nA.
+///
+/// Interrupts must be enabled already; see [`request_lpm4_with_interrupts`].
 #[inline(always)]
 pub fn request_lpm4() {
     const LPM4: u8 = SCG1 | SCG0 | OSC_OFF | CPU_OFF;
-    set_sr_bits::<LPM4>();
+    sleep::<LPM4>();
+}
+
+/// Enable interrupts and request Low Power Mode 4 (LPM4) in one instruction, like
+/// [`enter_lpm0_with_interrupts`].
+#[inline(always)]
+pub fn request_lpm4_with_interrupts() {
+    const LPM4: u8 = SCG1 | SCG0 | OSC_OFF | CPU_OFF | GIE;
+    sleep::<LPM4>();
 }
 
 /// Enter Low Power Mode 3.5 (LPM3.5).
@@ -245,7 +303,7 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     const PASSWORD: u8 = 0xA5;
     regs.pmm.pmmctl0().write(|w| unsafe { w
         .pmmpw().bits(PASSWORD)
-        .svshe().variant(svs)
+        .svshe().bit(svs == SvsState::Enabled)
         .pmmregoff().set_bit()
     });
 

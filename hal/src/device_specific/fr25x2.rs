@@ -10,53 +10,73 @@ pub mod gpio {
 
     use crate::gpio::*;
     use crate::hw_traits::gpio::gpio_impl;
+    use crate::adc;
 
-    // Define alternate pin transitions
+    // Define alternate pin transitions (data sheet, Tables 6-15 and 6-16)
 
-    // P1 alternate 1
+    // P1 alternate 1: eUSCI
     impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P1, PIN, DIR> {}
     // P1 alternate 2
-    impl<DIR> ToAlternate2 for Pin<P1, Pin1, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P1, Pin2, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P1, Pin3, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P1, Pin4, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P1, Pin5, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P1, Pin6, DIR> {}
-    // P1 alternate 3
-    impl<PIN: PinNum, DIR> ToAlternate3 for Pin<P1, PIN, DIR> {}
+    impl       ToAlternate2 for Pin<P1, Pin1, Output> {} // ACLK
+    impl       ToAlternate2 for Pin<P1, Pin2, Output> {} // SMCLK
+    impl       ToAlternate2 for Pin<P1, Pin3, Output> {} // MCLK
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin4, DIR> {}    // TA0.1 / TA0.CCI1A
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin5, DIR> {}    // TA0.2 / TA0.CCI2A
+    impl<PULL> ToAlternate2 for Pin<P1, Pin6, Input<PULL>> {} // TA0CLK
+    // P1 alternate 3: CapTIvate. CAP1.0 to CAP1.3 only exist on the MSP430FR2522.
+    #[cfg(feature = "msp430fr2522")]
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin0, DIR> {}
+    #[cfg(feature = "msp430fr2522")]
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin1, DIR> {}
+    #[cfg(feature = "msp430fr2522")]
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin2, DIR> {}
+    #[cfg(feature = "msp430fr2522")]
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin3, DIR> {}
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin4, DIR> {}
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin5, DIR> {}
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin6, DIR> {}
+    impl<DIR>  ToAlternate3 for Pin<P1, Pin7, DIR> {}
 
     // P2 alternate 1
-    impl<DIR> ToAlternate1 for Pin<P2, Pin0, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin1, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin2, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin3, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin4, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin5, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P2, Pin6, DIR> {}
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {}    // UCA0TXD/UCA0SIMO
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {}    // UCA0RXD/UCA0SOMI
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin2, DIR> {}    // TA1.1 / TA1.CCI1A
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin3, DIR> {}    // TA1.2 / TA1.CCI2A
+    impl<PULL> ToAlternate1 for Pin<P2, Pin4, Input<PULL>> {} // TA1CLK
     // P2 alternate 2
-    impl<DIR> ToAlternate2 for Pin<P2, Pin0, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin1, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin2, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin3, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin4, DIR> {}
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin0, DIR> {}    // XOUT
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin1, DIR> {}    // XIN
+    impl<PULL> ToAlternate2 for Pin<P2, Pin2, Input<PULL>> {} // CapTIvate SYNC
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin3, DIR> {}    // UCB0STE, remapped
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin4, DIR> {}    // UCB0CLK, remapped
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin5, DIR> {}    // UCB0SIMO/UCB0SDA, remapped
+    impl<DIR>  ToAlternate2 for Pin<P2, Pin6, DIR> {}    // UCB0SOMI/UCB0SCL, remapped
+
+    // ADC inputs A0 to A7 are enabled through SYSCFG2.ADCPCTLx, not through PxSEL
+    impl<PIN: PinNum, DIR> ToAdcPctl for Pin<P1, PIN, DIR> where Self: adc::AdcPctlCapable {}
+    impl<PIN: PinNum, DIR> ToAdcPctl for Pin<P2, PIN, DIR> where Self: adc::AdcPctlCapable {}
 
     // GPIO port impls, PAC register methods, and marking ports as interrupt-capable
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
     gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2selc, p2sel0, p2sel1, [p2ies, p2ie, p2ifg, p2iv]);
+
+    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    impl_port_pins!(P1, 8);
+    impl_port_pins!(P2, 7);
 }
 
 /* ADC */
 mod adc {
     use crate::{adc::*, gpio::*};
 
-    impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);
-    impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);
-    impl_adc_channel_pin!(P1, Pin2, Alternate3 => 2);
-    impl_adc_channel_pin!(P1, Pin3, Alternate3 => 3);
-    impl_adc_channel_pin!(P2, Pin2, Alternate3 => 4);
-    impl_adc_channel_pin!(P2, Pin3, Alternate3 => 5);
-    impl_adc_channel_pin!(P2, Pin4, Alternate3 => 6);
-    impl_adc_channel_pin!(P2, Pin5, Alternate3 => 7);
+    impl_adc_channel_pin!(P1, Pin0, AdcMode => 0);
+    impl_adc_channel_pin!(P1, Pin1, AdcMode => 1);
+    impl_adc_channel_pin!(P1, Pin2, AdcMode => 2);
+    impl_adc_channel_pin!(P1, Pin3, AdcMode => 3);
+    impl_adc_channel_pin!(P2, Pin2, AdcMode => 4);
+    impl_adc_channel_pin!(P2, Pin3, AdcMode => 5);
+    impl_adc_channel_pin!(P2, Pin4, AdcMode => 6);
+    impl_adc_channel_pin!(P2, Pin5, AdcMode => 7);
 }
 
 /* Backup Memory */
@@ -89,8 +109,8 @@ mod capture {
 }
 
 /* Clocks */
-/// MODCLK frequency
-pub const MODCLK_FREQ_HZ: u32 = 5_000_000;
+/// MODCLK frequency, typical (data sheet: 3.8 MHz to 5.8 MHz)
+pub const MODCLK_FREQ_HZ: u32 = 4_800_000;
 
 /* eUSCI */
 mod eusci {
@@ -141,7 +161,7 @@ mod i2c {
 
     /// I2C SCL pin for eUSCI B0 (remapped mapping)
     pub struct UsciB0SCLPinRemapped;
-    impl_i2c_pin!(UsciB0SCLPinRemapped, P2, Pin6);
+    impl_i2c_pin!(UsciB0SCLPinRemapped, P2, Pin6, Alternate2);
 
     /// I2C SDA pin for eUSCI B0 (default mapping)
     pub struct UsciB0SDAPinDefault;
@@ -149,7 +169,7 @@ mod i2c {
 
     /// I2C SDA pin for eUSCI B0 (remapped mapping)
     pub struct UsciB0SDAPinRemapped;
-    impl_i2c_pin!(UsciB0SDAPinRemapped, P2, Pin5);
+    impl_i2c_pin!(UsciB0SDAPinRemapped, P2, Pin5, Alternate2);
 
     /// UCLKI pin for eUSCI B0. Used as an external clock source. (default mapping)
     pub struct UsciB0UCLKIPinDefault;
@@ -157,7 +177,7 @@ mod i2c {
 
     /// UCLKI pin for eUSCI B0. Used as an external clock source. (remapped mapping)
     pub struct UsciB0UCLKIPinRemapped;
-    impl_i2c_pin!(UsciB0UCLKIPinRemapped, P2, Pin4);
+    impl_i2c_pin!(UsciB0UCLKIPinRemapped, P2, Pin4, Alternate2);
 
     impl I2cUsci<DefaultMapping> for EUsciB0 {
         type ClockPin = UsciB0SCLPinDefault;
@@ -166,7 +186,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscibrmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscibrmp().clear_bit()) };
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB0 {
@@ -176,14 +196,14 @@ mod i2c {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscibrmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscibrmp().set_bit()) };
         }
     }
 }
 
 /* Information Memory */
 /// Size of the Information Memory segment on this device, in bytes
-pub const INFO_MEM_SIZE: usize = 512;
+pub const INFO_MEM_SIZE: usize = 256;
 
 /* PWM */
 mod pwm {
@@ -232,7 +252,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.usciarmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.usciarmp().clear_bit()) };
         }
     }
     impl SerialUsci<RemappedMapping> for EUsciA0 {
@@ -242,7 +262,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.usciarmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.usciarmp().set_bit()) };
         }
     }
 
@@ -308,7 +328,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.usciarmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.usciarmp().clear_bit()) };
         }
     }
 
@@ -320,7 +340,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.usciarmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.usciarmp().set_bit()) };
         }
     }
 
@@ -332,7 +352,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscibrmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscibrmp().clear_bit()) };
         }
     }
 
@@ -344,7 +364,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscibrmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscibrmp().set_bit()) };
         }
     }
 
@@ -386,7 +406,7 @@ mod spi {
 
     /// SPI MISO pin for eUSCI B0 (P2.6) (remapped mapping)
     pub struct UsciB0MISOPinRemapped;
-    impl_spi_pin!(UsciB0MISOPinRemapped, P2, Pin6);
+    impl_spi_pin!(UsciB0MISOPinRemapped, P2, Pin6, Alternate2);
 
     /// SPI MOSI pin for eUSCI B0 (P1.2) (default mapping)
     pub struct UsciB0MOSIPinDefault;
@@ -394,7 +414,7 @@ mod spi {
 
     /// SPI MOSI pin for eUSCI B0 (P2.5) (remapped mapping)
     pub struct UsciB0MOSIPinRemapped;
-    impl_spi_pin!(UsciB0MOSIPinRemapped, P2, Pin5);
+    impl_spi_pin!(UsciB0MOSIPinRemapped, P2, Pin5, Alternate2);
 
     /// SPI SCLK pin for eUSCI B0 (P1.1) (default mapping)
     pub struct UsciB0SCLKPinDefault;
@@ -402,7 +422,7 @@ mod spi {
 
     /// SPI SCLK pin for eUSCI B0 (P2.4) (remapped mapping)
     pub struct UsciB0SCLKPinRemapped;
-    impl_spi_pin!(UsciB0SCLKPinRemapped, P2, Pin4);
+    impl_spi_pin!(UsciB0SCLKPinRemapped, P2, Pin4, Alternate2);
 
     /// SPI STE pin for eUSCI B0 (P1.0) (default mapping)
     pub struct UsciB0STEPinDefault;
@@ -410,7 +430,7 @@ mod spi {
 
     /// SPI STE pin for eUSCI B0 (P2.3) (remapped mapping)
     pub struct UsciB0STEPinRemapped;
-    impl_spi_pin!(UsciB0STEPinRemapped, P2, Pin3);
+    impl_spi_pin!(UsciB0STEPinRemapped, P2, Pin3, Alternate2);
 }
 
 /* Timer */

@@ -3,7 +3,7 @@
 
 use msp430_rt::entry;
 use msp430_hal::{
-    gpio::Batch, pmm::{Pmm, ReferenceVoltage}, sac::{LoadTrigger, PositiveInput, PowerMode, SacConfig, VRef}, watchdog::Wdt
+    gpio::Batch, pmm::{Pmm, ReferenceVoltage}, sac::{BufferInput, LoadTrigger, PowerMode, SacConfig, VRef}, watchdog::Wdt
 };
 use panic_msp430 as _;
 
@@ -29,7 +29,7 @@ fn main() -> ! {
     let mut dac = dac_config.configure(VRef::Internal(&vref), LoadTrigger::Immediate);
 
     // To see the DAC output on a GPIO pin, we must set the SAC amplifier into buffer mode and set the DAC as the buffer input
-    let _amp = amp_config.buffer(PositiveInput::Dac(&dac), PowerMode::LowPower)
+    let _amp = amp_config.buffer(BufferInput::Dac(&dac), PowerMode::LowPower)
         .output_pin(p1_1);
 
     loop {

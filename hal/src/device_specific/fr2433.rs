@@ -40,10 +40,11 @@ pub mod gpio {
     // P2 alternate 1
     impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {}
     impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {}
-    impl       ToAlternate1 for Pin<P2, Pin2, Output> {}
     impl<DIR>  ToAlternate1 for Pin<P2, Pin4, DIR> {}
     impl<DIR>  ToAlternate1 for Pin<P2, Pin5, DIR> {}
     impl<DIR>  ToAlternate1 for Pin<P2, Pin6, DIR> {}
+    // P2 alternate 2
+    impl       ToAlternate2 for Pin<P2, Pin2, Output> {} // ACLK
 
     // P3 alternate 1
     impl<DIR>  ToAlternate1 for Pin<P3, Pin1, DIR> {}
@@ -52,6 +53,11 @@ pub mod gpio {
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
     gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2selc, p2sel0, p2sel1, [p2ies, p2ie, p2ifg, p2iv]);
     gpio_impl!(p3: P3 => p3in, p3out, p3dir, p3ren, p3selc, p3sel0, p3sel1);
+
+    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    impl_port_pins!(P1, 8);
+    impl_port_pins!(P2, 8);
+    impl_port_pins!(P3, 3);
 }
 
 /* ADC */
@@ -88,8 +94,8 @@ mod capture {
 
     impl CapturePeriph for Timer1A3 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P2, Pin5, Alternate2<Input<Floating>>>;
-        type Gpio2 = Pin<P2, Pin4, Alternate2<Input<Floating>>>;
+        type Gpio1 = Pin<P1, Pin5, Alternate2<Input<Floating>>>;
+        type Gpio2 = Pin<P1, Pin4, Alternate2<Input<Floating>>>;
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
@@ -98,8 +104,8 @@ mod capture {
 }
 
 /* Clocks */
-/// MODCLK frequency
-pub const MODCLK_FREQ_HZ: u32 = 5_000_000;
+/// MODCLK frequency, typical (data sheet: 3.8 MHz to 5.8 MHz)
+pub const MODCLK_FREQ_HZ: u32 = 4_800_000;
 
 /* eUSCI */
 mod eusci {
@@ -357,8 +363,9 @@ mod spi {
     /// SPI SCLK pin for eUSCI A1 (P2.4)
     pub struct UsciA1SCLKPin;
     impl_spi_pin!(UsciA1SCLKPin, P2, Pin4);
-    /// SPI STE pin for eUSCI A1. This pin does not exist for the MSP430FR2433.
+    /// SPI STE pin for eUSCI A1 (not in the DSBGA package)
     pub struct UsciA1STEPin;
+    impl_spi_pin!(UsciA1STEPin, P3, Pin1);
 
     /// SPI MISO pin for eUSCI B0 (P1.3)
     pub struct UsciB0MISOPin;
@@ -382,7 +389,7 @@ mod timer {
     use crate::{
         gpio::*,
         hw_traits::{timer_a::*, Steal},
-        pac::{self, *},
+        pac::*,
         timer::*,
     };
 

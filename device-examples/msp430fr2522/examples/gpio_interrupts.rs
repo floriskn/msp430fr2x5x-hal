@@ -45,7 +45,7 @@ fn main() -> ! {
     // Onboard button with interrupt disabled
     let mut button = p2.pin3;
     // Some random pin with interrupt enabled. IFG will be set manually.
-    let mut pin = p2.pin7.pulldown();
+    let mut pin = p2.pin6.pulldown();
     let p2iv = p2.pxiv;
 
     with(|cs| RED_LED.borrow_ref_mut(cs).replace(red_led));
@@ -75,7 +75,7 @@ fn PORT2() {
             return;
         };
 
-        if let GpioVector::Pin7Isr = p2iv.get_interrupt_vector() {
+        if let GpioVector::Pin6Isr = p2iv.get_interrupt_vector() {
             red_led.toggle().ok();
         }
     });

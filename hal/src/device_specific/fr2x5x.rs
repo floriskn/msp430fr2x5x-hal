@@ -15,8 +15,8 @@ pub mod gpio {
     // P1 alternate 1
     impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P1, PIN, DIR> {}
     // P1 alternate 2
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin0, DIR> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin1, DIR> {}
+    impl       ToAlternate2 for Pin<P1, Pin0, Output> {} // SMCLK
+    impl       ToAlternate2 for Pin<P1, Pin1, Output> {} // ACLK
     impl<PULL> ToAlternate2 for Pin<P1, Pin2, Input<PULL>> {}
     impl<DIR>  ToAlternate2 for Pin<P1, Pin6, DIR> {}
     impl<DIR>  ToAlternate2 for Pin<P1, Pin7, DIR> {}
@@ -27,9 +27,9 @@ pub mod gpio {
     impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {}
     impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {}
     impl<PULL> ToAlternate1 for Pin<P2, Pin2, Input<PULL>> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin3, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin6, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin7, DIR> {}
+    impl<PULL> ToAlternate1 for Pin<P2, Pin3, Input<PULL>> {} // TB1TRG
+    impl       ToAlternate1 for Pin<P2, Pin6, Output> {} // MCLK
+    impl<PULL> ToAlternate1 for Pin<P2, Pin7, Input<PULL>> {} // TB0CLK
     // P2 alternate 2
     impl ToAlternate2 for Pin<P2, Pin0, Output> {}
     impl ToAlternate2 for Pin<P2, Pin1, Output> {}
@@ -40,14 +40,20 @@ pub mod gpio {
     impl<DIR> ToAlternate3 for Pin<P2, Pin5, DIR> {}
 
     // P3 alternate 1
-    impl<DIR> ToAlternate1 for Pin<P3, Pin0, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P3, Pin4, DIR> {}
-    // P3 alternate 3
+    impl      ToAlternate1 for Pin<P3, Pin0, Output> {} // MCLK
+    impl      ToAlternate1 for Pin<P3, Pin4, Output> {} // SMCLK
+    // P3 alternate 3 is the SAC2 and SAC3 op-amp pins, on the MSP430FR235x only
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin1, DIR> {}
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin2, DIR> {}
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin3, DIR> {}
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin5, DIR> {}
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin6, DIR> {}
+    #[cfg(feature = "sac")]
     impl<DIR> ToAlternate3 for Pin<P3, Pin7, DIR> {}
 
     // P4 alternate 1
@@ -60,8 +66,8 @@ pub mod gpio {
     // P5 alternate 1
     impl<DIR> ToAlternate1 for Pin<P5, Pin0, DIR> {}
     impl<DIR> ToAlternate1 for Pin<P5, Pin1, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P5, Pin2, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P5, Pin3, DIR> {}
+    impl<PULL> ToAlternate1 for Pin<P5, Pin2, Input<PULL>> {} // TB2CLK
+    impl<PULL> ToAlternate1 for Pin<P5, Pin3, Input<PULL>> {} // TB2TRG
     // P5 alternate 2
     impl<DIR> ToAlternate2 for Pin<P5, Pin0, DIR> {}
     impl<DIR> ToAlternate2 for Pin<P5, Pin1, DIR> {}
@@ -72,7 +78,13 @@ pub mod gpio {
     impl<DIR> ToAlternate3 for Pin<P5, Pin3, DIR> {}
 
     // P6 alternate 1
-    impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P6, PIN, DIR> {}
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin0, DIR> {} // TB3.1
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin1, DIR> {} // TB3.2
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin2, DIR> {} // TB3.3
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin3, DIR> {} // TB3.4
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin4, DIR> {} // TB3.5
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin5, DIR> {} // TB3.6
+    impl<PULL> ToAlternate1 for Pin<P6, Pin6, Input<PULL>> {} // TB3CLK
 
     // GPIO port impls, PAC register methods, and marking ports as interrupt-capable
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
@@ -81,6 +93,14 @@ pub mod gpio {
     gpio_impl!(p4: P4 => p4in, p4out, p4dir, p4ren, p4selc, p4sel0, p4sel1, [p4ies, p4ie, p4ifg, p4iv]);
     gpio_impl!(p5: P5 => p5in, p5out, p5dir, p5ren, p5selc, p5sel0, p5sel1);
     gpio_impl!(p6: P6 => p6in, p6out, p6dir, p6ren, p6selc, p6sel0, p6sel1);
+
+    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    impl_port_pins!(P1, 8);
+    impl_port_pins!(P2, 8);
+    impl_port_pins!(P3, 8);
+    impl_port_pins!(P4, 8);
+    impl_port_pins!(P5, 5);
+    impl_port_pins!(P6, 7);
 }
 
 /* ADC */
@@ -151,7 +171,7 @@ mod capture {
 }
 
 /* Clocks */
-/// MODCLK frequency
+/// MODCLK frequency, typical (data sheet: 3.0 MHz to 4.6 MHz)
 pub const MODCLK_FREQ_HZ: u32 = 3_800_000;
 
 /* eCOMP */
@@ -168,8 +188,8 @@ pub mod ecomp {
     };
 
     impl ECompInputs for EComp0 {
-        type COMPx_0   = Pin<P1, Pin0, Alternate2<Input<Floating>>>;
-        type COMPx_1   = Pin<P1, Pin1, Alternate2<Input<Floating>>>;
+        type COMPx_0   = Pin<P1, Pin0, Alternate3<Input<Floating>>>;
+        type COMPx_1   = Pin<P1, Pin1, Alternate3<Input<Floating>>>;
         type COMPx_2   = Infallible; // Not used
         type COMPx_3   = Infallible; // Not used
         type COMPx_Out = Pin<P2, Pin0, Alternate2<Output>>;
@@ -182,12 +202,12 @@ pub mod ecomp {
         type DeviceSpecific1    = Infallible; // Not used
         type DeviceSpecific2Pos = Infallible; // Not used
         type DeviceSpecific2Neg = Infallible; // Not used
-        type DeviceSpecific3Pos = Pin<P1, Pin1, Alternate2<Input<Floating>>>;
-        type DeviceSpecific3Neg = Pin<P3, Pin1, Alternate2<Input<Floating>>>;
+        type DeviceSpecific3Pos = Pin<P1, Pin1, Alternate3<Input<Floating>>>;
+        type DeviceSpecific3Neg = Pin<P3, Pin1, Alternate3<Input<Floating>>>;
     }
     impl ECompInputs for EComp1 {
-        type COMPx_0   = Pin<P2, Pin5, Alternate2<Input<Floating>>>;
-        type COMPx_1   = Pin<P2, Pin4, Alternate2<Input<Floating>>>;
+        type COMPx_0   = Pin<P2, Pin5, Alternate3<Input<Floating>>>;
+        type COMPx_1   = Pin<P2, Pin4, Alternate3<Input<Floating>>>;
         type COMPx_2   = Infallible; // Not used
         type COMPx_3   = Infallible; // Not used
         type COMPx_Out = Pin<P2, Pin1, Alternate2<Output>>;
@@ -200,8 +220,8 @@ pub mod ecomp {
         type DeviceSpecific1    = Infallible; // Not used
         type DeviceSpecific2Pos = Infallible; // Not used
         type DeviceSpecific2Neg = Infallible; // Not used
-        type DeviceSpecific3Pos = Pin<P1, Pin5, Alternate2<Input<Floating>>>;
-        type DeviceSpecific3Neg = Pin<P3, Pin5, Alternate2<Input<Floating>>>;
+        type DeviceSpecific3Pos = Pin<P1, Pin5, Alternate3<Input<Floating>>>;
+        type DeviceSpecific3Neg = Pin<P3, Pin5, Alternate3<Input<Floating>>>;
     }
 
     /// List of possible inputs to the positive input of an eCOMP comparator.
@@ -215,7 +235,7 @@ pub mod ecomp {
         /// Internal 1.2V reference
         _1V2,
         #[cfg(feature = "sac")]
-        /// Output of amplifier SAC0 for eCOMP0, SAC2 for eCOMP1.
+        /// Output of amplifier SAC0 for eCOMP0, SAC1 for eCOMP1.
         ///
         /// Requires a reference to ensure that it has been configured.
         OAxO(&'a COMP::SACp),
@@ -249,7 +269,7 @@ pub mod ecomp {
         /// Internal 1.2V reference
         _1V2,
         #[cfg(feature = "sac")]
-        /// Output of amplifier SAC1 for eCOMP0, SAC3 for eCOMP1.
+        /// Output of amplifier SAC2 for eCOMP0, SAC3 for eCOMP1.
         OAxO(&'a COMP::SACn),
         /// This eCOMP's internal 6-bit DAC
         Dac(&'a dyn CompDacPeriph<COMP>),
@@ -427,6 +447,7 @@ mod pwm {
 }
 
 /* SAC */
+#[cfg(feature = "sac")]
 mod sac {
     use crate::pac::{Sac0, Sac1, Sac2, Sac3};
     use crate::{gpio::*, hw_traits::sac::*};
@@ -436,28 +457,28 @@ mod sac {
         P1, Pin3, // Positive input pin
         P1, Pin2, // Negative input pin
         P1, Pin1, // Output pin
-        sac0oa, sac0pga, sac0dac, sac0dat
+        sac0oa, sac0pga, sac0dac, sac0dat, sac0iv
     );
     impl_sac_periph!(
         Sac1, 
         P1, Pin7, 
         P1, Pin6, 
         P1, Pin5,
-        sac1oa, sac1pga, sac1dac, sac1dat
+        sac1oa, sac1pga, sac1dac, sac1dat, sac1iv
     );
     impl_sac_periph!(
         Sac2, 
         P3, Pin3, 
         P3, Pin2, 
         P3, Pin1,
-        sac2oa, sac2pga, sac2dac, sac2dat
+        sac2oa, sac2pga, sac2dac, sac2dat, sac2iv
     );
     impl_sac_periph!(
         Sac3, 
         P3, Pin7, 
         P3, Pin6, 
         P3, Pin5,
-        sac3oa, sac3pga, sac3dac, sac3dat
+        sac3oa, sac3pga, sac3dac, sac3dat, sac3iv
     );
 }
 

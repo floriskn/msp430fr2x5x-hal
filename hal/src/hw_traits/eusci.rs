@@ -184,6 +184,7 @@ pub trait EUsciUart: Steal {
     type Statw: UartUcxStatw;
 
     fn ctl0_reset(&self);
+    fn ctl0_clear_rst(&self);
 
     // only call while in reset state
     fn brw_settings(&self, ucbr: u16);
@@ -219,6 +220,7 @@ pub trait EUsciI2C: Steal {
     fn transmit_nack(&self);
     fn transmit_start(&self);
     fn transmit_stop(&self);
+    fn transmit_start_stop(&self);
 
     fn uctxstt_rd(&self) -> bool;
     fn uctxstp_rd(&self) -> bool;
@@ -504,6 +506,7 @@ macro_rules! eusci_uart_impl {
                     .ucspb().bit(reg.ucspb)
                     .ucssel().bits(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
+                    .ucswrst().set_bit()
                 });
             }
 
@@ -537,6 +540,11 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn ctl0_reset(&self) { self.$ucaxctlw0().write(|w| w.ucswrst().set_bit()); }
+
+            #[inline(always)]
+            fn ctl0_clear_rst(&self) {
+                unsafe { self.$ucaxctlw0().clear_bits(|w| w.ucswrst().clear_bit()) };
+            }
 
             #[inline(always)]
             fn brw_settings(&self, ucbr: u16) {
@@ -626,6 +634,11 @@ macro_rules! eusci_i2c_impl {
             #[inline(always)]
             fn transmit_stop(&self) {
                 unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxstp().set_bit()) }
+            }
+
+            #[inline(always)]
+            fn transmit_start_stop(&self) {
+                unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxstt().set_bit().uctxstp().set_bit()) }
             }
 
             #[inline(always)]

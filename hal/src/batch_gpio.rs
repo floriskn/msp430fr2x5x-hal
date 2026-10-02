@@ -258,33 +258,24 @@ impl<PORT: PortNum, PIN: PinNum, DIR> MaskRegisters for PinProxy<PORT, PIN, DIR>
 }
 
 trait InterruptOperations {
-    fn maybe_set_pxie(&self, b: u8);
+    fn maybe_write_pxie(&self, b: u8);
 }
 
 impl<P: GpioPeriph> InterruptOperations for P {
     #[inline(always)]
-    default fn maybe_set_pxie(&self, _b: u8) {}
+    default fn maybe_write_pxie(&self, _b: u8) {}
 }
 
 impl<P: IntrPeriph> InterruptOperations for P {
     #[inline(always)]
-    fn maybe_set_pxie(&self, b: u8) { self.pxie_set(b); }
+    fn maybe_write_pxie(&self, b: u8) { self.pxie_wr(b); }
 }
 
-impl<P: PortNum>
-    Batch<
-        P,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-        Input<Floating>,
-    >
+impl<P: PortNum + PortPins>
+    Batch<P, P::Init0, P::Init1, P::Init2, P::Init3, P::Init4, P::Init5, P::Init6, P::Init7>
 {
-    /// Split into a batch of individual GPIO pin proxies
+    /// Split into a batch of individual GPIO pin proxies. The pin slots the device has no pin for
+    /// start out [`Unavailable`].
     pub fn new(_port: P) -> Self { Self::create() }
 }
 
@@ -371,7 +362,14 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
 
         let p = unsafe { PORT::steal() };
         // Turn off interrupts first so nothing fires during subsequent register writes
-        p.maybe_set_pxie(0);
+        p.maybe_write_pxie(0);
+        // Pins whose PxSEL0 and PxSEL1 bits both change switch through PxSELC, so they don't pass
+        // through another function on the way (user's guide, PxSELC). After that, every
+        // remaining change is a single bit.
+        let both = (p.pxsel0_rd() ^ pxsel0) & (p.pxsel1_rd() ^ pxsel1);
+        if both != 0 {
+            p.pxselc_wr(both);
+        }
         p.pxsel0_wr(pxsel0);
         p.pxsel1_wr(pxsel1);
 

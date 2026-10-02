@@ -10,7 +10,33 @@ use core::{convert::Infallible, marker::PhantomData};
 
 const PASSWORD: u8 = 0x5A;
 
-pub use crate::_pac::wdt_a::wdtctl::Wdtis as WdtClkPeriods;
+/// Watchdog interval (WDTIS), in cycles of the watchdog clock. The times are for a 32.768 kHz clock.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WdtClkPeriods {
+    /// 2^31 cycles, 18 h 12 min 16 s
+    _2g = 0,
+    /// 2^27 cycles, 1 h 8 min 16 s
+    _128m = 1,
+    /// 2^23 cycles, 4 min 16 s
+    _8192k = 2,
+    /// 2^19 cycles, 16 s
+    _512k = 3,
+    /// 2^15 cycles, 1 s
+    _32k = 4,
+    /// 2^13 cycles, 250 ms
+    _8192 = 5,
+    /// 2^9 cycles, 15.625 ms
+    _512 = 6,
+    /// 2^6 cycles, 1.95 ms
+    _64 = 7,
+}
+
+#[allow(non_upper_case_globals)]
+impl WdtClkPeriods {
+    /// The same as [`WdtClkPeriods::_2g`], under the name the MSP430FR2433 PAC uses
+    pub const _2048m: WdtClkPeriods = WdtClkPeriods::_2g;
+}
 
 mod sealed {
     use super::*;
@@ -102,14 +128,15 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
     /// Reset countdown, unpause timer, and set timeout in a single write
     #[inline]
     pub fn set_interval_and_start(&mut self, periods: WdtClkPeriods) {
-        self.periph.wdtctl().modify(|r, w| {
+        // Every WdtClkPeriods value is a valid WDTIS setting
+        self.periph.wdtctl().modify(|r, w| unsafe {
             Self::prewrite(w, r.bits())
                 .wdtcntcl()
                 .set_bit()
                 .wdthold()
                 .unhold()
                 .wdtis()
-                .variant(periods)
+                .bits(periods as u8)
         });
     }
 
@@ -129,18 +156,6 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
             .wdthold().unhold());
     }
 
-    /// Checks if the timer has expired, returning `Ok(())` if it has, otherwise `WouldBlock`.
-    /// If called while the timer is not running, this will always return `WouldBlock`.
-    #[inline]
-    pub fn wait(&mut self) -> nb::Result<(), Infallible> {
-        let sfr = unsafe { &*_pac::Sfr::ptr() };
-        if sfr.sfrifg1().read().wdtifg().bit_is_set() {
-            unsafe { sfr.sfrifg1().clear_bits(|w| w.wdtifg().clear_bit()) };
-            Ok(())
-        } else {
-            Err(nb::Error::WouldBlock)
-        }
-    }
 }
 
 impl Wdt<WatchdogMode> {
@@ -162,6 +177,22 @@ impl Wdt<WatchdogMode> {
 }
 
 impl Wdt<IntervalMode> {
+    /// Checks if the timer has expired, returning `Ok(())` if it has, otherwise `WouldBlock`.
+    /// If called while the timer is not running, this will always return `WouldBlock`.
+    ///
+    /// Only available in interval mode: in watchdog mode the flag only tells that the last reset
+    /// came from the watchdog (user's guide, WDTIFG).
+    #[inline]
+    pub fn wait(&mut self) -> nb::Result<(), Infallible> {
+        let sfr = unsafe { &*_pac::Sfr::ptr() };
+        if sfr.sfrifg1().read().wdtifg().bit_is_set() {
+            unsafe { sfr.sfrifg1().clear_bits(|w| w.wdtifg().clear_bit()) };
+            Ok(())
+        } else {
+            Err(nb::Error::WouldBlock)
+        }
+    }
+
     /// Convert to watchdog mode and pause timer
     #[inline]
     pub fn to_watchdog(self) -> Wdt<WatchdogMode> {

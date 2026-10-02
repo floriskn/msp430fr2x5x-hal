@@ -858,6 +858,7 @@ pub struct ClockConfig<MCLK, SMCLK, XT1CLK> {
     fll_ref: Selref,
     #[cfg(feature = "enhanced_cs")]
     refo_low_power: bool,
+    fll_unlock_reset: bool,
 }
 
 macro_rules! make_clkconf {
@@ -872,6 +873,7 @@ macro_rules! make_clkconf {
             fll_ref: $fll_ref,
             #[cfg(feature = "enhanced_cs")]
             refo_low_power: $conf.refo_low_power,
+            fll_unlock_reset: $conf.fll_unlock_reset,
         }
     };
 }
@@ -889,11 +891,25 @@ impl ClockConfig<NoClockDefined, NoClockDefined, Xt1Disabled> {
             fll_ref: Selref::Refoclk,
             #[cfg(feature = "enhanced_cs")]
             refo_low_power: false,
+            fll_unlock_reset: false,
         }
     }
 }
 
 impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
+    /// Reset the device with a PUC if the FLL finds the DCO running too fast (FLLULPUC, SLAU445I
+    /// 3.2.9), so MCLK can't run faster than the FRAM wait states allow.
+    /// [`Pmm::take_reset_cause()`](crate::pmm::Pmm::take_reset_cause) then returns
+    /// [`ResetCause::FllUnlock`](crate::pmm::ResetCause::FllUnlock).
+    ///
+    /// Only applies when MCLK runs from the DCO. It takes effect once the FLL has locked, at the end
+    /// of `freeze()`.
+    #[inline]
+    pub fn reset_on_fll_unlock(mut self) -> Self {
+        self.fll_unlock_reset = true;
+        self
+    }
+
     /// Select REFOCLK for ACLK
     #[inline]
     pub fn aclk_refoclk(mut self) -> Self {
@@ -1336,6 +1352,12 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         // here: this must never hang post-configuration.
         clear_osc_faults();
         unsafe { configure_fram(fram, self.mclk_freq()) };
+        if self.fll_unlock_reset && matches!(self.mclk.0, MclkSel::Dcoclk(_)) {
+            let cs = &self.periph;
+            // Clear a flag left from the DCO configuration first, or it resets the device right away
+            unsafe { cs.csctl7().clear_bits(|w| w.fllulifg().clear_bit()) };
+            unsafe { cs.csctl7().set_bits(|w| w.fllulpuc().set_bit()) };
+        }
         true
     }
 }

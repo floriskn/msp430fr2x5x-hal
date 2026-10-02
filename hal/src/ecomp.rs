@@ -1,7 +1,7 @@
 //! Enhanced Comparator (eCOMP)
 //!
 //! The enhanced comparator peripheral consists of a comparator with configurable inputs - including
-//! a pair of GPIO pins, a low power 1.2V reference, the outputs of two separate Smart Analog Combo
+//! GPIO pins, a low power 1.2V reference, on the MSP430FR235x the outputs of two Smart Analog Combo
 //! (SAC) amplifiers, and a 6-bit DAC. The comparator output can be read by software and/or routed
 //! to a GPIO pin.
 //!
@@ -27,12 +27,15 @@
 //! eCOMP's internal DAC: [`ComparatorDacConfig`], and the other for the comparator itself: [`ComparatorConfig`].
 //! If the DAC is not used then it need not be configured.
 //!
-//! Linked pins and peripherals:
+//! Linked pins and peripherals (data sheets, eCOMP input and output channel connections):
 //!
-//! |        | SACp | SACn | COMPx.0 | COMPx.1 | COMPxOut |
-//! |:------:|:----:|:----:|:-------:|:-------:|:--------:|
-//! | eCOMP0 | SAC0 | SAC1 | `P1.0`  | `P1.1`  | `P2.0`   |
-//! | eCOMP1 | SAC2 | SAC3 | `P2.5`  | `P2.4`  | `P2.1`   |
+//! | Device       |        | SAC (+) | SAC (-) | COMPx.0 | COMPx.1 | COMPx.2 | COMPx.3 | COMPxOut |
+//! |:------------:|:------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|
+//! | MSP430FR2x5x | eCOMP0 | SAC0    | SAC2    | `P1.0`  | `P1.1`  |         |         | `P2.0`   |
+//! | MSP430FR2x5x | eCOMP1 | SAC1    | SAC3    | `P2.5`  | `P2.4`  |         |         | `P2.1`   |
+//! | MSP430FR247x | eCOMP0 |         |         | `P1.1`  | `P2.2`  | `P5.7`  | `P6.0`  | `P3.4`   |
+//!
+//! Only the MSP430FR2355 and MSP430FR2353 have SACs.
 
 pub use crate::device_specific::ecomp::{NegativeInput, PositiveInput};
 use crate::{
@@ -71,7 +74,7 @@ impl<COMP: ECompInputs> ComparatorConfig<COMP, NoModeSet> {
     }
 }
 impl<COMP: ECompInputs> ComparatorConfig<COMP, ModeSet> {
-    /// Route the comparator output to its GPIO pin (P2.0 for COMP0, P2.1 for COMP1).
+    /// Route the comparator output to its GPIO pin (see the table in the module documentation).
     #[inline(always)]
     pub fn with_output_pin(self, _pin: COMP::COMPx_Out) -> Comparator<COMP> {
         Comparator(PhantomData)
@@ -226,11 +229,11 @@ pub enum Hysteresis {
 pub enum PowerMode {
     /// eCOMP0: 1us @ 24 uA.
     ///
-    /// eCOMP1: 100ns @ 162 uA
+    /// eCOMP1 (MSP430FR2x5x only): 100ns @ 162 uA
     HighSpeed,
     /// eCOMP0: 3.2us @ 1.6uA.
     ///
-    /// eCOMP1: 320ns @ 10uA
+    /// eCOMP1 (MSP430FR2x5x only): 320ns @ 10uA
     LowPower,
 }
 impl From<PowerMode> for bool {

@@ -24,12 +24,12 @@ msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b",
 msp430fr2475 = ["247x"]           # 6kB RAM
 msp430fr2476 = ["247x"]           # 8kB RAM
 msp430fr2512 = ["25x2"]           # 2kB RAM up to 8 self-capacitive and 16 mutual-capacitive sensors
-msp430fr2522 = ["25x2"]           # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
+msp430fr2522 = ["25x2", "frwpoa"] # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
 
 # Derived features. Do not provide these.
-2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk"]
+2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk", "frwpoa"]
 247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "rtc_aclk"]
-25x2 = ["dep:msp430fr25x2", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "eusci_b", "rtc_aclk"]
+25x2 = ["dep:msp430fr25x2", "eusci_aclk", "info_mem", "adc", "adcpctl", "eusci_b", "rtc_aclk"]
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
 eusci_modclk = [] # eUSCI peripherals can source from MODCLK
 adc12bit = ["adc"]
@@ -47,6 +47,7 @@ vloclk_source = [] # ACLK can be sourced from VLOCLK (data sheet: ACLK from XT1,
 xt1_high_frequency = [] # XT1 supports 1 MHz to 24 MHz crystals and inputs besides 32 kHz (data sheet: XT1 up to 24 MHz)
 enhanced_cs = [] # Enhanced clock system: 20/24 MHz DCO, XT1FAULTOFF, low-power REFO (SLAU445I Table 3-1)
 rtc_aclk = [] # RTC can be sourced from ACLK, through SYSCFG2.RTCCKSEL (data sheet: clock distribution)
+frwpoa = [] # Part of the program FRAM can be left writable, through SYSCFG0.FRWPOA (SLAU445I 1.16, SYSCFG0)
 
 [dependencies]
 defmt = {version = "1.0", optional = true }
@@ -56,6 +57,7 @@ msp430fr2433 = { version = "0.2", features = ["rt", "critical-section"], optiona
 msp430fr247x = { version = "0.3.3", features = ["rt", "critical-section"], optional = true }
 msp430fr25x2 = { version = "0.3.3", features = ["rt", "critical-section"], optional = true }
 nb = "1.1"
+critical-section = "1.0.0"
 void = { version = "1.0.2", default-features = false, optional = true }
 embedded-hal-02 = { package = 'embedded-hal', version = "0.2.7", features = ["unproven"], optional = true }
 embedded-hal = { version = "1.0" }

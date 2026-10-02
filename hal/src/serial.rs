@@ -1,6 +1,19 @@
 //! Serial UART
 //!
-//! The peripherals E_USCI_A0 and E_USCI_A1 can be used as serial UARTs.
+//! The eUSCI_A peripherals can be used as serial UARTs. Pins used (pins with `RemappedMapping` in brackets):
+//!
+//! | Device       | eUSCI | TXD             | RXD             | External clock  |
+//! |:-------------|:-----:|:---------------:|:---------------:|:---------------:|
+//! | MSP430FR2x5x | A0    | `P1.7`          | `P1.6`          | `P1.5`          |
+//! | MSP430FR2x5x | A1    | `P4.3`          | `P4.2`          | `P4.1`          |
+//! | MSP430FR2433 | A0    | `P1.4`          | `P1.5`          | `P1.6`          |
+//! | MSP430FR2433 | A1    | `P2.6`          | `P2.5`          | `P2.4`          |
+//! | MSP430FR247x | A0    | `P1.4` (`P5.2`) | `P1.5` (`P5.1`) | `P1.6` (`P5.0`) |
+//! | MSP430FR247x | A1    | `P2.6`          | `P2.5`          | `P2.4`          |
+//! | MSP430FR25x2 | A0    | `P1.4` (`P2.0`) | `P1.5` (`P2.1`) | `P1.6`          |
+//!
+//! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
+//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
 //!
 //! Begin configuration by calling [`SerialConfig::new()`]. After configuration, [`Rx`] and/or [`Tx`] structs are produced by
 //! providing the corresponding GPIO pins.
@@ -20,7 +33,9 @@
 //! [`Read::read_exact`](embedded_io::Read::read_exact) methods are useful.
 //!
 
-use crate::clock::{Aclk, Clock, Smclk};
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::Aclk;
+use crate::clock::{Clock, Smclk};
 use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
@@ -148,11 +163,15 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     fn configure_pin_mapping() {}
 }
 
+// The pin's alternate function defaults to Alternate1
 macro_rules! impl_serial_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
-        impl<DIR> From<Pin<$port, $pin, Alternate1<DIR>>> for $struct_name {
+        impl_serial_pin!($struct_name, $port, $pin, Alternate1);
+    };
+    ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
             #[inline(always)]
-            fn from(_val: Pin<$port, $pin, Alternate1<DIR>>) -> Self { $struct_name }
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
         }
     };
 }
@@ -232,6 +251,10 @@ where
 
     /// Configure serial UART to use external UCLK, passing in the appropriately configured pin
     /// used as the clock signal as well as the frequency of the clock.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (user's guide).
     #[inline(always)]
     pub fn use_uclk<P: Into<USCI::ClockPin>>(
         self,
@@ -249,6 +272,10 @@ where
 
     #[cfg(feature = "eusci_aclk")]
     /// Configure serial UART to use ACLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (user's guide).
     #[inline(always)]
     pub fn use_aclk(self, aclk: &Aclk) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -262,6 +289,10 @@ where
 
     #[cfg(feature = "eusci_modclk")]
     /// Configure serial UART to use MODCLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (user's guide).
     #[inline(always)]
     pub fn use_modclk(self) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -277,6 +308,10 @@ where
     }
 
     /// Configure serial UART to use SMCLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (user's guide).
     #[inline(always)]
     pub fn use_smclk(self, smclk: &Smclk) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -298,8 +333,11 @@ struct BaudConfig {
 
 #[inline]
 fn calculate_baud_config(clk_freq: u32, bps: NonZeroU32) -> BaudConfig {
+    // In low-frequency mode the baud rate can be at most a third of the clock (user's guide,
+    // low-frequency baud-rate generation)
+    assert!(clk_freq / bps.get() >= 3, "baud rate above a third of the UART clock");
     // Ensure n stays within the 16 bit boundary
-    let n = (clk_freq / bps).clamp(1, 0xFFFF);
+    let n = (clk_freq / bps).min(0xFFFF);
 
     let brs = lookup_brs(clk_freq, bps);
 
@@ -406,6 +444,9 @@ where
             // We want erroneous bytes to trigger RXIFG so all errors can be caught
             ucrxeie: true,
         });
+        // Everything is configured while UCSWRST is set, then the eUSCI is released (user's guide,
+        // eUSCI_A initialization)
+        usci.ctl0_clear_rst();
     }
 
     /// Perform hardware configuration and split into Tx and Rx pins from appropriate GPIOs

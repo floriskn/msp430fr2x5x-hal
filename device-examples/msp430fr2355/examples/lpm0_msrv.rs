@@ -1,8 +1,6 @@
 #![no_main]
 #![no_std]
 #![feature(abi_msp430_interrupt)]
-#![feature(asm_experimental_arch)]
-#![feature(naked_functions)]
 
 // NOTE: Historically there was no way to return the CPU to active mode after entering a low power mode,
 // the MSP restores the CPU to active mode during an interrupt but turns it off afterwards.

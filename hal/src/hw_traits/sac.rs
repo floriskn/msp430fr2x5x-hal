@@ -8,11 +8,13 @@ pub trait SacPeriph {
     type OutputPin;
     fn configure_sacoa(psel: u8, nsel: NSel, pm: bool);
     fn configure_sacpga(gain: u8, mode: MSel);
-    fn configure_dac(load_condition: u8, vref: bool);
+    fn configure_dac(load_condition: u8, vref: bool, interrupts: bool);
     fn set_dac_count(val: u16);
+    /// Reads SACxIV, which clears DACIFG. 4 if the DAC loaded new data.
+    fn dac_iv() -> u16;
 }
 
-// Our PositiveInput enum coincides exactly with PSel, so no need for a separate enum
+// The sac module's input enums give the PSEL value of each source, so no need for a separate enum
 
 #[derive(Debug, Copy, Clone)]
 pub enum NSel {
@@ -34,7 +36,7 @@ macro_rules! impl_sac_periph {
         $pos_port: ident, $pos_pin: ident, // Positive input
         $neg_port: ident, $neg_pin: ident, // Negative input
         $out_port: ident, $out_pin: ident, // Output 
-        $sacXoa: ident, $sacXpga: ident, $sacXdac: ident, $sacXdat: ident) => {
+        $sacXoa: ident, $sacXpga: ident, $sacXdac: ident, $sacXdat: ident, $sacXiv: ident) => {
         impl SacPeriph for $SAC {
             type PosInputPin = Pin<$pos_port, $pos_pin, Alternate3<Input<Floating>>>;
             type NegInputPin = Pin<$neg_port, $neg_pin, Alternate3<Input<Floating>>>;
@@ -64,14 +66,14 @@ macro_rules! impl_sac_periph {
                 }
             }
             #[inline(always)]
-            fn configure_dac(lsel: u8, vref: bool) {
+            fn configure_dac(lsel: u8, vref: bool, interrupts: bool) {
                 unsafe {
                     let sac = $SAC::steal();
                     sac.$sacXdac().write(|w| w
                         .dacsref().bit(vref)
                         .daclsel().bits(lsel)
                         .dacdmae().clear_bit()
-                        .dacie().clear_bit()
+                        .dacie().bit(interrupts)
                         .dacen().set_bit()
                     );
                 }
@@ -82,6 +84,10 @@ macro_rules! impl_sac_periph {
                     let sac = $SAC::steal();
                     sac.$sacXdat().write(|w| w.dacdata().bits(val));
                 }
+            }
+            #[inline(always)]
+            fn dac_iv() -> u16 {
+                unsafe { $SAC::steal() }.$sacXiv().read().bits()
             }
         }
     };

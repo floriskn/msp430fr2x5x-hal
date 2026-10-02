@@ -1,7 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(abi_msp430_interrupt)]
-#![feature(asm_experimental_arch)]
 
 // This examples enters LPM4.5, then when a button on P2.3 is pressed the system wakes and flashes the red LED.
 

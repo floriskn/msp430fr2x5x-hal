@@ -327,15 +327,10 @@ impl<T: CapCmp<C>, C> CapturePin for Capture<T, C> {
     #[inline]
     fn capture(&mut self) -> nb::Result<Self::Capture, Self::Error> {
         let timer = unsafe { T::steal() };
-        let (cov, ccifg) = timer.cov_ccifg_rd();
-        if ccifg {
+        if timer.ccifg_rd() {
             let ccrn = timer.get_ccrn();
-            timer.cov_ccifg_clr();
-            if cov {
-                Err(nb::Error::Other(OverCapture(ccrn)))
-            } else {
-                Ok(ccrn)
-            }
+            timer.ccifg_clr();
+            read_overcapture::<T, C>(ccrn).map_err(nb::Error::Other)
         } else {
             Err(nb::Error::WouldBlock)
         }
@@ -355,6 +350,34 @@ impl<T: CapCmp<C>, C> Capture<T, C> {
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
+    }
+}
+
+/// Check COV after reading a capture and clearing its CCIFG. A capture that arrives between the
+/// read and the clear finds CCIFG still set and sets COV, so it is reported as an overcapture
+/// instead of being lost silently.
+#[inline(always)]
+fn read_overcapture<T: CapCmp<C>, C>(ccrn: u16) -> Result<u16, OverCapture> {
+    let timer = unsafe { T::steal() };
+    let (cov, _) = timer.cov_ccifg_rd();
+    if cov {
+        timer.cov_clr();
+        Err(OverCapture(ccrn))
+    } else {
+        Ok(ccrn)
+    }
+}
+
+impl<T: CapCmp<CCR0>> Capture<T, CCR0> {
+    /// Read the capture from CCR0's own interrupt handler.
+    ///
+    /// CCR0 has a dedicated interrupt vector, and its capture flag is cleared automatically when
+    /// that interrupt is serviced, so `capture()` finds nothing there. Only call this from the
+    /// CCR0 interrupt handler: anywhere else it returns the last capture again.
+    #[inline]
+    pub fn interrupt_capture(&mut self) -> Result<u16, OverCapture> {
+        let timer = unsafe { T::steal() };
+        read_overcapture::<T, CCR0>(timer.get_ccrn())
     }
 }
 
@@ -393,14 +416,7 @@ impl<T: CapCmp<C>, C> InterruptCapture<T, C> {
     #[inline]
     pub fn interrupt_capture(self, _cap: &mut Capture<T, C>) -> Result<u16, OverCapture> {
         let timer = unsafe { T::steal() };
-        let (cov, _) = timer.cov_ccifg_rd();
-        let ccrn = timer.get_ccrn();
-        if cov {
-            timer.cov_ccifg_clr();
-            Err(OverCapture(ccrn))
-        } else {
-            Ok(ccrn)
-        }
+        read_overcapture::<T, C>(timer.get_ccrn())
     }
 }
 

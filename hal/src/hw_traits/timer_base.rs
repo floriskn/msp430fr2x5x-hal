@@ -135,6 +135,7 @@ pub trait CCRn<C>: Steal {
 
     fn cov_ccifg_rd(&self) -> (bool, bool);
     fn cov_ccifg_clr(&self);
+    fn cov_clr(&self);
 }
 
 /// Label for capture-compare register 0
@@ -194,6 +195,11 @@ macro_rules! ccrn_impl {
             fn cov_ccifg_rd(&self) -> (bool, bool) {
                 let cctl = self.$tbxcctln().read();
                 (cctl.cov().bit(), cctl.ccifg().bit())
+            }
+
+            #[inline(always)]
+            fn cov_clr(&self) {
+                unsafe { self.$tbxcctln().clear_bits(|w| w.cov().clear_bit()) };
             }
 
             #[inline(always)]

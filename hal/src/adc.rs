@@ -14,12 +14,20 @@
 //! Currently the only supported ADC voltage reference is `AVCC`, the operating voltage of the MSP430.
 //!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
-//! to ensure it's been correctly configured. The ADC may read from any of the following pins:
+//! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
 //!
-//! P1.0 - P1.7 (channels 0 to 7), P5.0 - P5.3 (channels 8 to 11).
+//! | Device       | Resolution | Channels 0 to 7 | Channels 8 to 11            | Pin mode          |
+//! |--------------|------------|-----------------|-----------------------------|-------------------|
+//! | MSP430FR2x5x | 12-bit     | P1.0 to P1.7    | P5.0 to P5.3                | `to_alternate3()` |
+//! | MSP430FR247x | 12-bit     | P1.0 to P1.7    | P4.3, P4.4, P5.3, P5.4      | `to_alternate3()` |
+//! | MSP430FR2433 | 10-bit     | P1.0 to P1.7    |                             | `to_adc_mode()`   |
+//! | MSP430FR25x2 | 10-bit     | P1.0 to P1.3, P2.2 to P2.5 |                  | `to_adc_mode()`   |
+//!
+//! On the MSP430FR2433 and MSP430FR25x2 the analog inputs are enabled through SYSCFG2.ADCPCTLx instead of the
+//! pin's function select bits, which is what `to_adc_mode()` does.
 //!
 //! ADC channels 12 to 15 are not associated with external pins, so instead channels 12 and 13 can be read by passing a
-//! reference to [`InternalVRef`] or [`InternalTempSensor`] respectively. Channels 14 and 15 require no prior
+//! reference to [`InternalTempSensor`] or [`InternalVRef`] respectively. Channels 14 and 15 require no prior
 //! configuration, so the two functions below provide a reference that can be used to read from these channels.
 
 use crate::_pac;
@@ -384,14 +392,15 @@ impl AdcConfig<ClockSet> {
             .adcsr().bit(adcsr) 
         }});
 
-        Adc { adc_reg, is_waiting: false }
+        Adc { adc_reg, pending: None }
     }
 }
 
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
 pub struct Adc {
     adc_reg: _pac::Adc,
-    is_waiting: bool,
+    /// Channel of the conversion that was started but not read yet
+    pending: Option<u8>,
 }
 
 impl Adc {
@@ -433,13 +442,17 @@ impl Adc {
     /// Begins a single ADC conversion if one isn't already underway, enabling the ADC in the process.
     ///
     /// If the result is ready it is returned as an ADC count, otherwise returns `WouldBlock`
+    ///
+    /// A conversion that is still pending for another channel is finished first and its result
+    /// discarded.
     pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
     where PIN: Channel<Self, ID = u8> {
-        if self.is_waiting {
+        if let Some(pending) = self.pending {
             if self.adc_is_busy() {
                 return Err(nb::Error::WouldBlock);
-            } else {
-                self.is_waiting = false;
+            }
+            self.pending = None;
+            if pending == PIN::channel() {
                 return Ok(self.adc_get_result());
             }
         }
@@ -448,22 +461,24 @@ impl Adc {
         self.enable();
 
         self.start_conversion();
-        self.is_waiting = true;
+        self.pending = Some(PIN::channel());
         Err(nb::Error::WouldBlock)
     }
 
     /// Convert an ADC count to a voltage value in millivolts.
     ///
-    /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts.
+    /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. The full-scale count
+    /// (255, 1023 or 4095) corresponds to the reference voltage (user's guide, ADC conversion
+    /// formula).
     pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
-        let resolution = match self.adc_reg.adcctl2().read().adcres().variant() {
-            Adcres::Adcres0 => 256,  //  8-bit
-            Adcres::Adcres1 => 1024, // 10-bit
-            Adcres::Adcres2 => 4096, // 12-bit
-            Adcres::Adcres3 => 4096, // Reserved, unreachable
+        let full_scale = match self.adc_reg.adcctl2().read().adcres().variant() {
+            Adcres::Adcres0 => 255,  //  8-bit
+            Adcres::Adcres1 => 1023, // 10-bit
+            Adcres::Adcres2 => 4095, // 12-bit
+            Adcres::Adcres3 => 4095, // Reserved, unreachable
         };
-        ((count as u32 * ref_voltage_mv as u32) / resolution) as u16
+        ((count as u32 * ref_voltage_mv as u32) / full_scale) as u16
     }
 
     /// Begins a single ADC conversion if one isn't already underway, enabling the ADC in the process.

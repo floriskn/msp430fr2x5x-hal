@@ -30,16 +30,34 @@
 //! [`SpiSlave`] provides non-blocking methods that can be used for polling or interrupt-based implementations.
 //! It does not implement either of the embedded-hal traits.
 //!
-//! Pins used:
+//! Pins used (pins with `RemappedMapping` in brackets):
 //!
-//! |          |  MISO  |  MOSI  |  SCLK  |  STE  |
-//! |:--------:|:------:|:------:|:------:|:-----:|
-//! | eUSCI_A0 | `P1.6` | `P1.7` | `P1.5` | `P1.4`|
-//! | eUSCI_A1 | `P4.2` | `P4.3` | `P4.1` | `P4.0`|
-//! | eUSCI_B0 | `P1.3` | `P1.2` | `P1.1` | `P1.0`|
-//! | eUSCI_B1 | `P4.7` | `P4.6` | `P4.5` | `P4.4`|
+//! | Device       | eUSCI | MISO          | MOSI          | SCLK          | STE           |
+//! |:-------------|:-----:|:-------------:|:-------------:|:-------------:|:-------------:|
+//! | MSP430FR2x5x | A0    | `P1.6`        | `P1.7`        | `P1.5`        | `P1.4`        |
+//! | MSP430FR2x5x | A1    | `P4.2`        | `P4.3`        | `P4.1`        | `P4.0`        |
+//! | MSP430FR2x5x | B0    | `P1.3`        | `P1.2`        | `P1.1`        | `P1.0`        |
+//! | MSP430FR2x5x | B1    | `P4.7`        | `P4.6`        | `P4.5`        | `P4.4`        |
+//! | MSP430FR2433 | A0    | `P1.5`        | `P1.4`        | `P1.6`        | `P1.7`        |
+//! | MSP430FR2433 | A1    | `P2.5`        | `P2.6`        | `P2.4`        | `P3.1`        |
+//! | MSP430FR2433 | B0    | `P1.3`        | `P1.2`        | `P1.1`        | `P1.0`        |
+//! | MSP430FR247x | A0    | `P1.5` (`P5.1`) | `P1.4` (`P5.2`) | `P1.6` (`P5.0`) | `P1.7` (`P4.7`) |
+//! | MSP430FR247x | A1    | `P2.5`        | `P2.6`        | `P2.4`        | `P3.1`        |
+//! | MSP430FR247x | B0    | `P1.3` (`P4.5`) | `P1.2` (`P4.6`) | `P1.1` (`P5.5`) | `P1.0` (`P5.6`) |
+//! | MSP430FR247x | B1    | `P3.6` (`P4.3`) | `P3.2` (`P4.4`) | `P3.5` (`P5.3`) | `P2.7` (`P5.4`) |
+//! | MSP430FR25x2 | A0    | `P1.5` (`P2.1`) | `P1.4` (`P2.0`) | `P1.6`        | `P1.7`        |
+//! | MSP430FR25x2 | B0    | `P1.3` (`P2.6`) | `P1.2` (`P2.5`) | `P1.1` (`P2.4`) | `P1.0` (`P2.3`) |
+//!
+//! Some packages lack pins: on the MSP430FR2433 in the DSBGA (YQW) package, eUSCI_A1 has no SCLK and STE pins,
+//! and on the MSP430FR2x5x in the VQFN-32 (RSM) package eUSCI_B1 only supports I2C (data sheets, device
+//! comparison and pin attributes).
+//!
+//! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
+//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::Aclk;
 use crate::{
-    clock::{Aclk, Smclk},
+    clock::Smclk,
     hw_traits::eusci::{EusciSPI, Ucmode, Ucssel, UcxSpiCtw0},
     pin_mapping::*,
 };
@@ -65,11 +83,15 @@ pub trait SpiUsci<M: PinMap = DefaultMapping>: EusciSPI {
 }
 
 // Allows a GPIO pin to be converted into an SPI object
+// The pin's alternate function defaults to Alternate1
 macro_rules! impl_spi_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
-        impl<DIR> From<Pin<$port, $pin, Alternate1<DIR>>> for $struct_name {
+        impl_spi_pin!($struct_name, $port, $pin, Alternate1);
+    };
+    ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
             #[inline(always)]
-            fn from(_val: Pin<$port, $pin, Alternate1<DIR>>) -> Self { $struct_name }
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
         }
     };
 }
@@ -390,8 +412,9 @@ where
         let intrs = self.usci.ie_rd();
         self.usci.ctw0_set_rst();
         self.usci.set_spi_mode(mode);
-        self.usci.ie_wr(intrs);
         self.usci.ctw0_clear_rst();
+        // The interrupt enables are held cleared while the eUSCI is in reset
+        self.usci.ie_wr(intrs);
     }
 }
 

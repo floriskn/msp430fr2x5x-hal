@@ -6,7 +6,9 @@ pub trait Steal {
 pub mod ecomp;
 pub mod eusci;
 pub mod gpio;
+#[cfg(feature = "sac")]
 pub mod sac;
 pub mod timer_a;
+#[cfg(any(feature = "2x5x", feature = "247x"))]
 pub mod timer_b;
 pub mod timer_base;

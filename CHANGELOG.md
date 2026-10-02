@@ -25,6 +25,37 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed LPM3.5 entry stopping XT1 on devices other than the MSP430FR2x5x, and not resetting `P2SEL1`. LPMx.5 entry now also clears ACLKREQEN, as the user's guide requires.
 - Fixed `delay_ns()` and `delay_us()` never waiting longer than 1 ms.
 - Fixed the TB0 clock input pin (TB0CLK) on the MSP430FR247x, which is P6.1, not P2.7.
+- Fixed `InfoMemory::write()` and `into_unprotected()` switching off the program FRAM write protection (PFWP) until the next reset. `write()` now runs with interrupts disabled, as the user's guide recommends.
+- Fixed `Spi::change_mode()` disabling the SPI interrupts.
+- Fixed pin remapping on the MSP430FR247x and MSP430FR25x2 resetting the rest of SYSCFG2/SYSCFG3: setting up eUSCI_B0 switched an RTC on ACLK to SMCLK (and cleared the ADC input enables on the MSP430FR25x2), and the eUSCI_A0, eUSCI_B1, TA2 and TA3 remaps undid each other.
+- Breaking: the MSP430FR25x2 ADC is 10-bit with a 1.5 V reference only, so `Resolution::_12BIT` and `ReferenceVoltage::_2V0`/`_2V5` are no longer available there. Its analog inputs are now enabled with `to_adc_mode()` (SYSCFG2.ADCPCTLx), as on the MSP430FR2433; `Alternate3` selected CapTIvate.
+- Fixed on the MSP430FR25x2: 256 bytes of information memory, remapped eUSCI_B0 pins on alternate function 2, and pin functions as in the data sheet (CAP1.x only on the MSP430FR2522).
+- Fixed on the MSP430FR2x5x: eCOMP input pins on alternate function 3, pin directions as in the data sheet, and the SAC op-amp pins on P3 only on the MSP430FR235x.
+- Fixed on the MSP430FR247x: PWM on TA2/TA3 with `RemappedMapping` uses the remapped pins (`PwmPeriph`, `PwmUninit` and `Pwm` take the pin mapping), the TB0 CCR6 capture input is P4.4, and the TA3 CCR2 PWM pin P3.7 uses alternate function 1.
+- Fixed on the MSP430FR2433: TA1 capture inputs on P1.5/P1.4, ACLK output on P2.2 on alternate function 2, and the eUSCI_A1 SPI STE pin (P3.1) added.
+- Fixed the MODCLK frequency constants, now the data sheets' typical values: 4.8 MHz on the MSP430FR2433 and MSP430FR25x2, 3.8 MHz on the MSP430FR247x.
+- Add `Capture::interrupt_capture()` for CCR0, whose capture flag is cleared when its own interrupt is serviced. Captures arriving while a capture is read are now reported as overcaptures instead of being lost.
+- GPIO batches now turn pin interrupts off while reconfiguring a port, and switch pins whose two function select bits both change through PxSELC. Pins a device doesn't have start out `Unavailable` and can't be used.
+- Add `to_output_low()` and `to_output_high()` for GPIO pins, since PxOUT is undefined after a reset.
+- PWM `max_duty_cycle()` and `get_max_duty()` now return the period (CCR0 + 1), so the maximum duty cycle is 100 %.
+- `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
+- The PMM is unlocked and locked again around each register write, and `enable_internal_reference()` waits until the reference has settled.
+- ADC: `read_count()` no longer returns the result of a pending conversion of another channel, and `count_to_mv()` scales by the full-scale count (2^n - 1).
+- UART: the eUSCI is configured while held in reset, and a baud rate above a third of the clock panics instead of being clamped.
+- I2C: clock divisors below the user's guide minimum (4, or 8 with several masters) panic, and `zero_byte_write()` sets START and STOP together. Breaking: `send_nack()` is only available in slave roles.
+- Breaking: `Wdt::wait()` is only available in interval mode.
+- `WdtClkPeriods` and `SvsState` are HAL enums with the same variants on every device. `WdtClkPeriods::_2048m` and `SvsState::Svshe0`/`Svshe1` remain as aliases.
+- Add `enter_lpm0_with_interrupts()`, `request_lpm3_with_interrupts()` and `request_lpm4_with_interrupts()`, which enable interrupts in the same instruction that starts the sleep. Entering a low-power mode is now a compiler barrier.
+- Breaking: the SAC amplifier modes only accept the inputs the user's guide supports (SLAU445I Table 20-1). `PositiveInput`, for the open-loop and non-inverting modes, no longer has a `Dac` variant; the inverting amplifier takes a `BiasInput` (OA+ or the DAC) and the buffer a `BufferInput` (OA+, the DAC or the paired amplifier).
+- Add `DacConfig::configure_with_interrupts()` and `Dac::data_loaded()`, for the SAC DAC interrupt that requests new data after a timer-triggered load.
+- Add `Pwm::duty()`, `Pwm::enable()` and `Pwm::disable()`, which were only available through embedded-hal 0.2.
+- The example projects now link `libmul_f5`, so multiplication uses the hardware multiplier (MPY32): 16-bit products are about 5 times and 32/64-bit products about 10 times faster than with `libmul_none`. The commented-out `libmul_32` used the register addresses of other devices, which are PM5CTL0 here.
+- Add the `sys` module. `SysParts` gives the RST/NMI pin (reset or NMI mode, pull resistor, reset filter, NMI edge and interrupt), the vacant memory access interrupt and the JTAG mailbox (16 and 32-bit transfers). `sys::take_nmi_pin_interrupt()` and `sys::take_system_nmi()` serve the `UNMI` and `SYSNMI` interrupt handlers.
+- Add `Pmm::take_reset_cause()`, which reports why the device reset, `Pmm::software_bor()` and `Pmm::software_por()`, and `Pmm::set_svsh()` to turn the high-side supply voltage supervisor off in LPM2 to LPM4.
+- Add FRAM bit error handling: `Fram::set_uncorrectable_bit_error_action()` resets the device or requests the system NMI for errors the FRAM can't correct, and `Fram::enable_correctable_bit_error_interrupts()` reports corrected ones.
+- Add `Fram::set_writable_program_fram()` on the MSP430FR2x5x and MSP430FR2522, which leaves the start of program FRAM writable (FRWPOA).
+- Add `ClockConfig::reset_on_fll_unlock()`, which resets the device if the DCO runs too fast for the FLL.
+- Fixed `Fram::set_wait_states()` leaving the FRAM controller registers unlocked.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

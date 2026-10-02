@@ -22,14 +22,15 @@
 //! - A unity-gain buffer / voltage follower:
 #![doc= include_str!("../docs/sac_buffer.svg")]
 //!
-//! In all modes the positive input to the amplifier can be connected to:
-//! - The external pin OA+,
-//! - An internal 12-bit DAC,
-//! - The output of the paired SAC opamp.
+//! The amplifier inputs can be connected to the external pins OA+ and OA-, the SAC's 12-bit DAC or the output of
+//! the paired SAC amplifier. Each mode supports some of these sources (user's guide, Table 20-1):
 //!
-//! In the open-loop or inverting configuration, the negative input of the amplifier can be connected to:
-//! - The external pin OA-,
-//! - The output of the paired SAC opamp.
+//! | Mode                    | Positive input                         | Negative input                                    |
+//! |:-----------------------:|:--------------------------------------:|:-------------------------------------------------:|
+//! | Open-loop opamp         | OA+ or the paired amplifier            | OA- or the paired amplifier                       |
+//! | Inverting amplifier     | OA+ or the DAC, which set the bias     | OA- or the paired amplifier, through the gain resistors |
+//! | Non-inverting amplifier | OA+ or the paired amplifier            | The gain resistors                                |
+//! | Buffer                  | OA+, the DAC or the paired amplifier   | The output                                        |
 //!
 //! The output of the amplifier can either be routed to the external pin OAO,
 //! or used internally with the enhanced comparator module.
@@ -73,7 +74,17 @@ impl<SAC: SacPeriph> DacConfig<SAC> {
     /// Initialise the DAC within this SAC with the provided values.
     #[inline(always)]
     pub fn configure<'a>(self, vref: VRef<'a>, load_trigger: LoadTrigger<'_>) -> Dac<'a, SAC> {
-        SAC::configure_dac(load_trigger.into(), vref.into());
+        SAC::configure_dac(load_trigger.into(), vref.into(), false);
+        Dac { sac: PhantomData, vref_lifetime: PhantomData }
+    }
+
+    /// Initialise the DAC like [`configure()`](Self::configure), and request an interrupt each time the DAC loads a
+    /// new value: `SAC0_SAC2` for SAC0 and SAC2, `SAC1_SAC3` for SAC1 and SAC3.
+    /// Only the timer load triggers load values this way, so the interrupt is never requested with [`LoadTrigger::Immediate`].
+    /// Clear the request with [`Dac::data_loaded()`].
+    #[inline(always)]
+    pub fn configure_with_interrupts<'a>(self, vref: VRef<'a>, load_trigger: LoadTrigger<'_>) -> Dac<'a, SAC> {
+        SAC::configure_dac(load_trigger.into(), vref.into(), true);
         Dac { sac: PhantomData, vref_lifetime: PhantomData }
     }
 }
@@ -129,6 +140,14 @@ impl<SAC: SacPeriph> Dac<'_, SAC> {
     /// The value is masked with `0xFFF` before being written to the register.
     #[inline(always)]
     pub fn set_count(&mut self, count: u16) { SAC::set_dac_count(count); }
+
+    /// Whether the DAC has loaded the value set with [`set_count()`](Self::set_count) since the last call (DACIFG),
+    /// so the next value can be set. This clears the flag, and the interrupt request of
+    /// [`DacConfig::configure_with_interrupts()`].
+    ///
+    /// Only the timer load triggers set the flag: with [`LoadTrigger::Immediate`] this is always `false`.
+    #[inline(always)]
+    pub fn data_loaded(&mut self) -> bool { SAC::dac_iv() == 0x04 }
 }
 
 /// A builder for configuring a Smart Analog Combo (SAC) unit's amplifier
@@ -142,6 +161,8 @@ impl<SAC: SacPeriph> AmpConfig<NoModeSet, SAC> {
     pub fn opamp(
         self,
         pos_in: PositiveInput<SAC>,
+        // Table 20-1 lists only OA- for this mode, but the data sheet's SAC channel tables and section 20.2.1.1 of the
+        // user's guide also connect the paired amplifier to the negative input, which no other mode can select.
         neg_in: NegativeInput<SAC>,
         power_mode: PowerMode,
     ) -> AmpConfig<ModeSet, SAC> {
@@ -149,17 +170,17 @@ impl<SAC: SacPeriph> AmpConfig<NoModeSet, SAC> {
         AmpConfig { mode: PhantomData, reg: PhantomData }
     }
 
-    /// Begin configuring this SAC as an inverting amplifier.
+    /// Begin configuring this SAC as an inverting amplifier. The positive input sets the bias of the output.
     #[inline(always)]
     pub fn inverting_amplifier(
         self,
-        pos_in: PositiveInput<SAC>,
+        bias: BiasInput<SAC>,
         neg_in: NegativeInput<SAC>,
         gain: InvertingGain,
         power_mode: PowerMode,
     ) -> AmpConfig<ModeSet, SAC> {
         SAC::configure_sacpga(gain as u8, neg_in.msel());
-        SAC::configure_sacoa(pos_in.psel(), NSel::Feedback, power_mode.into());
+        SAC::configure_sacoa(bias.psel(), NSel::Feedback, power_mode.into());
         AmpConfig { mode: PhantomData, reg: PhantomData }
     }
 
@@ -180,7 +201,7 @@ impl<SAC: SacPeriph> AmpConfig<NoModeSet, SAC> {
     #[inline(always)]
     pub fn buffer(
         self,
-        source: PositiveInput<SAC>,
+        source: BufferInput<SAC>,
         power_mode: PowerMode,
     ) -> AmpConfig<ModeSet, SAC> {
         SAC::configure_sacpga(0, MSel::Follower);
@@ -200,25 +221,64 @@ impl<SAC: SacPeriph> AmpConfig<ModeSet, SAC> {
     pub fn no_output_pin(self) -> Amplifier<SAC> { Amplifier(PhantomData) }
 }
 
-/// List of possible sources for the amplifier's non-inverting input
+/// List of possible sources for the amplifier's non-inverting input in the open-loop and non-inverting amplifier
+/// modes. The user's guide doesn't support the DAC in these modes (Table 20-1).
 #[derive(Debug)]
-pub enum PositiveInput<'a, SAC: SacPeriph> {
+pub enum PositiveInput<SAC: SacPeriph> {
     /// Use the GPIO pin labelled as OA+ as this amplifier's non-inverting input
     ExtPin(SAC::PosInputPin),
-    /// Use the SAC's Internal DAC as the amplifier's non-inverting input
-    Dac(&'a Dac<'a, SAC>),
     /// Use the output of the paired SAC amplifier as this amplifier's non-inverting input.
     /// It is your responsibility to ensure this amplifier has been configured.
     // We can't require a reference to this Amplifier, as they could both refer to the other which would be impossible to instantiate
     PairedOpamp,
 }
-impl<SAC: SacPeriph> PositiveInput<'_, SAC> {
+impl<SAC: SacPeriph> PositiveInput<SAC> {
     #[inline(always)]
     fn psel(&self) -> u8 {
         match self {
             PositiveInput::ExtPin(_)   => 0b00,
-            PositiveInput::Dac(_)      => 0b01,
             PositiveInput::PairedOpamp => 0b10,
+        }
+    }
+}
+
+/// List of possible sources for the amplifier's non-inverting input in the inverting amplifier mode, which set the bias
+/// of the output. The user's guide doesn't support the paired amplifier in this mode (Table 20-1).
+#[derive(Debug)]
+pub enum BiasInput<'a, SAC: SacPeriph> {
+    /// Use the GPIO pin labelled as OA+ as this amplifier's non-inverting input
+    ExtPin(SAC::PosInputPin),
+    /// Use the SAC's Internal DAC as the amplifier's non-inverting input
+    Dac(&'a Dac<'a, SAC>),
+}
+impl<SAC: SacPeriph> BiasInput<'_, SAC> {
+    #[inline(always)]
+    fn psel(&self) -> u8 {
+        match self {
+            BiasInput::ExtPin(_) => 0b00,
+            BiasInput::Dac(_)    => 0b01,
+        }
+    }
+}
+
+/// List of possible sources for the amplifier's input in the buffer mode
+#[derive(Debug)]
+pub enum BufferInput<'a, SAC: SacPeriph> {
+    /// Use the GPIO pin labelled as OA+ as the buffer input
+    ExtPin(SAC::PosInputPin),
+    /// Use the SAC's Internal DAC as the buffer input
+    Dac(&'a Dac<'a, SAC>),
+    /// Use the output of the paired SAC amplifier as the buffer input.
+    /// It is your responsibility to ensure this amplifier has been configured.
+    PairedOpamp,
+}
+impl<SAC: SacPeriph> BufferInput<'_, SAC> {
+    #[inline(always)]
+    fn psel(&self) -> u8 {
+        match self {
+            BufferInput::ExtPin(_)   => 0b00,
+            BufferInput::Dac(_)      => 0b01,
+            BufferInput::PairedOpamp => 0b10,
         }
     }
 }
