@@ -18,12 +18,12 @@ const TEMP_15V_30C: usize = 0x1A1A;
 /// MSP430FR25x2, measured against the internal reference.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TempSensorCalibration {
-    /// The count at 30 °C
-    pub count_30c: u16,
-    /// The count at [`high_celsius`](TempSensorCalibration::high_celsius)
-    pub count_high: u16,
-    /// The high calibration temperature in °C
-    pub high_celsius: i16,
+    count_30c: u16,
+    count_high: u16,
+    high_celsius: i16,
+    /// Tenths of a degree per count, in 1/65536ths: worked out once, so that each conversion takes a
+    /// multiplication instead of a division, which the MSP430 has no hardware for
+    scale_q16: i32,
 }
 
 impl TempSensorCalibration {
@@ -36,10 +36,28 @@ impl TempSensorCalibration {
         let high_celsius = 105;
         #[cfg(not(feature = "enhanced_ref"))]
         let high_celsius = 85;
-        TempSensorCalibration { count_30c: read(addr), count_high: read(addr + 2), high_celsius }
+        let count_30c = read(addr);
+        let count_high = read(addr + 2);
+        let span = count_high as i32 - count_30c as i32;
+        // A blank calibration (both counts equal) gives 0
+        let scale_q16 = ((high_celsius as i32 - 30) * 10 * 65536).checked_div(span).unwrap_or(0);
+        TempSensorCalibration { count_30c, count_high, high_celsius, scale_q16 }
     }
 
-    /// Convert a reading of the temperature sensor to tenths of a degree Celsius.
+    /// The count at 30 °C
+    #[inline]
+    pub fn count_30c(&self) -> u16 { self.count_30c }
+
+    /// The count at [`high_celsius`](TempSensorCalibration::high_celsius)
+    #[inline]
+    pub fn count_high(&self) -> u16 { self.count_high }
+
+    /// The high calibration temperature in °C
+    #[inline]
+    pub fn high_celsius(&self) -> i16 { self.high_celsius }
+
+    /// Convert a reading of the temperature sensor to tenths of a degree Celsius, rounded to the
+    /// nearest tenth.
     ///
     /// The reading must be taken as the calibration was: against the same internal reference
     /// ([`PositiveReference::Internal`](crate::adc::PositiveReference::Internal)), at the ADC's full
@@ -47,9 +65,10 @@ impl TempSensorCalibration {
     /// with a sample time of at least 30 µs (user's guide 21.2.7.8).
     #[inline]
     pub fn decicelsius(&self, count: u16) -> i16 {
-        let span = self.count_high as i32 - self.count_30c as i32;
         let delta = count as i32 - self.count_30c as i32;
-        (delta * (self.high_celsius as i32 - 30) * 10 / span + 300) as i16
+        // Wrapping, so a garbled calibration gives a garbled value rather than a panic
+        let tenths = delta.wrapping_mul(self.scale_q16).wrapping_add(1 << 15) >> 16;
+        (tenths + 300) as i16
     }
 }
 

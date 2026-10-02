@@ -303,6 +303,21 @@ pub struct NoClockSet;
 /// Typestate for an ADC configuration with a clock source selected
 pub struct ClockSet(ClockSource);
 
+/// `x / (2^BITS - 1)`, rounded down, from shifts: the MSP430 has no divider, and a library division
+/// takes several hundred cycles. `(x + x / 2^BITS) / 2^BITS` is never above the quotient, and at most
+/// one below it for the products `count_to_mv` divides; the loop makes up the difference.
+#[inline(always)]
+fn div_by_full_scale<const BITS: u32>(x: u32) -> u32 {
+    let full_scale = (1 << BITS) - 1;
+    let mut quotient = (x + (x >> BITS)) >> BITS;
+    let mut remainder = x - ((quotient << BITS) - quotient);
+    while remainder >= full_scale {
+        quotient += 1;
+        remainder -= full_scale;
+    }
+    quotient
+}
+
 /// Configuration object for an ADC.
 ///
 /// The default configuration is based on the default register values:
@@ -659,7 +674,7 @@ impl<REF> Adc<REF> {
         Err(nb::Error::WouldBlock)
     }
 
-    /// Convert an ADC count to a voltage value in millivolts.
+    /// Convert an ADC count to a voltage value in millivolts, rounded down.
     ///
     /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. The full-scale count
     /// (255, 1023 or 4095) corresponds to the reference voltage (user's guide, ADC conversion
@@ -680,8 +695,13 @@ impl<REF> Adc<REF> {
         } else {
             count
         };
-        let full_scale = (1u32 << bits) - 1;
-        ((count as u32 * ref_voltage_mv as u32) / full_scale) as u16
+        let product = count as u32 * ref_voltage_mv as u32;
+        let mv = match bits {
+            8 => div_by_full_scale::<8>(product),
+            10 => div_by_full_scale::<10>(product),
+            _ => div_by_full_scale::<12>(product),
+        };
+        mv as u16
     }
 
     /// Begins a single ADC conversion if one isn't already underway, enabling the ADC in the process.

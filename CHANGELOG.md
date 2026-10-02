@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Breaking: `ClockConfig::aclk_vloclk()` is no longer available on the MSP430FR25x2, which can't source ACLK from VLO.
 - Fixed XT1 pins on the MSP430FR2x5x, which need alternate function 2.
 - Fixed LPM3.5 entry stopping XT1 on devices other than the MSP430FR2x5x, and not resetting `P2SEL1`. LPMx.5 entry now also clears ACLKREQEN, as the user's guide requires.
-- Fixed `delay_ns()` and `delay_us()`, which waited whole milliseconds, at most 1 ms. They now wait about the requested time, counted in MCLK cycles.
+- Fixed `delay_ns()` and `delay_us()`, which waited whole milliseconds, at most 1 ms. They now wait the requested time, counted in MCLK cycles, plus about 60 MCLK cycles for the call. `SysDelay` also implements the embedded-hal 0.2 `DelayUs` now.
 - Fixed the TB0 clock input pin (TB0CLK) on the MSP430FR247x, which is P6.1, not P2.7.
 - Fixed `InfoMemory::write()` and `into_unprotected()` switching off the program FRAM write protection (PFWP) until the next reset. `write()` now runs with interrupts disabled, as the user's guide recommends.
 - Fixed `Spi::change_mode()` disabling the SPI interrupts.
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - PWM `max_duty_cycle()` and `get_max_duty()` now return the period (CCR0 + 1), so the maximum duty cycle is 100 %.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - The PMM is unlocked and locked again around each register write, and `enable_internal_reference()` waits until the reference has settled.
-- ADC: `read_count()` no longer returns the result of a pending conversion of another channel, and `count_to_mv()` scales by the full-scale count (2^n - 1).
+- ADC: `read_count()` no longer returns the result of a pending conversion of another channel, and `count_to_mv()` scales by the full-scale count (2^n - 1), with shifts instead of a division.
 - UART: the eUSCI is configured while held in reset, and a baud rate above a third of the clock panics instead of being clamped.
 - I2C: clock divisors below the user's guide minimum (4, or 8 with several masters) panic, and `zero_byte_write()` sets START and STOP together. Breaking: `send_nack()` is only available in slave roles.
 - Breaking: `Wdt::wait()` is only available in interval mode.
@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `ir` module for the infrared modulator: `IrModulator` combines the CCR2 outputs of two timers (from `PwmUninit::into_ir_input()`) and data from software or eUSCI_A0's UART into an ASK or FSK signal on eUSCI_A0's TXD pin. Only one TXD pin carries it, in the pin mapping `ir::IrMapping`: on the MSP430FR247x it's P1.4, as eUSCI_A0's remapped pin P5.2 doesn't. The MSP430FR2476 example `ir_remote` sends NEC remote control frames.
 - Add the `icc` module on the MSP430FR2x5x: the Interrupt Compare Controller, which gives each interrupt source one of four priorities and lets higher priorities interrupt lower ones.
 - Add the `mfm` module on the MSP430FR2x5x: the Manchester Function Module on P5.0 and P5.1, with eUSCI_B1 as its SPI slave through `SpiConfig::mfm_slave()`. Not tested on hardware yet.
-- Add `ClockConfig::mclk_dcoclk_hz()`, which runs the DCO at any frequency from 1 MHz up to the device maximum. The FLL locks to the largest multiple of its reference that doesn't exceed the target, with the DCO in the range whose nominal frequency is closest to it.
+- Add `ClockConfig::mclk_dcoclk_hz()`, which runs the DCO at any frequency from 1 MHz up to the device maximum. The FLL locks to the largest multiple of its reference that doesn't exceed the target, with the DCO in the range whose nominal frequency is closest to it. The MSP430FR2476 example `dco_delay_test` checks it and the delays on the board, with an oscilloscope, and optionally with a function generator as the FLL reference.
 - Fixed `I2cRoleSlave::poll()` panicking when the start flag had been cleared, by reading the interrupt vector say, while a received byte was still unread and the master had started reading. It now reports `OverrunWrite`.
 
 ## [v0.8.0] - 2026-08-14

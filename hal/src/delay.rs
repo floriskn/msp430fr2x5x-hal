@@ -1,15 +1,17 @@
 //! Embedded hal delay implementation
 //!
 //! The delays count MCLK cycles in a loop, so they last at least as long as requested; interrupts
-//! during a delay make it longer.
+//! during a delay make it longer. A microsecond delay takes a multiplication besides, about 60 MCLK
+//! cycles in all (80 with an FRAM wait state), which is 12 µs at 5 MHz and 5 µs at 16 MHz
+//! (measured on an MSP430FR2476).
 
 /// Delay provider struct
 #[derive(Copy, Clone)]
 pub struct SysDelay {
     /// Loop iterations per millisecond
     iters_per_ms: u16,
-    /// Loop iterations per microsecond, in 1/4096ths
-    iters_per_us_q12: u32,
+    /// Loop iterations per microsecond, in 1/65536ths, so a product's high word is whole iterations
+    iters_per_us_q16: u32,
 }
 
 /// MCLK cycles per iteration of the delay loop: `SUB #1, Rn` takes 1 cycle and `JNZ` 2 (SLAU445I 4.5.1.5)
@@ -21,8 +23,9 @@ impl SysDelay {
         // Round up, so delays don't fall short. The clock could be REFOCLK or VLOCLK, so be careful
         // of small frequencies.
         let iters_per_ms = freq.div_ceil(1000 * CYCLES_PER_ITER).max(1) as u16;
-        let iters_per_us_q12 = (freq.div_ceil(1000) * 4096).div_ceil(1000 * CYCLES_PER_ITER);
-        SysDelay { iters_per_ms, iters_per_us_q12 }
+        // At most 24000 * 65536 before the division, which fits
+        let iters_per_us_q16 = (freq.div_ceil(1000) << 16).div_ceil(1000 * CYCLES_PER_ITER);
+        SysDelay { iters_per_ms, iters_per_us_q16 }
     }
 
     /// Spin for `iters` iterations of [`CYCLES_PER_ITER`] cycles
@@ -49,22 +52,35 @@ impl SysDelay {
         }
     }
 
-    /// Spin for `us` microseconds, which is below 1000
+    /// Spin for `us` microseconds, which is below 1000. This takes a single multiplication, to
+    /// keep the time the call itself takes short.
     #[inline]
     fn short_us(&self, us: u16) {
-        // At most 999 * 32768 for a 24 MHz MCLK, which fits
-        Self::spin(((us as u32 * self.iters_per_us_q12 + 4095) >> 12) as u16);
+        // At most 999 * 524288 + 65535 for a 24 MHz MCLK, which fits. The wrapping operations
+        // leave out the overflow checks of debug builds.
+        let iters_q16 = (us as u32).wrapping_mul(self.iters_per_us_q16).wrapping_add(0xFFFF);
+        Self::spin((iters_q16 >> 16) as u16);
     }
 
     #[inline]
-    fn us(&self, us: u32) {
-        // Divide only for long delays, where it takes a small part of the time
-        if us < 1000 {
-            self.short_us(us as u16);
-        } else {
-            self.ms(us / 1000);
-            self.short_us((us % 1000) as u16);
+    fn us(&self, mut us: u32) {
+        // Whole milliseconds first, counted off without a division
+        while us >= 1000 {
+            Self::spin(self.iters_per_ms);
+            us -= 1000;
         }
+        self.short_us(us as u16);
+    }
+}
+
+/// Busy-wait for at least `cycles` MCLK cycles, like TI's `__delay_cycles()`
+#[inline]
+pub(crate) fn delay_cycles(cycles: u32) {
+    let mut iters = cycles.div_ceil(CYCLES_PER_ITER);
+    while iters > 0 {
+        let chunk = iters.min(u16::MAX as u32);
+        SysDelay::spin(chunk as u16);
+        iters -= chunk;
     }
 }
 
@@ -73,8 +89,8 @@ mod ehal1 {
     use embedded_hal::delay::DelayNs;
 
     impl DelayNs for SysDelay {
-        /// Pauses execution for at least `ns` nanoseconds, rounded up to whole microseconds. At low MCLK
-        /// frequencies the call itself takes a few microseconds.
+        /// Pauses execution for at least `ns` nanoseconds, rounded up to whole microseconds. The call
+        /// itself takes about 60 MCLK cycles, see the [module documentation](crate::delay).
         #[inline]
         fn delay_ns(&mut self, ns: u32) {
             if ns <= 1000 {
@@ -84,8 +100,8 @@ mod ehal1 {
             }
         }
 
-        /// Pauses execution for at least `us` microseconds. At low MCLK frequencies the call itself
-        /// takes a few microseconds.
+        /// Pauses execution for at least `us` microseconds. The call itself takes about 60 MCLK
+        /// cycles, see the [module documentation](crate::delay).
         #[inline]
         fn delay_us(&mut self, us: u32) { self.us(us) }
 
@@ -98,7 +114,7 @@ mod ehal1 {
 #[cfg(feature = "embedded-hal-02")]
 mod ehal02 {
     use super::*;
-    use embedded_hal_02::blocking::delay::DelayMs;
+    use embedded_hal_02::blocking::delay::{DelayMs, DelayUs};
 
     macro_rules! impl_delay {
         ($typ: ty) => {
@@ -107,6 +123,17 @@ mod ehal02 {
                 fn delay_ms(&mut self, ms: $typ) {
                     for _ in 0..ms {
                         SysDelay::spin(self.iters_per_ms);
+                    }
+                }
+            }
+
+            impl DelayUs<$typ> for SysDelay {
+                /// The call itself takes about 60 MCLK cycles, see the
+                /// [module documentation](crate::delay).
+                #[inline]
+                fn delay_us(&mut self, us: $typ) {
+                    if us > 0 {
+                        self.us(us as u32);
                     }
                 }
             }

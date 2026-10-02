@@ -29,7 +29,7 @@ use embedded_hal::delay::DelayNs;
 pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
 pub use crate::_pac::cs::csctl6::Xt1drive as Xt1Drive;
 pub use crate::device_specific::clock::{Xt1Xin, Xt1Xout};
-use crate::delay::SysDelay;
+use crate::delay::{delay_cycles, SysDelay};
 use crate::device_specific::clock::FLLREFDIV_1;
 use crate::fram::{Fram, WaitStates};
 use crate::_pac::{
@@ -1188,8 +1188,6 @@ fn fll_on() {
 struct FllSettings {
     selref: Selref,
     ref_div: Fllrefdiv,
-    /// Reference frequency after FLLREFDIV
-    ref_freq: u32,
     /// FLLN register value: DCOCLKDIV = (FLLN + 1) x reference / FLLREFDIV
     flln: u16,
     /// The frequency the FLL locks DCOCLKDIV to
@@ -1236,7 +1234,6 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         FllSettings {
             selref,
             ref_div,
-            ref_freq,
             flln: (multiplier - 1) as u16,
             freq: multiplier * ref_freq,
         }
@@ -1287,91 +1284,107 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
 
     #[inline]
     fn configure_dco_fll(&self) {
-        // Run the FLL configuration procedure from the user's guide (SLAU445I 3.2.11) if we are
-        // using the DCO
+        // If MCLK runs from the DCO, run the FLL configuration procedure of the user's guide: the
+        // software trim procedure (SLAU445I 3.2.11.2), or the factory trim procedure (3.2.11.1) for
+        // the highest frequency. The step numbers are those of the software trim procedure.
         if let MclkSel::Dcoclk(target) = self.mclk.0 {
             let fll = self.fll_settings(target);
             let cs = &self.periph;
 
+            // 1. Disable the FLL
             fll_off();
 
+            // 2. Select the reference clock
             cs.csctl3()
                 .write(|w| w.selref().variant(fll.selref).fllrefdiv().variant(fll.ref_div));
+
+            // 3. Set the DCO range, and for the software trim enable the trim, at its middle
+            //    setting with modulation enabled, as TI's routine does. The DCO starts from its
+            //    lowest tap, as the factory trim procedure requires.
             cs.csctl0().write(|w| unsafe { w.bits(0) });
             if target.factory_trim {
                 cs.csctl1().write(|w| w.dcorsel().variant(target.range));
             } else {
-                // The software trim starts from the middle trim setting with modulation enabled,
-                // as TI's reference routine does
                 let dcorsel = target.range as u16;
                 cs.csctl1().write(|w| unsafe {
                     w.bits(DCOFTRIMEN | DCOFTRIM_START << DCOFTRIM_SHIFT | dcorsel << DCORSEL_SHIFT)
                 });
             }
 
+            // 4. Set FLLN and FLLD for the target frequency
             cs.csctl2().write(|w| {
                 unsafe { w.flln().bits(fll.flln) }
                     .flld()
                     ._1()
             });
 
+            // 5. Three NOPs, for the settings to be applied
             msp430::asm::nop();
             msp430::asm::nop();
             msp430::asm::nop();
 
+            // 6. Enable the FLL
             fll_on();
 
             if target.factory_trim {
+                // Factory trim procedure, step 7: wait for lock
                 while fll_unlocked(cs) {}
             } else {
+                // Steps 7 to 15
                 self.trim_dco(&fll);
             }
         }
     }
 
-    /// The DCO software trim routine (SLAU445I 3.2.11.2), with the FLL running: find the
-    /// DCOFTRIM setting whose locked DCO tap is closest to the middle of the tap range, so the
-    /// FLL keeps lock over temperature, then lock with it.
+    /// Steps 7 to 15 of the DCO software trim procedure (SLAU445I 3.2.11.2), with the FLL
+    /// running: find the DCOFTRIM setting whose locked DCO tap is closest to the middle of the tap
+    /// range, so the FLL keeps lock over temperature, then lock with it.
     fn trim_dco(&self, fll: &FllSettings) {
         let cs = &self.periph;
-        // MCLK runs from the DCO meanwhile
-        let mut delay = SysDelay::new(fll.freq);
-        // The FLL lock status needs 24 reference clock cycles to settle, TI's routine waits 3 ms
-        let settle_ms = ((24_000 + fll.ref_freq - 1) / fll.ref_freq).max(3);
+        // Step 9 waits until the lock status (FLLUNLOCK) is valid for the new tap: at least 24
+        // FLL reference clock cycles. Wait four times that, about the 3 ms TI's routine waits with
+        // REFO. MCLK runs from the DCO meanwhile, which makes FLLN + 1 cycles per reference cycle
+        // at the target frequency, and less than four times as many before it locks (device data
+        // sheets, DCO frequency).
+        let lock_status_wait_cycles = 4 * 24 * (fll.flln as u32 + 1);
 
         let mut best_csctl0 = 0;
         let mut best_csctl1 = 0;
         let mut best_delta = u16::MAX;
         let mut prev_tap: Option<u16> = None;
         loop {
-            // Restart the FLL from the middle of the tap range
+            // 7. Set the DCO tap to the middle of its range
             cs.csctl0().write(|w| unsafe { w.bits(DCO_TAP_MID) });
-            // Clear DCOFFG until it reads back clear, as TI's routine does. Right after the FLL
-            // is enabled it takes several writes (measured on an MSP430FR2476), and a flag left
-            // set would end the lock wait below at once, recording a tap that hasn't settled.
+            // 8. Clear DCOFFG, until it reads back clear as TI's routine does. Right after the FLL
+            //    is enabled it takes several writes (measured on an MSP430FR2476), and a flag left
+            //    set would end step 10 at once, recording a tap that hasn't settled.
             loop {
                 unsafe { cs.csctl7().clear_bits(|w| w.dcoffg().clear_bit()) };
                 if cs.csctl7().read().dcoffg().bit_is_clear() {
                     break;
                 }
             }
-            delay.delay_ms(settle_ms);
-            // Wait for lock, or for the tap to run into either end of its range (DCOFFG)
+            // 9. Wait for the lock status to be valid for the new tap
+            delay_cycles(lock_status_wait_cycles);
+            // 10. Wait for lock, or for the tap to run into either end of its range (DCOFFG)
             while fll_unlocked(cs) && cs.csctl7().read().dcoffg().bit_is_clear() {}
 
+            // 11. Read the tap, and how far it is from the middle
             let csctl0 = cs.csctl0().read().bits();
             let csctl1 = cs.csctl1().read().bits();
             let tap = csctl0 & DCO_TAP_MASK;
             let delta = tap.abs_diff(DCO_TAP_MID);
+            // 12. Record the registers if this tap is the closest to the middle so far
             if delta < best_delta {
                 best_csctl0 = csctl0;
                 best_csctl1 = csctl1;
                 best_delta = delta;
             }
 
-            // A tap below the middle means the DCO runs fast with this trim, so lower the trim;
-            // a tap above it means it runs slow, so raise it. Stop once the tap has crossed the
-            // middle between two adjacent trims, or the trim runs out of range.
+            // 13. A tap below the middle means the DCO runs fast with this trim, so lower the
+            //     trim; a tap above it means it runs slow, so raise it.
+            // 14. Repeat until the tap has crossed the middle between two adjacent trims, or the
+            //     trim runs out of range.
             let below_mid = tap < DCO_TAP_MID;
             let crossed = prev_tap.is_some_and(|prev| (prev < DCO_TAP_MID) != below_mid);
             let trim = (csctl1 & DCOFTRIM_MASK) >> DCOFTRIM_SHIFT;
@@ -1391,7 +1404,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
             }
         }
 
-        // Restore the best trim and tap, and let the FLL lock with them
+        // 15. Reload the recorded registers, and let the FLL lock with them
         cs.csctl0().write(|w| unsafe { w.bits(best_csctl0) });
         cs.csctl1().write(|w| unsafe { w.bits(best_csctl1) });
         while fll_unlocked(cs) {}

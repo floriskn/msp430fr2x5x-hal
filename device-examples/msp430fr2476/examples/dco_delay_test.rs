@@ -1,0 +1,323 @@
+//! Tests `ClockConfig::mclk_dcoclk_hz` and the delays of the `SysDelay` it returns. The board
+//! checks itself and reports the results, and an oscilloscope checks them independently.
+//!
+//! Set `TARGET_HZ` to the MCLK frequency to test, from 1 MHz to 16 MHz. The FLL locks MCLK to the
+//! largest multiple of its 32.768 kHz reference that doesn't exceed it: 5 MHz becomes 152 x
+//! 32.768 kHz = 4.980736 MHz.
+//!
+//! ## Self-test
+//!
+//! The board measures MCLK against ACLK, which runs from the FLL reference, and times each delay
+//! in MCLK cycles. Green LED2 lights if every check passes, red LED1 if one fails. The details go
+//! to the backchannel UART at 9600 baud, 8N1:
+//! 1. Leave the RXD and TXD jumpers of J101 on.
+//! 2. Find the COM port of "MSP Application UART1" in the Windows Device Manager, and open it at
+//!    9600 baud in a serial terminal such as PuTTY (connection type Serial).
+//! 3. Press the reset button S3 to run the test again while the terminal is open.
+//!
+//! ## Oscilloscope
+//!
+//! Use a 10X probe, with its ground clip on the top pin of J5.
+//! 1. P1.3/MCLK (J1 pin 9): open the counter (Analysis > Counter). It shows the MCLK the report
+//!    prints, within the ±3.5 % REFO is specified to (data sheet, REFO).
+//! 2. P1.6 (J1 pin 2): a square wave, high and low for `PULSE_US` each. Measure its +Width: it's
+//!    `PULSE_US` plus a few loop instructions, within REFO's ±3.5 % too.
+//!
+//! ## With a function generator
+//!
+//! Set `FLL_REF_FROM_XT1` to `true` to lock the FLL to a 32.768 kHz signal on XIN instead of REFO.
+//! MCLK and the delays then have the generator's accuracy, so the scope readings match the report
+//! within 0.01 %. Set the generator up as for the XT1 tests: square wave, load HiZ, 0 V to 3.3 V,
+//! 32.768 kHz, checked on the scope before connecting it. Connect it to P2.1/XIN (J2 pin 18), its
+//! ground to J2 pin 20, and switch it on before resetting the board.
+#![no_main]
+#![no_std]
+
+use embedded_hal::{delay::DelayNs, digital::*};
+use embedded_io::Write;
+use msp430_rt::entry;
+use msp430_hal::{
+    capture::{CapTrigger, Capture, CaptureParts3, OverCapture, TimerConfig, CCR1},
+    clock::{ClockConfig, MclkDiv, SmclkDiv, Xt1Config},
+    delay::SysDelay,
+    fram::Fram,
+    gpio::Batch,
+    pin_mapping::DefaultMapping,
+    pmm::Pmm,
+    prelude::*,
+    pwm::PwmParts3,
+    serial::*,
+    watchdog::Wdt,
+};
+use msp430fr247x::Ta1;
+use nb::block;
+use panic_msp430 as _;
+
+/// MCLK frequency to test, from 1 MHz to 16 MHz
+const TARGET_HZ: u32 = 5_000_000;
+/// How long the square wave on P1.6 stays high, and then low, in microseconds
+const PULSE_US: u32 = 100;
+/// Lock the FLL to a 32.768 kHz function generator on XIN instead of REFO
+const FLL_REF_FROM_XT1: bool = false;
+
+/// How many MCLK cycles a delay may take beyond the time requested: the function call, and the
+/// rounding of the loop count
+const DELAY_SLACK_CYCLES: u32 = 100;
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr247x::Peripherals::take().unwrap();
+
+    let mut fram = Fram::new(periph.frctl);
+    Wdt::constrain(periph.wdt_a);
+
+    let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    let p1 = Batch::new(periph.p1)
+        .config_pin0(|p| p.to_output())
+        .config_pin6(|p| p.to_output())
+        .split(&pmm);
+    let p2 = Batch::new(periph.p2).split(&pmm);
+    let p5 = Batch::new(periph.p5)
+        .config_pin0(|p| p.to_output())
+        .split(&pmm);
+    let mut red_led1 = p1.pin0;
+    let mut green_led2 = p5.pin0;
+    let mut square_wave = p1.pin6;
+    red_led1.set_low().ok();
+    green_led2.set_low().ok();
+    square_wave.set_low().ok();
+
+    let _mclk_out = p1.pin3.to_output().to_alternate2();
+
+    let (smclk, aclk, mut delay, xt1_ok) = if FLL_REF_FROM_XT1 {
+        let config = ClockConfig::new(periph.cs)
+            .mclk_dcoclk_hz(TARGET_HZ, MclkDiv::_1)
+            .smclk_on(SmclkDiv::_1)
+            .xt1clk_on(Xt1Config::bypass(32_768, p2.pin1.to_alternate1()))
+            .fll_ref_xt1()
+            .aclk_xt1clk();
+        match config.try_freeze(&mut fram, 1000) {
+            Ok((smclk, aclk, _xt1clk, delay)) => (smclk, aclk, delay, true),
+            // No signal on XIN: carry on with REFO, to report it
+            Err(config) => {
+                let (smclk, aclk, delay) = config.xt1clk_off().freeze(&mut fram);
+                (smclk, aclk, delay, false)
+            }
+        }
+    } else {
+        let (smclk, aclk, delay) = ClockConfig::new(periph.cs)
+            .mclk_dcoclk_hz(TARGET_HZ, MclkDiv::_1)
+            .smclk_on(SmclkDiv::_1)
+            .aclk_refoclk()
+            .freeze(&mut fram);
+        (smclk, aclk, delay, true)
+    };
+    let mclk_hz = smclk.freq();
+    let aclk_hz = aclk.freq();
+
+    // The UART runs from ACLK, so the report stays readable even if MCLK is wrong
+    let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
+        periph.e_usci_a0,
+        BitOrder::LsbFirst,
+        BitCount::EightBits,
+        StopBits::OneStopBit,
+        Parity::NoParity,
+        Loopback::NoLoop,
+        9600,
+    )
+    .use_aclk(&aclk)
+    .tx_only(p1.pin4.to_alternate1());
+
+    // TA0 counts ACLK, and toggles its CCR0 output every 32 cycles. TA1 counts SMCLK (= MCLK) and
+    // captures the rising edges of that output on CCR0 (input B, data sheet: Timer1_A3 signal
+    // connections), so two captures are 64 ACLK cycles apart. CCR1 captures from software, to
+    // time the delays.
+    let _ta0 = PwmParts3::new(periph.ta0, TimerConfig::aclk(&aclk), 31);
+    let captures = CaptureParts3::config(periph.ta1, TimerConfig::smclk(&smclk))
+        .config_cap0_input_B()
+        .config_cap0_trigger(CapTrigger::RisingEdge)
+        .config_cap1_software()
+        .commit();
+    let mut aclk_edges = captures.cap0;
+    let mut stopwatch = captures.cap1;
+
+    let mut pass = true;
+
+    print(&mut tx, "\r\n--- dco_delay_test ---\r\nTarget ");
+    print_num(&mut tx, TARGET_HZ, 0);
+    print(&mut tx, " Hz, FLL reference ");
+    print(&mut tx, if FLL_REF_FROM_XT1 { "XT1 (generator)\r\n" } else { "REFO\r\n" });
+    if !xt1_ok {
+        print(&mut tx, "XT1 didn't start, is the generator on? FAIL\r\n");
+        pass = false;
+    }
+
+    // The frequency the FLL locks to, from the HAL
+    let multiplier = mclk_hz / aclk_hz;
+    print(&mut tx, "MCLK ");
+    print_num(&mut tx, mclk_hz, 0);
+    print(&mut tx, " Hz = ");
+    print_num(&mut tx, multiplier, 0);
+    print(&mut tx, " x ");
+    print_num(&mut tx, aclk_hz, 0);
+    print(&mut tx, " Hz\r\n");
+
+    // The FLL keeps fine-tuning after it reports lock, for up to 200 ms (data sheet, FLL lock
+    // time)
+    delay.delay_ms(200);
+    // MCLK cycles in 8 x 64 ACLK cycles. Each capture is read long before the next one arrives.
+    let mut previous = read_capture(&mut aclk_edges);
+    let mut mclk_cycles = 0u32;
+    for _ in 0..8 {
+        let now = read_capture(&mut aclk_edges);
+        mclk_cycles += now.wrapping_sub(previous) as u32;
+        previous = now;
+    }
+    let expected = multiplier * 8 * 64;
+    // The FLL keeps MCLK within about 1 % of its target (data sheet, FLL lock frequency)
+    let ratio_ok = mclk_cycles.abs_diff(expected) * 100 <= expected;
+    let locked = fll_locked();
+    print(&mut tx, "MCLK / ACLK measured: ");
+    print_num(&mut tx, mclk_cycles * 100 / (8 * 64), 2);
+    print(&mut tx, if locked { ", FLL locked" } else { ", FLL NOT locked" });
+    print(&mut tx, pass_fail(ratio_ok && locked));
+    pass &= ratio_ok && locked;
+
+    // How the DCO was set up, from the clock registers (the HAL has no API for these)
+    let cs = unsafe { &*msp430fr247x::Cs::ptr() };
+    let csctl0 = cs.csctl0().read().bits();
+    let csctl1 = cs.csctl1().read().bits();
+    print(&mut tx, "DCO range ");
+    print_num(&mut tx, (csctl1 >> 1 & 0b111) as u32, 0);
+    if csctl1 & 0x80 != 0 {
+        print(&mut tx, ", trim ");
+        print_num(&mut tx, (csctl1 >> 4 & 0b111) as u32, 0);
+    } else {
+        print(&mut tx, ", factory trim");
+    }
+    print(&mut tx, ", tap ");
+    print_num(&mut tx, (csctl0 & 0x1FF) as u32, 0);
+    print(&mut tx, " (the software trim aims for 256)\r\n");
+
+    // Each delay, the time it requests in ns, and the time it may round up to
+    let delays: [(&str, u32, u32, fn(&mut SysDelay)); 11] = [
+        ("delay_ns(250)", 250, 1_000, |d| d.delay_ns(250)),
+        ("delay_ns(1500)", 1_500, 2_000, |d| d.delay_ns(1500)),
+        ("delay_ns(2500000)", 2_500_000, 2_501_000, |d| d.delay_ns(2_500_000)),
+        ("delay_us(1)", 1_000, 1_000, |d| d.delay_us(1)),
+        ("delay_us(10)", 10_000, 10_000, |d| d.delay_us(10)),
+        ("delay_us(100)", 100_000, 100_000, |d| d.delay_us(100)),
+        ("delay_us(999)", 999_000, 999_000, |d| d.delay_us(999)),
+        ("delay_us(1000)", 1_000_000, 1_000_000, |d| d.delay_us(1000)),
+        ("delay_us(1500)", 1_500_000, 1_500_000, |d| d.delay_us(1500)),
+        ("delay_ms(1)", 1_000_000, 1_000_000, |d| d.delay_ms(1)),
+        ("delay_ms(3)", 3_000_000, 3_000_000, |d| d.delay_ms(3)),
+    ];
+    // Time every delay first, and only then work out what to expect: the compiler may move
+    // calculations between the stopwatch readings, but not past `black_box`
+    let overhead = time(&mut stopwatch, || {});
+    let mut measured = [0u16; 11];
+    for (cycles, (_, _, _, run)) in measured.iter_mut().zip(delays) {
+        *cycles = time(&mut stopwatch, || run(&mut delay)).saturating_sub(overhead);
+    }
+    let mclk_hz = core::hint::black_box(mclk_hz);
+    for ((name, min_ns, max_ns, _), cycles) in delays.into_iter().zip(measured) {
+        let cycles = cycles as u32;
+        let min_cycles = ns_to_cycles(min_ns, mclk_hz);
+        let max_cycles = ns_to_cycles(max_ns, mclk_hz) * 101 / 100 + DELAY_SLACK_CYCLES;
+        let ok = (min_cycles..=max_cycles).contains(&cycles);
+        print(&mut tx, name);
+        print(&mut tx, ": ");
+        print_num(&mut tx, (cycles as u64 * 10_000_000 / mclk_hz as u64) as u32, 1);
+        print(&mut tx, " us, ");
+        print_num(&mut tx, cycles, 0);
+        print(&mut tx, " cycles");
+        print(&mut tx, pass_fail(ok));
+        pass &= ok;
+    }
+
+    print(&mut tx, if pass { "ALL PASS\r\n" } else { "FAILED\r\n" });
+    print(&mut tx, "Scope: MCLK on P1.3, square wave on P1.6, high and low for ");
+    print_num(&mut tx, PULSE_US, 0);
+    print(&mut tx, " us each\r\n");
+    if pass {
+        green_led2.set_high().ok();
+    } else {
+        red_led1.set_high().ok();
+    }
+
+    loop {
+        square_wave.set_high().ok();
+        delay.delay_us(PULSE_US);
+        square_wave.set_low().ok();
+        delay.delay_us(PULSE_US);
+    }
+}
+
+/// The SMCLK cycles from just before `f` runs to just after it returns
+fn time(stopwatch: &mut Capture<Ta1, CCR1>, f: impl FnOnce()) -> u16 {
+    stopwatch.trigger_capture();
+    let start = read_capture(stopwatch);
+    f();
+    stopwatch.trigger_capture();
+    read_capture(stopwatch).wrapping_sub(start)
+}
+
+fn read_capture<C>(capture: &mut Capture<Ta1, C>) -> u16
+where
+    Ta1: msp430_hal::timer::CapCmp<C>,
+{
+    match block!(capture.capture()) {
+        Ok(count) | Err(OverCapture(count)) => count,
+    }
+}
+
+/// MCLK cycles in `ns` nanoseconds, rounded up
+fn ns_to_cycles(ns: u32, mclk_hz: u32) -> u32 {
+    (ns as u64 * mclk_hz as u64).div_ceil(1_000_000_000) as u32
+}
+
+/// Whether the FLL reports the DCO as locked. The HAL has no API for this, so it goes through
+/// the PAC.
+fn fll_locked() -> bool {
+    let cs = unsafe { &*msp430fr247x::Cs::ptr() };
+    cs.csctl7().read().fllunlock().is_fllunlock_0()
+}
+
+fn pass_fail(ok: bool) -> &'static str {
+    if ok { ": PASS\r\n" } else { ": FAIL\r\n" }
+}
+
+fn print(tx: &mut impl Write, text: &str) {
+    tx.write_all(text.as_bytes()).ok();
+}
+
+/// Print `value` / 10^`decimals`, with that many decimals
+fn print_num(tx: &mut impl Write, value: u32, decimals: usize) {
+    let mut buf = [0u8; 12];
+    let mut pos = buf.len();
+    let mut rest = value;
+    let mut digits = 0;
+    loop {
+        if decimals > 0 && digits == decimals {
+            pos -= 1;
+            buf[pos] = b'.';
+        }
+        pos -= 1;
+        buf[pos] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        digits += 1;
+        if rest == 0 && digits > decimals {
+            break;
+        }
+    }
+    tx.write_all(&buf[pos..]).ok();
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}
