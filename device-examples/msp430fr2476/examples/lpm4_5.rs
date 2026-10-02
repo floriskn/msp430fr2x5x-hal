@@ -1,7 +1,9 @@
 #![no_main]
 #![no_std]
 
-// This examples enters LPM4.5, then when a button on P2.3 is pressed the system wakes and flashes the red LED.
+// This examples enters LPM4.5, then when a button on P2.3 is pressed the system wakes and flashes LED1.
+// (The button on P2.3 is S2; LED1 on P1.0 is green: SLAU802 Figure 19, p. 25. An I/O wakes the device
+// from LPM4.5: SLAU445I 1.4.3.2, p. 41, and P2.3 has "wake from LPMx.5": SLASEO7C Table 7-2, p. 16.)
 
 use embedded_hal::digital::*;
 use msp430::asm::nop;
@@ -22,6 +24,7 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
+    // (SLAU445I 8.3.3, p. 317: "It is critical that no inputs are left floating", or LPMx.5 draws more)
     let port1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -36,6 +39,7 @@ fn main() -> ! {
     init_unused_gpio(periph.p3, periph.p4, periph.p5, periph.p6, &pmm);
 
     // If this reset was a wake up from LPMx.5...
+    // (SYSRSTIV = 08h, "LPMx.5 wakeup (BOR)": SLASEO7C Table 9-10, p. 52)
     if sys.sysrstiv().read().sysrstiv().is_lpm5wu() {
         loop {
             for _ in 0..10_000 {
@@ -47,15 +51,18 @@ fn main() -> ! {
     // Otherwise it was a regular reset. Prepare to enter LPM4.5.
     else {
         // Configure P2.3 for interrupts
+        // (S2 pulls P2.3 low, so a press is a falling edge: SLAU802 Figure 19, p. 25. Wake-up edge and
+        // enable: SLAU445I 1.4.3.1 step 4, p. 41)
         let mut button = port2.pin3;
         button.select_falling_edge_trigger().enable_interrupts();
 
-        // And enter LPM4.5. Global interrupts are enabled before LPM4.5 is entered.
+        // And enter LPM4.5. Interrupts were never enabled, so GIE stays clear, as in
+        // SLAU445I 1.4.3.1 step 8, p. 41; the P2.3 edge wakes the device anyway (SLAU445I 1.4.3.2, p. 41).
         enter_lpm4_5(wdt, periph.rtc, SvsState::Svshe0);
     }
 }
 
-/// Enable pulldowns on unused ports to massively reduce power usage.
+/// Enable pulldowns on unused ports to massively reduce power usage (SLAU445I 8.3.2, p. 317).
 fn init_unused_gpio(p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
     Batch::new(p3).pulldown_all().split(pmm);
     Batch::new(p4).pulldown_all().split(pmm);
@@ -65,6 +72,8 @@ fn init_unused_gpio(p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
 
 // Note: In this case we don't need an ISR when waking from LPMx.5, since power on disables interrupts.
 // You *can* service the interrupt that causes the wakeup, but this isn't done here.
+// (Any exit from LPMx.5 is a BOR: SLAU445I 1.4.3.2, p. 42, and a BOR resets the SR, GIE included:
+// SLAU445I 1.2.1, p. 32.)
 
 // The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
 // enabled (default for dev profile). MSP430 does not actually have meaningful abort() support

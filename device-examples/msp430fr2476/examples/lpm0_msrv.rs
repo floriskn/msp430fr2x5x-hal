@@ -4,6 +4,8 @@
 
 // NOTE: Historically there was no way to return the CPU to active mode after entering a low power mode,
 // the MSP restores the CPU to active mode during an interrupt but turns it off afterwards.
+// (The SR, with the low-power mode bits, is saved on the stack during an interrupt, and the program
+// returns to that mode unless the handler changes the saved SR: SLAU445I 1.4, p. 36)
 
 // A feature was recently added to msp430-rt to allow the CPU to return to active mode, but it depends on Rust 1.88.
 // For compatibility with the MSRV of this crate we showcase the old implementation here, with all work being done inside the interrupt.
@@ -25,6 +27,7 @@ static P2IV: Mutex<RefCell<Option< PxIV<P2> >>> = Mutex::new(RefCell::new(None))
 static RED_LED: Mutex<RefCell<Option< Pin<P1, Pin0, Output> >>> = Mutex::new(RefCell::new(None));
 
 // P1.0 should toggle when P2.3 is pressed
+// (P1.0 drives LED1, which is green; P2.3 is button S2: SLAU802 Figure 19, p. 25)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
@@ -34,6 +37,7 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
+    // (SLAU445I 8.3.2, p. 317)
     let p1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -59,12 +63,14 @@ fn main() -> ! {
     unsafe { enable_interrupts() };
 
     // Since no peripherals were configured to use SMCLK / ACLK we could just as well enter LPM3 / LPM4 here
+    // (port interrupts wake the device from LPM4 too: SLASEO7C Table 9-1, p. 45)
     enter_lpm0();
 
     loop {}
 }
 
 // The CPU will wake up to handle interrupts, but will be put back to sleep afterwards.
+// (SLAU445I 1.4, p. 36)
 #[interrupt]
 fn PORT2() {
     with(|cs| {
@@ -79,7 +85,7 @@ fn PORT2() {
     });
 }
 
-/// Enable pulldowns on unused ports to massively reduce power usage.
+/// Enable pulldowns on unused ports to massively reduce power usage (SLAU445I 8.3.2, p. 317).
 fn init_unused_gpio(p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
     Batch::new(p3).pulldown_all().split(pmm);
     Batch::new(p4).pulldown_all().split(pmm);

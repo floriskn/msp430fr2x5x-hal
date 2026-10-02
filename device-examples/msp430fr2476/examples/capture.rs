@@ -19,6 +19,11 @@ use panic_msp430 as _;
 
 // Connect push button input to P1.1. When button is pressed, putty should print the # of cycles
 // since the last press. Sometimes we get 2 consecutive readings due to lack of debouncing.
+// P1.1 is J3 pin 28 (SLAU802 Figure 10, p. 13); the output of the TMP235 temperature sensor is wired to
+// it too (SLAU802 2.2.5.1, p. 10). The text goes out on eUSCI_A1's TXD, P2.6 (J1 pin 4), which is not
+// the backchannel UART: that is eUSCI_A0 on this LaunchPad (SLAU802 2.2.4, p. 9). For PuTTY, pull the
+// TXD jumper off J101 and wire J1 pin 4 to the jumper's eZ-FET side, the pin nearer the USB connector
+// (SLAU802 Table 2, p. 8; SLAU802 Figure 16, p. 22; SLAU802 Figure 1, p. 1).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
@@ -27,6 +32,7 @@ fn main() -> ! {
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    // P1.0 drives LED1 (SLAU802 Figure 19, p. 25), switched on at the first capture
     let mut p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
@@ -38,6 +44,7 @@ fn main() -> ! {
         .aclk_vloclk()
         .freeze(&mut fram);
 
+    // eUSCI_A1 TXD is P2.6 with P2SEL = 01 (SLASEO7C Table 9-24, p. 66; SLASEO7C Table 9-11, p. 54)
     let mut tx = SerialConfig::new(
         periph.e_usci_a1,
         BitOrder::LsbFirst,
@@ -50,6 +57,8 @@ fn main() -> ! {
     .use_smclk(&smclk)
     .tx_only(p2.pin6.to_alternate1());
 
+    // TA0 counts ACLK, here from the VLO. Its CCR1 input A (CCI1A) is P1.1 with P1SEL = 10 and P1DIR = 0
+    // (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-23, p. 65).
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
         .config_cap1_input_A(p1.pin1.to_alternate2())
         .config_cap1_trigger(CapTrigger::FallingEdge)

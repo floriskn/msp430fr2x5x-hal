@@ -2,18 +2,20 @@
 //!
 //! Configures the board's TimerB peripherals into periodic countdown timers. Each peripheral
 //! consists of a main timer and multiple "sub-timers". Sub-timers have their own thresholds and
-//! interrupts but share their countdowns with their main timer.
+//! interrupts but share their countdowns with their main timer: they are its capture/compare blocks
+//! (SLAU445I 13.2.4, p. 374; 14.2.4, p. 398).
 //!
 //! This module also contains traits used by other HAL modules that depend on TimerB, such as
 //! `Capture` and `Pwm`.
 //!
 //! # Timer_B outputs and the comparators
 //!
-//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while it is
-//! high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (data sheets: TBxOUTH). Measured on an MSP430FR2476, a TB0
-//! PWM output stops whenever eCOMP0's output is high, even with the comparator used for something else.
-//! [`TimerConfig::high_impedance_trigger`] selects the TBxTRG
-//! pin instead, or nothing.
+//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while
+//! it is high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (SLASEC4D Table 6-20, p. 76; SLASEO7C
+//! Table 9-17, p. 61). SYSCFG2.TBxTRGSEL resets to 0, "Internal source selected" (SLAU445I Table 1-26,
+//! p. 77; SLAU445I Table 1-31, p. 82). Measured on an MSP430FR2476, a TB0 PWM output stops whenever
+//! eCOMP0's output is high, even with the comparator used for something else.
+//! [`TimerConfig::high_impedance_trigger`] selects the TBxTRG pin instead, or nothing.
 
 use crate::clock::{Aclk, Smclk};
 use crate::hw_traits::timer_base::{CCRn, Outmod, RunningMode, Tbssel, TimerBase};
@@ -33,7 +35,8 @@ impl<T: CCRn<C>, C> CapCmp<C> for T {}
 // Trait effectively sealed by TimerB
 /// Trait indicating that the peripheral can be used as a timer
 pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
-    /// Pin type used for external TBxCLK of this timer, or [`NoTbxclkPin`] if it has none
+    /// Pin type used for external TBxCLK of this timer, or [`NoTbxclkPin`] if it has none (TASSEL/TBSSEL =
+    /// 00b: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     type Tbxclk;
 
     /// Additional configuration
@@ -42,7 +45,7 @@ pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
 }
 
 /// The external TBxCLK pin of timers that don't have one, such as TA2 and TA3 on the
-/// MSP430FR2433
+/// MSP430FR2433 (SLASE59F Table 6-13, p. 51; SLASE59F Table 6-14, p. 52)
 ///
 /// It has no values, so [`TimerConfig::tbclk`] can't be called for these timers.
 pub enum NoTbxclkPin {}
@@ -67,10 +70,13 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
 
 // Trait effectively sealed by TimerBase
 /// Trait indicating a Timer_B. Its counter length can be changed, see [`TimerConfig::counter_length`], and its
-/// compare registers are buffered, which PWM uses to change duty cycles at the start of a period.
+/// compare registers are buffered, which PWM uses to change duty cycles at the start of a period
+/// (SLAU445I 14.1.1, p. 391; 14.2.4.2.1, p. 400). In up mode the MSP430FR2x5x and MSP430FR247x load
+/// them at once instead (erratum TB25: SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
 pub trait TimerB: TimerBase {}
 
 /// The number of bits a Timer_B counts with (CNTL), which sets its highest count in continuous mode
+/// (SLAU445I 14.2.1.1, p. 393; SLAU445I Table 14-6, p. 409)
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CounterLength {
     /// 16 bits, up to 0xFFFF, as after reset
@@ -84,13 +90,18 @@ pub enum CounterLength {
     _8Bit = 3,
 }
 
-/// What switches all outputs of a Timer_B to high impedance (TBxOUTH, SYSCFG2.TBxTRGSEL, data sheets:
-/// TBxOUTH), for example to stop a motor driver on a fault
+/// What switches all outputs of a Timer_B to high impedance (TBxOUTH, SYSCFG2.TBxTRGSEL: SLAU445I 14.2.5,
+/// p. 401; SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82; data sheets: SLASEC4D Table 6-20,
+/// p. 76; SLASEO7C Table 9-17, p. 61), for example to stop a motor driver on a fault
 pub enum HighImpedanceTrigger<'a, T> {
-    /// The output of an eCOMP comparator: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3. This is the setting after
-    /// reset, so the outputs stop whenever that comparator's output is high, even if it's used for something else.
+    /// The output of an eCOMP comparator: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (SLASEC4D
+    /// Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61). This is the setting after reset (TBxTRGSEL = 0:
+    /// SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82), so the outputs stop whenever that
+    /// comparator's output is high, even if it's used for something else.
     Comparator,
-    /// The timer's TBxTRG pin, in its trigger function: the outputs stop while it's high.
+    /// The timer's TBxTRG pin, in its trigger function: the outputs stop while it's high (SLAU445I 14.2.5,
+    /// p. 401: "When the TBOUTH pin function is selected for the pin ... and when the pin is pulled high").
+    /// TB3 on the MSP430FR2x5x has no such pin (SLASEC4D Table 6-20, p. 76: "TB3TRGSEL = 1", "N/A").
     Pin(&'a dyn HighImpedancePin<T>),
     /// Nothing switches the outputs to high impedance.
     None,
@@ -101,37 +112,39 @@ pub trait HighImpedancePin<T> {}
 
 /// Trait indicating a Timer_B whose outputs can be switched to high impedance, see
 /// [`TimerConfig::high_impedance_trigger`]: TB0 to TB3 on the MSP430FR2x5x, TB0 on the MSP430FR247x
+/// (SLASEC4D Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61)
 pub trait HighImpedanceTimer: TimerB {
     #[doc(hidden)]
-    /// The TBxTRGSEL bit in SYSCFG2
+    /// The TBxTRGSEL bit in SYSCFG2 (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
     const TRGSEL: u16;
 }
 
 // Traits effectively sealed by TimerBase
 /// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
 ///
-/// A timer's fourth clock input, INCLK, is wired differently on each device and each timer. These
-/// timers have the VLO on it (data sheet, timer signal connections):
+/// A timer's fourth clock input, INCLK (TASSEL/TBSSEL = 11b: SLAU445I Table 13-4, p. 384; SLAU445I
+/// Table 14-6, p. 409), is wired differently on each device and each timer. These timers have the VLO on
+/// it (data sheets, timer signal connections and clock distribution):
 ///
-/// | Device                     | Timers   |
-/// |----------------------------|----------|
-/// | MSP430FR2475, MSP430FR2476 | TA0, TA2 |
-/// | MSP430FR2512, MSP430FR2522 | TA0      |
-/// | Other devices              | None     |
+/// | Device                     | Timers   | Reference                                              |
+/// |----------------------------|----------|--------------------------------------------------------|
+/// | MSP430FR2475, MSP430FR2476 | TA0, TA2 | SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-14, p. 58 |
+/// | MSP430FR2512, MSP430FR2522 | TA0      | SLASEE4C Figure 6-2, p. 54; SLASEE4C Table 6-8, p. 49  |
+/// | Other devices              | None     | SLASEC4D Table 6-9, p. 68; SLASE59F Table 6-7, p. 46   |
 pub trait VloclkTimer: TimerBase {}
 
 /// Trait indicating that the timer can be clocked by another timer, see [`TimerConfig::cascade`]
 ///
 /// A timer's fourth clock input, INCLK, is wired differently on each device and each timer. These
-/// timers have the CCR2 output of their `Source` timer on it (data sheet, timer signal
+/// timers have the CCR2 output of their `Source` timer on it (data sheets, timer signal
 /// connections):
 ///
-/// | Device                     | Timer ← `Source`     |
-/// |----------------------------|----------------------|
-/// | MSP430FR2475, MSP430FR2476 | TA1 ← TA0, TA3 ← TA2 |
-/// | MSP430FR2512, MSP430FR2522 | TA1 ← TA0            |
-/// | MSP430FR2x5x               | TB1 ← TB0            |
-/// | MSP430FR2433               | None                 |
+/// | Device                     | Timer ← `Source`     | Reference                                              |
+/// |----------------------------|----------------------|--------------------------------------------------------|
+/// | MSP430FR2475, MSP430FR2476 | TA1 ← TA0, TA3 ← TA2 | SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58 |
+/// | MSP430FR2512, MSP430FR2522 | TA1 ← TA0            | SLASEE4C Figure 6-2, p. 54                             |
+/// | MSP430FR2x5x               | TB1 ← TB0            | SLASEC4D Table 6-17, p. 74                             |
+/// | MSP430FR2433               | None                 | SLASE59F Tables 6-11 to 6-14, p. 50 to p. 52           |
 pub trait CascadedTimer: TimerBase {
     /// Timer whose CCR2 output clocks this timer
     type Source: CapCmp<CCR2>;
@@ -140,8 +153,9 @@ pub trait CascadedTimer: TimerBase {
 /// The CCR2 output of timer `T`, set up to clock a [`CascadedTimer`] with
 /// [`TimerConfig::cascade`]
 ///
-/// While `T` runs, the output is high for the first count of each period, so the cascaded timer
-/// counts as `T` wraps around to 0. This needs a period of at least 2 counts.
+/// While `T` runs, the output is high for the first count of each period, so the cascaded timer,
+/// which counts on the rising edges of its clock (SLAU445I 13.2.1, p. 370), counts as `T` wraps around
+/// to 0. This needs a period of at least 2 counts.
 pub struct CascadeOutput<T>(PhantomData<T>);
 
 impl<T: CapCmp<CCR2>> CascadeOutput<T> {
@@ -149,7 +163,8 @@ impl<T: CapCmp<CCR2>> CascadeOutput<T> {
     pub(crate) fn new() -> Self {
         let timer = unsafe { T::steal() };
         // Reset/set mode sets the output as the timer wraps around to 0, and resets it when the
-        // timer reaches CCR2. With CCR2 at 0 both happen at once and the output stays low.
+        // timer reaches CCR2 (SLAU445I Table 13-2, p. 376; 13.2.5.1.1, p. 377). With CCR2 at 0 both
+        // happen at once and the output stays low.
         CCRn::<CCR2>::set_ccrn(&timer, 1);
         CCRn::<CCR2>::config_outmod(&timer, Outmod::ResetSet);
         CascadeOutput(PhantomData)
@@ -213,10 +228,16 @@ where
     #[inline]
     pub(crate) fn write_regs(self, timer: &T) {
         T::configure_pin_mapping();
+        // TBCLR, then TBIDEX, then TBxCTL with MC = 0, as for starting a timer (SLAU445I 13.2.2,
+        // p. 370; 14.2.2, p. 393). The functions that start the timer set TBCLR again, which a TBIDEX
+        // change needs (SLAU445I 13.3.6, p. 389; 14.3.6, p. 414: "After programming TBIDEX bits and
+        // configuring the timer, set TBCLR bit").
         timer.reset();
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
         timer.set_cntl(self.cntl);
+        // TBxTRGSEL: 0 = internal source (eCOMP), 1 = external source (TBxTRG pin) (SLAU445I Table 1-26,
+        // p. 77; SLAU445I Table 1-31, p. 82)
         if let Some((bit, set)) = self.trgsel {
             let sys = unsafe { &*crate::_pac::Sys::ptr() };
             if set {
@@ -234,7 +255,7 @@ where
     M: PinMap,
 {
     /// Set how many bits this Timer_B counts with (CNTL). In continuous mode it then counts up to 0xFF,
-    /// 0x3FF, 0xFFF or 0xFFFF before it starts over.
+    /// 0x3FF, 0xFFF or 0xFFFF before it starts over (SLAU445I 14.2.1.1, p. 393; 14.2.3.2, p. 395).
     #[inline]
     pub fn counter_length(self, length: CounterLength) -> Self { TimerConfig { cntl: length as u8, ..self } }
 }
@@ -247,8 +268,10 @@ where
     /// Select what switches all outputs of this Timer_B to high impedance, see [`HighImpedanceTrigger`].
     #[inline]
     pub fn high_impedance_trigger(self, trigger: HighImpedanceTrigger<T>) -> Self {
-        // TBxTRGSEL selects the comparator (0) or the pin (1). Selecting the pin without putting it in its
-        // trigger function disables the trigger.
+        // TBxTRGSEL selects the comparator (0) or the pin (1) (SLAU445I Table 1-26, p. 77; SLAU445I
+        // Table 1-31, p. 82; SLASEC4D Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61). Selecting the pin
+        // without putting it in its trigger function disables the trigger: only the selected TBOUTH pin
+        // function triggers (SLAU445I 14.2.5, p. 401).
         let external = !matches!(trigger, HighImpedanceTrigger::Comparator);
         TimerConfig { trgsel: Some((T::TRGSEL, external)), ..self }
     }
@@ -260,7 +283,8 @@ where
     M: PinMap,
 {
     /// Configure timer clock source to VLOCLK, which runs at about 10 kHz but is only accurate to
-    /// ±50 % (data sheet). Only some timers have this option, see [`VloclkTimer`].
+    /// ±50 % (VLOCLK "10 kHz ±50%": SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49). Only some
+    /// timers have this option, see [`VloclkTimer`].
     #[inline]
     pub fn vloclk() -> Self { Self::with_clock(Tbssel::Inclk) }
 }
@@ -411,7 +435,7 @@ where
 /// Sub-timer associated with a main timer
 ///
 /// Each sub-timer has its own interrupt mechanism and threshold, but shares its countdown value
-/// with its main timer.
+/// with its main timer (a capture/compare block: SLAU445I 13.2.4, p. 374; 14.2.4, p. 398).
 pub struct SubTimer<T: CapCmp<C>, C>(PhantomData<T>, PhantomData<C>);
 
 impl<T: CapCmp<C>, C> SubTimer<T, C> {
@@ -440,6 +464,7 @@ pub enum TimerVector {
 
 #[inline]
 pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector {
+    // TBxIV only takes these values (SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
     match timer.tbxiv_rd() {
         0 => TimerVector::NoInterrupt,
         2 => TimerVector::SubTimer1,
@@ -458,7 +483,8 @@ pub struct TBxIV<T>(PhantomData<T>);
 
 impl<T: TimerBase> TBxIV<T> {
     #[inline]
-    /// Read the timer interrupt vector. Automatically resets corresponding interrupt flag.
+    /// Read the timer interrupt vector. Automatically resets corresponding interrupt flag (SLAU445I
+    /// 13.2.6.2, p. 380; 14.2.6.2, p. 405).
     pub fn interrupt_vector(&mut self) -> TimerVector {
         let timer = unsafe { T::steal() };
         read_tbxiv(&timer)
@@ -470,7 +496,8 @@ where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    /// Enable timer countdown expiration interrupts
+    /// Enable timer countdown expiration interrupts (TBIE: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    /// p. 410)
     #[inline(always)]
     pub fn enable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
@@ -485,9 +512,11 @@ where
     }
 
     #[inline]
-    /// Clears the timer, sets the count, and starts the timer in upcounting mode.
+    /// Clears the timer, sets the count, and starts the timer in upcounting mode (up mode: SLAU445I
+    /// 13.2.3.1, p. 371; 14.2.3.1, p. 394).
     pub fn start(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
+        // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.1.1, p. 371)
         timer.stop();
         timer.set_ccrn(count);
         timer.upmode();
@@ -497,9 +526,12 @@ where
     #[inline]
     /// Clears the timer and starts it counting up to `count` and back down to 0 (up/down mode), so a
     /// period lasts `2 * count` timer cycles. [`wait()`](Timer::wait) returns once per period, when the
-    /// count gets back to 0, and sub-timers fire twice per period, on the way up and on the way down.
+    /// count gets back to 0 (SLAU445I 13.2.3.4, p. 373; 14.2.3.4, p. 396), and sub-timers fire twice per
+    /// period, on the way up and on the way down (SLAU445I Figure 13-14, p. 379; SLAU445I Figure 14-14,
+    /// p. 404).
     pub fn start_up_down(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
+        // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.4.1, p. 373)
         timer.stop();
         timer.set_ccrn(count);
         timer.updown_mode();
@@ -508,6 +540,9 @@ where
 
     #[inline]
     /// Checks if the timer has reached the target value. Returns `Ok(())` if so, otherwise `WouldBlock`.
+    ///
+    /// It checks TBIFG, which is set as the count goes from the target value to 0 (SLAU445I 13.2.3.1,
+    /// p. 371; 14.2.3.1, p. 394), or in up/down mode as it gets back down to 0.
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let timer = unsafe { T::steal() };
         if timer.tbifg_rd() {
@@ -519,14 +554,16 @@ where
     }
 
     #[inline]
-    /// Pause the timer at the current value
+    /// Pause the timer at the current value (MC = 0, "The timer is halted": SLAU445I Table 13-1, p. 371;
+    /// SLAU445I Table 14-1, p. 394)
     pub fn pause(&mut self) {
         let timer = unsafe { T::steal() };
         timer.stop();
     }
 
     #[inline]
-    /// Resume counting from the current value, in the direction and mode it was counting in
+    /// Resume counting from the current value, in the direction and mode it was counting in (the
+    /// count direction is latched: SLAU445I 13.2.3.4, p. 373; 14.2.3.4, p. 396)
     pub fn resume(&mut self) {
         let timer = unsafe { T::steal() };
         timer.resume(self.mode);
@@ -537,7 +574,9 @@ where
     ///
     /// A timer clocked asynchronously to MCLK (from ACLK, for example) can return a wrong value
     /// when read while it counts, so this takes the median of three reads, as the user's guide
-    /// suggests.
+    /// suggests (SLAU445I 13.2.1, p. 370; 14.2.1, p. 393, notes "Accessing TAxR" and "Accessing TBxR":
+    /// "TBxR can be read multiple times while the timer is running, and a majority vote taken in
+    /// software").
     pub fn count(&mut self) -> u16 {
         let timer = unsafe { T::steal() };
         let (a, b, c) = (timer.get_tbxr(), timer.get_tbxr(), timer.get_tbxr());
@@ -548,9 +587,10 @@ where
 impl<T: CapCmp<C>, C> SubTimer<T, C> {
     #[inline]
     /// Set the threshold for one of the sub-timers. Once the main timer counts to this threshold
-    /// the sub-timer will fire. Note that the main timer resets once it counts to its own
-    /// threshold, not the sub-timer thresholds. It follows that the sub-timer threshold must be
-    /// less than the main threshold for it to fire.
+    /// the sub-timer will fire (SLAU445I 13.2.4.2, p. 376; 14.2.4.2, p. 399). Note that the main timer
+    /// resets once it counts to its own threshold, not the sub-timer thresholds. It follows that the
+    /// sub-timer threshold must not be more than the main threshold for it to fire: the main timer
+    /// counts up to and including its threshold (SLAU445I 13.2.3.1, p. 371; 14.2.3.1, p. 394).
     pub fn set_count(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
         timer.set_ccrn(count);
@@ -558,7 +598,7 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     }
 
     #[inline]
-    /// Wait for the sub-timer to fire
+    /// Wait for the sub-timer to fire (its CCIFG: SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let timer = unsafe { T::steal() };
         if timer.ccifg_rd() {
@@ -570,7 +610,7 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     }
 
     #[inline(always)]
-    /// Enable the sub-timer interrupts
+    /// Enable the sub-timer interrupts (CCIE: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     pub fn enable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_set();

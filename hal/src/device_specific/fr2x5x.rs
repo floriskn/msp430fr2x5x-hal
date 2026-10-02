@@ -11,82 +11,103 @@ pub mod gpio {
     use crate::hw_traits::gpio::gpio_impl;
 
     // Define alternate pin transitions
+    //
+    // Alternate1, 2 and 3 are PxSELx (PxSEL1/PxSEL0) = 01, 10 and 11, the primary, secondary and
+    // tertiary module functions (SLAU445I 8.2.5, Table 8-3, p. 314). Each impl is a row of the port's
+    // pin function table (SLASEC4D Tables 6-63 to 6-68, p. 96 to p. 106). PxSEL doesn't set the direction
+    // (SLAU445I 8.2.5, p. 314), so a function the table lists with one PxDIR value is only given to
+    // `Input` (PxDIR = 0) or `Output` (PxDIR = 1) pins; most of them are VSS with the other direction.
+    // A timer pin's direction picks the capture input (CCIxA, in) or the compare output (out).
 
-    // P1 alternate 1
+    // P1 alternate 1, P1SELx = 01 (SLASEC4D Table 6-63, p. 96): P1.0 UCB0STE, P1.1 UCB0CLK,
+    // P1.2 UCB0SIMO/UCB0SDA, P1.3 UCB0SOMI/UCB0SCL, P1.4 UCA0STE, P1.5 UCA0CLK, P1.6 UCA0RXD/UCA0SOMI,
+    // P1.7 UCA0TXD/UCA0SIMO
     impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P1, PIN, DIR> {}
-    // P1 alternate 2
-    impl       ToAlternate2 for Pin<P1, Pin0, Output> {} // SMCLK
-    impl       ToAlternate2 for Pin<P1, Pin1, Output> {} // ACLK
-    impl<PULL> ToAlternate2 for Pin<P1, Pin2, Input<PULL>> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin6, DIR> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin7, DIR> {}
-    // P1 alternate 3
+    // P1 alternate 2, P1SELx = 10 (SLASEC4D Table 6-63, p. 96). P1.3 to P1.5 have no 10 function.
+    impl       ToAlternate2 for Pin<P1, Pin0, Output> {} // 10: SMCLK, out (P1DIR.0 = 1)
+    impl       ToAlternate2 for Pin<P1, Pin1, Output> {} // 10: ACLK, out (P1DIR.1 = 1)
+    impl<PULL> ToAlternate2 for Pin<P1, Pin2, Input<PULL>> {} // 10: TB0TRG, in (P1DIR.2 = 0)
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin6, DIR> {} // 10: TB0.CCI1A in / TB0.1 out
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin7, DIR> {} // 10: TB0.CCI2A in / TB0.2 out
+    // P1 alternate 3, P1SELx = 11 (SLASEC4D Table 6-63, p. 96): the analog functions, A0 to A7 on
+    // P1.0 to P1.7, with COMP0.0 and Veref+ on P1.0, OA0O and COMP0.1 on P1.1, OA0- and Veref- on P1.2,
+    // OA0+ on P1.3, OA1O on P1.5, OA1- on P1.6, OA1+ and VREF+ on P1.7 (the OAx on the MSP430FR235x only)
     impl<PIN: PinNum, DIR> ToAlternate3 for Pin<P1, PIN, DIR> {}
 
-    // P2 alternate 1
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {}
-    impl<PULL> ToAlternate1 for Pin<P2, Pin2, Input<PULL>> {}
-    impl<PULL> ToAlternate1 for Pin<P2, Pin3, Input<PULL>> {} // TB1TRG
-    impl       ToAlternate1 for Pin<P2, Pin6, Output> {} // MCLK
-    impl<PULL> ToAlternate1 for Pin<P2, Pin7, Input<PULL>> {} // TB0CLK
-    // P2 alternate 2
-    impl ToAlternate2 for Pin<P2, Pin0, Output> {}
-    impl ToAlternate2 for Pin<P2, Pin1, Output> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin6, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P2, Pin7, DIR> {}
-    // P2 alternate 3
-    impl<DIR> ToAlternate3 for Pin<P2, Pin4, DIR> {}
-    impl<DIR> ToAlternate3 for Pin<P2, Pin5, DIR> {}
+    // P2 alternate 1, P2SELx = 01 (SLASEC4D Table 6-64, p. 98). P2.4 and P2.5 have no 01 function. The
+    // name "P2.3/UCB0CLK/TB1TRG" lists UCB0CLK, but the table has no UCB0CLK row for P2.3, and UCB0CLK
+    // is only on P1.1 (SLASEC4D Table 4-2, p. 24).
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {} // 01: TB1.CCI1A in / TB1.1 out
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {} // 01: TB1.CCI2A in / TB1.2 out
+    impl<PULL> ToAlternate1 for Pin<P2, Pin2, Input<PULL>> {} // 01: TB1CLK, in (P2DIR.2 = 0)
+    impl<PULL> ToAlternate1 for Pin<P2, Pin3, Input<PULL>> {} // 01: TB1TRG, in (P2DIR.3 = 0)
+    impl       ToAlternate1 for Pin<P2, Pin6, Output> {} // 01: MCLK, out (P2DIR.6 = 1)
+    impl<PULL> ToAlternate1 for Pin<P2, Pin7, Input<PULL>> {} // 01: TB0CLK, in (P2DIR.7 = 0)
+    // P2 alternate 2, P2SELx = 10 (SLASEC4D Table 6-64, p. 98)
+    impl ToAlternate2 for Pin<P2, Pin0, Output> {} // 10: COMP0.O, out (P2DIR.0 = 1)
+    impl ToAlternate2 for Pin<P2, Pin1, Output> {} // 10: COMP1.O, out (P2DIR.1 = 1)
+    impl<DIR> ToAlternate2 for Pin<P2, Pin6, DIR> {} // 10: XOUT, either direction
+    impl<DIR> ToAlternate2 for Pin<P2, Pin7, DIR> {} // 10: XIN, either direction
+    // P2 alternate 3, P2SELx = 11 (SLASEC4D Table 6-64, p. 98)
+    impl<DIR> ToAlternate3 for Pin<P2, Pin4, DIR> {} // 11: COMP1.1
+    impl<DIR> ToAlternate3 for Pin<P2, Pin5, DIR> {} // 11: COMP1.0
 
-    // P3 alternate 1
-    impl      ToAlternate1 for Pin<P3, Pin0, Output> {} // MCLK
-    impl      ToAlternate1 for Pin<P3, Pin4, Output> {} // SMCLK
-    // P3 alternate 3 is the SAC2 and SAC3 op-amp pins, on the MSP430FR235x only
+    // P3 alternate 1, P3SELx = 01 (SLASEC4D Table 6-65, p. 100)
+    impl      ToAlternate1 for Pin<P3, Pin0, Output> {} // 01: MCLK, out (P3DIR.0 = 1)
+    impl      ToAlternate1 for Pin<P3, Pin4, Output> {} // 01: SMCLK, out (P3DIR.4 = 1)
+    // P3 alternate 3 is the SAC2 and SAC3 op-amp pins, on the MSP430FR235x only (P3SELx = 11,
+    // SLASEC4D Table 6-65, p. 100, note 2: "MSP430FR235x devices only")
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin1, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin1, DIR> {} // 11: OA2O
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin2, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin2, DIR> {} // 11: OA2-
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin3, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin3, DIR> {} // 11: OA2+
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin5, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin5, DIR> {} // 11: OA3O
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin6, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin6, DIR> {} // 11: OA3-
     #[cfg(feature = "sac")]
-    impl<DIR> ToAlternate3 for Pin<P3, Pin7, DIR> {}
+    impl<DIR> ToAlternate3 for Pin<P3, Pin7, DIR> {} // 11: OA3+
 
-    // P4 alternate 1
+    // P4 alternate 1, P4SELx = 01 (SLASEC4D Table 6-66, p. 102): P4.0 UCA1STE, P4.1 UCA1CLK,
+    // P4.2 UCA1RXD/UCA1SOMI, P4.3 UCA1TXD/UCA1SIMO, P4.4 UCB1STE, P4.5 UCB1CLK, P4.6 UCB1SIMO/UCB1SDA,
+    // P4.7 UCB1SOMI/UCB1SCL
     impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P4, PIN, DIR> {}
-    // P4 alternate 2
-    impl<DIR> ToAlternate2 for Pin<P4, Pin0, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P4, Pin2, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P4, Pin3, DIR> {}
+    // P4 alternate 2, P4SELx = 10 (SLASEC4D Table 6-66, p. 102). On P4.0, ISORXD feeds UCA1RXD and
+    // TB3.CCI2B, and ISOTXD is "the logical AND product of UCA1TXD and TB3.2B" (SLASEC4D Table 4-2,
+    // p. 24).
+    impl<DIR> ToAlternate2 for Pin<P4, Pin0, DIR> {} // 10: ISORXD in / ISOTXD out
+    impl<DIR> ToAlternate2 for Pin<P4, Pin2, DIR> {} // 10: UCA1RXD, inverted
+    impl<DIR> ToAlternate2 for Pin<P4, Pin3, DIR> {} // 10: UCA1TXD, inverted
 
-    // P5 alternate 1
-    impl<DIR> ToAlternate1 for Pin<P5, Pin0, DIR> {}
-    impl<DIR> ToAlternate1 for Pin<P5, Pin1, DIR> {}
-    impl<PULL> ToAlternate1 for Pin<P5, Pin2, Input<PULL>> {} // TB2CLK
-    impl<PULL> ToAlternate1 for Pin<P5, Pin3, Input<PULL>> {} // TB2TRG
-    // P5 alternate 2
-    impl<DIR> ToAlternate2 for Pin<P5, Pin0, DIR> {}
-    impl<DIR> ToAlternate2 for Pin<P5, Pin1, DIR> {}
-    // P5 alternate 3
-    impl<DIR> ToAlternate3 for Pin<P5, Pin0, DIR> {}
-    impl<DIR> ToAlternate3 for Pin<P5, Pin1, DIR> {}
-    impl<DIR> ToAlternate3 for Pin<P5, Pin2, DIR> {}
-    impl<DIR> ToAlternate3 for Pin<P5, Pin3, DIR> {}
+    // P5 alternate 1, P5SELx = 01 (SLASEC4D Table 6-67, p. 104)
+    impl<DIR> ToAlternate1 for Pin<P5, Pin0, DIR> {} // 01: TB2.CCI1A in / TB2.1 out
+    impl<DIR> ToAlternate1 for Pin<P5, Pin1, DIR> {} // 01: TB2.CCI2A in / TB2.2 out
+    impl<PULL> ToAlternate1 for Pin<P5, Pin2, Input<PULL>> {} // 01: TB2CLK, in (P5DIR.2 = 0)
+    impl<PULL> ToAlternate1 for Pin<P5, Pin3, Input<PULL>> {} // 01: TB2TRG, in (P5DIR.3 = 0)
+    // P5 alternate 2, P5SELx = 10 (SLASEC4D Table 6-67, p. 104)
+    impl<DIR> ToAlternate2 for Pin<P5, Pin0, DIR> {} // 10: MFM.RX
+    impl<DIR> ToAlternate2 for Pin<P5, Pin1, DIR> {} // 10: MFM.TX
+    // P5 alternate 3, P5SELx = 11 (SLASEC4D Table 6-67, p. 104)
+    impl<DIR> ToAlternate3 for Pin<P5, Pin0, DIR> {} // 11: A8
+    impl<DIR> ToAlternate3 for Pin<P5, Pin1, DIR> {} // 11: A9
+    impl<DIR> ToAlternate3 for Pin<P5, Pin2, DIR> {} // 11: A10
+    impl<DIR> ToAlternate3 for Pin<P5, Pin3, DIR> {} // 11: A11
 
-    // P6 alternate 1
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin0, DIR> {} // TB3.1
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin1, DIR> {} // TB3.2
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin2, DIR> {} // TB3.3
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin3, DIR> {} // TB3.4
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin4, DIR> {} // TB3.5
-    impl<DIR>  ToAlternate1 for Pin<P6, Pin5, DIR> {} // TB3.6
-    impl<PULL> ToAlternate1 for Pin<P6, Pin6, Input<PULL>> {} // TB3CLK
+    // P6 alternate 1, P6SELx = 01 (SLASEC4D Table 6-68, p. 106)
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin0, DIR> {} // 01: TB3.CCI1A in / TB3.1 out
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin1, DIR> {} // 01: TB3.CCI2A in / TB3.2 out
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin2, DIR> {} // 01: TB3.CCI3A in / TB3.3 out
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin3, DIR> {} // 01: TB3.CCI4A in / TB3.4 out
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin4, DIR> {} // 01: TB3.CCI5A in / TB3.5 out
+    impl<DIR>  ToAlternate1 for Pin<P6, Pin5, DIR> {} // 01: TB3.CCI6A in / TB3.6 out
+    impl<PULL> ToAlternate1 for Pin<P6, Pin6, Input<PULL>> {} // 01: TB3CLK, in (P6DIR.6 = 0)
 
-    // GPIO port impls, PAC register methods, and marking ports as interrupt-capable
+    // GPIO port impls, PAC register methods, and marking ports as interrupt-capable. P1 to P4 have
+    // PxSELC and the interrupt registers, P5 and P6 only PxSELC (SLASEC4D Tables 6-41 to 6-43, p. 86 to
+    // p. 87): "Interrupt conditions are possible in P1, P2, P3, and P4" (SLASEC4D 6.10.3, p. 69; port
+    // vectors in SLASEC4D Table 6-2, p. 64).
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
     gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2selc, p2sel0, p2sel1, [p2ies, p2ie, p2ifg, p2iv]);
     gpio_impl!(p3: P3 => p3in, p3out, p3dir, p3ren, p3selc, p3sel0, p3sel1, [p3ies, p3ie, p3ifg, p3iv]);
@@ -94,7 +115,9 @@ pub mod gpio {
     gpio_impl!(p5: P5 => p5in, p5out, p5dir, p5ren, p5selc, p5sel0, p5sel1);
     gpio_impl!(p6: P6 => p6in, p6out, p6dir, p6ren, p6selc, p6sel0, p6sel1);
 
-    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    // Pins per port (SLASEC4D 6.10.3, p. 69: "P1, P2, P3, and P4 are full 8-bit ports; P5 and P6
+    // feature up to 5-bit and 7-bit ports"). The pins a port lacks are always the top ones: P5 has P5.0
+    // to P5.4 and P6 has P6.0 to P6.6 (SLASEC4D Table 6-67, p. 104; SLASEC4D Table 6-68, p. 106).
     impl_port_pins!(P1, 8);
     impl_port_pins!(P2, 8);
     impl_port_pins!(P3, 8);
@@ -107,79 +130,99 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
 
-    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    // The timer whose CCR1 output triggers conversions (SLASEC4D Table 6-22, p. 77: ADCSHSx = 10b is
+    // TB1.1B; SLASEC4D Table 6-17, p. 74: the TB1 CCR1 output goes "To ADC trigger")
     impl AdcTriggerTimer for crate::pac::Tb1 {}
 
-    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
-    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {}
-    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {}
+    // External reference inputs and the VREF+ output, each in its P1SELx = 11 function (SLASEC4D
+    // Table 6-63, p. 96; SLASEC4D Table 4-2, p. 22 to p. 23)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {} // 11: Veref+, "ADC positive reference"
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {} // 11: Veref-, "ADC negative reference"
+    // 11: VREF+, the 1.2 V reference output: "When A7 is used, the PMM 1.2-V reference voltage can be
+    // output to this pin" (SLASEC4D Table 6-21, note 1, p. 77). The 1.5 V, 2.0 V and 2.5 V references
+    // "cannot be output to the VREF+ pin" (SLASEC4D Table 5-10, p. 41).
     impl<DIR> VrefOutputPin for Pin<P1, Pin7, Alternate3<DIR>> {}
 
-    impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);
-    impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);
-    impl_adc_channel_pin!(P1, Pin2, Alternate3 => 2);
-    impl_adc_channel_pin!(P1, Pin3, Alternate3 => 3);
-    impl_adc_channel_pin!(P1, Pin4, Alternate3 => 4);
-    impl_adc_channel_pin!(P1, Pin5, Alternate3 => 5);
-    impl_adc_channel_pin!(P1, Pin6, Alternate3 => 6);
-    impl_adc_channel_pin!(P1, Pin7, Alternate3 => 7);
-    impl_adc_channel_pin!(P5, Pin0, Alternate3 => 8);
-    impl_adc_channel_pin!(P5, Pin1, Alternate3 => 9);
-    impl_adc_channel_pin!(P5, Pin2, Alternate3 => 10);
-    impl_adc_channel_pin!(P5, Pin3, Alternate3 => 11);
+    // The 12 external inputs A0 to A11 with their ADCINCHx value (SLASEC4D 6.10.12 and Table 6-21,
+    // p. 77), each in its PxSELx = 11 function (SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-67,
+    // p. 104): "Set the PxSEL bit in the port register to disable the I/O functions" (SLAU445I 1.12.4.3,
+    // p. 54).
+    impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0); // A0, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1); // A1, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin2, Alternate3 => 2); // A2, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin3, Alternate3 => 3); // A3, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin4, Alternate3 => 4); // A4, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin5, Alternate3 => 5); // A5, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin6, Alternate3 => 6); // A6, P1SELx = 11
+    impl_adc_channel_pin!(P1, Pin7, Alternate3 => 7); // A7, P1SELx = 11
+    impl_adc_channel_pin!(P5, Pin0, Alternate3 => 8); // A8, P5SELx = 11
+    impl_adc_channel_pin!(P5, Pin1, Alternate3 => 9); // A9, P5SELx = 11
+    impl_adc_channel_pin!(P5, Pin2, Alternate3 => 10); // A10, P5SELx = 11
+    impl_adc_channel_pin!(P5, Pin3, Alternate3 => 11); // A11, P5SELx = 11
 }
 
 /* Backup Memory */
-/// Size of the Backup Memory segment on this device, in bytes
+/// Size of the Backup Memory segment on this device, in bytes (SLASEC4D 6.10.10, p. 76: "This device
+/// provides up to 32 bytes that are retained during LPM3.5"; BAKMEM0 to BAKMEM15 in SLASEC4D
+/// Table 6-54, p. 92)
 pub const BAK_MEM_SIZE: usize = 32;
 
 /* Capture */
 mod capture {
     use crate::{capture::CapturePeriph, gpio::*, pac::*};
 
+    // Capture inputs CCInA (SLASEC4D Tables 6-16 to 6-19, p. 73 to p. 75), on the pins with PxDIR = 0
+    // in the pin function tables. CCR0 has no pin: "The CCR0 registers on all timers are not
+    // externally connected" (SLASEC4D 6.10.9, p. 73).
+
+    // TB0: P1SELx = 10 (SLASEC4D Table 6-16, p. 73; SLASEC4D Table 6-63, p. 96)
     impl CapturePeriph for Tb0 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
-        type Gpio2 = Pin<P1, Pin7, Alternate2<Input<Floating>>>;
+        type Gpio1 = Pin<P1, Pin6, Alternate2<Input<Floating>>>; // TB0.CCI1A, P1SELx = 10
+        type Gpio2 = Pin<P1, Pin7, Alternate2<Input<Floating>>>; // TB0.CCI2A, P1SELx = 10
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
         type Gpio6 = ();
     }
 
+    // TB1: P2SELx = 01 (SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-64, p. 98)
     impl CapturePeriph for Tb1 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P2, Pin0, Alternate1<Input<Floating>>>;
-        type Gpio2 = Pin<P2, Pin1, Alternate1<Input<Floating>>>;
+        type Gpio1 = Pin<P2, Pin0, Alternate1<Input<Floating>>>; // TB1.CCI1A, P2SELx = 01
+        type Gpio2 = Pin<P2, Pin1, Alternate1<Input<Floating>>>; // TB1.CCI2A, P2SELx = 01
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
         type Gpio6 = ();
     }
 
+    // TB2: P5SELx = 01 (SLASEC4D Table 6-18, p. 74; SLASEC4D Table 6-67, p. 104)
     impl CapturePeriph for Tb2 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P5, Pin0, Alternate1<Input<Floating>>>;
-        type Gpio2 = Pin<P5, Pin1, Alternate1<Input<Floating>>>;
+        type Gpio1 = Pin<P5, Pin0, Alternate1<Input<Floating>>>; // TB2.CCI1A, P5SELx = 01
+        type Gpio2 = Pin<P5, Pin1, Alternate1<Input<Floating>>>; // TB2.CCI2A, P5SELx = 01
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
         type Gpio6 = ();
     }
 
+    // TB3: P6SELx = 01 (SLASEC4D Table 6-19, p. 75; SLASEC4D Table 6-68, p. 106)
     impl CapturePeriph for Tb3 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P6, Pin0, Alternate1<Input<Floating>>>;
-        type Gpio2 = Pin<P6, Pin1, Alternate1<Input<Floating>>>;
-        type Gpio3 = Pin<P6, Pin2, Alternate1<Input<Floating>>>;
-        type Gpio4 = Pin<P6, Pin3, Alternate1<Input<Floating>>>;
-        type Gpio5 = Pin<P6, Pin4, Alternate1<Input<Floating>>>;
-        type Gpio6 = Pin<P6, Pin5, Alternate1<Input<Floating>>>;
+        type Gpio1 = Pin<P6, Pin0, Alternate1<Input<Floating>>>; // TB3.CCI1A, P6SELx = 01
+        type Gpio2 = Pin<P6, Pin1, Alternate1<Input<Floating>>>; // TB3.CCI2A, P6SELx = 01
+        type Gpio3 = Pin<P6, Pin2, Alternate1<Input<Floating>>>; // TB3.CCI3A, P6SELx = 01
+        type Gpio4 = Pin<P6, Pin3, Alternate1<Input<Floating>>>; // TB3.CCI4A, P6SELx = 01
+        type Gpio5 = Pin<P6, Pin4, Alternate1<Input<Floating>>>; // TB3.CCI5A, P6SELx = 01
+        type Gpio6 = Pin<P6, Pin5, Alternate1<Input<Floating>>>; // TB3.CCI6A, P6SELx = 01
     }
 }
 
 /* Clocks */
-/// MODCLK frequency, typical (data sheet: 3.0 MHz to 4.6 MHz)
+/// MODCLK frequency, typical (SLASEC4D Table 5-9, p. 41: fMODOSC is 3.0 MHz to 4.6 MHz, 3.8 MHz
+/// typical, at 3.0 V)
 pub const MODCLK_FREQ_HZ: u32 = 3_800_000;
 
 /* eCOMP */
@@ -195,44 +238,61 @@ pub mod ecomp {
         sac::Amplifier,
     };
 
+    // eCOMP0 channels (SLASEC4D Table 6-23, p. 78): CPPSEL and CPNSEL 000b is COMP0.0 (P1.0), 001b
+    // COMP0.1 (P1.1), 010b the low-power 1.2 V reference, 101b the SAC0 output OA0O (P1.1) on the
+    // positive side and the SAC2 output OA2O (P3.1) on the negative side, and 110b the 6-bit DAC;
+    // 011b and 100b are N/A. The input pins are in their PxSELx = 11 function (SLASEC4D Table 6-63,
+    // p. 96; SLASEC4D Table 6-65, p. 100). The output COMP0.O is P2.0 with P2SELx = 10 and P2DIR = 1
+    // (SLASEC4D Table 6-64, p. 98; SLASEC4D Table 6-25, p. 78).
     impl ECompInputs for EComp0 {
-        type COMPx_0   = Pin<P1, Pin0, Alternate3<Input<Floating>>>;
-        type COMPx_1   = Pin<P1, Pin1, Alternate3<Input<Floating>>>;
-        type COMPx_2   = Infallible; // Not used
-        type COMPx_3   = Infallible; // Not used
-        type COMPx_Out = Pin<P2, Pin0, Alternate2<Output>>;
+        type COMPx_0   = Pin<P1, Pin0, Alternate3<Input<Floating>>>; // COMP0.0, P1SELx = 11
+        type COMPx_1   = Pin<P1, Pin1, Alternate3<Input<Floating>>>; // COMP0.1, P1SELx = 11
+        type COMPx_2   = Infallible; // Not used: CPxSEL 011b is N/A
+        type COMPx_3   = Infallible; // Not used: CPxSEL 100b is N/A
+        type COMPx_Out = Pin<P2, Pin0, Alternate2<Output>>; // COMP0.O, P2SELx = 10, out
         #[cfg(feature = "sac")]
-        type SACp = Amplifier<Sac0>;
+        type SACp = Amplifier<Sac0>; // CPPSEL 101b: OA0O
         #[cfg(feature = "sac")]
-        type SACn = Amplifier<Sac2>;
-        
-        type DeviceSpecific0    = (); // Internal 1.2V reference. No type required.
+        type SACn = Amplifier<Sac2>; // CPNSEL 101b: OA2O
+
+        type DeviceSpecific0    = (); // Internal 1.2V reference (CPxSEL 010b). No type required.
         type DeviceSpecific1    = Infallible; // Not used
         type DeviceSpecific2Pos = Infallible; // Not used
         type DeviceSpecific2Neg = Infallible; // Not used
+        // CPPSEL 101b: OA0O, P1SELx = 11
         type DeviceSpecific3Pos = Pin<P1, Pin1, Alternate3<Input<Floating>>>;
+        // CPNSEL 101b: OA2O, P3SELx = 11
         type DeviceSpecific3Neg = Pin<P3, Pin1, Alternate3<Input<Floating>>>;
     }
+    // eCOMP1 channels (SLASEC4D Table 6-24, p. 78): CPPSEL and CPNSEL 000b is COMP1.0 (P2.5), 001b
+    // COMP1.1 (P2.4), 010b the low-power 1.2 V reference, 101b the SAC1 output OA1O (P1.5) on the
+    // positive side and the SAC3 output OA3O (P3.5) on the negative side, and 110b the 6-bit DAC;
+    // 011b and 100b are N/A. The input pins are in their PxSELx = 11 function (SLASEC4D Table 6-63,
+    // p. 96; SLASEC4D Table 6-64, p. 98; SLASEC4D Table 6-65, p. 100). The output COMP1.O is P2.1 with
+    // P2SELx = 10 and P2DIR = 1 (SLASEC4D Table 6-64, p. 98; SLASEC4D Table 6-26, p. 79).
     impl ECompInputs for EComp1 {
-        type COMPx_0   = Pin<P2, Pin5, Alternate3<Input<Floating>>>;
-        type COMPx_1   = Pin<P2, Pin4, Alternate3<Input<Floating>>>;
-        type COMPx_2   = Infallible; // Not used
-        type COMPx_3   = Infallible; // Not used
-        type COMPx_Out = Pin<P2, Pin1, Alternate2<Output>>;
+        type COMPx_0   = Pin<P2, Pin5, Alternate3<Input<Floating>>>; // COMP1.0, P2SELx = 11
+        type COMPx_1   = Pin<P2, Pin4, Alternate3<Input<Floating>>>; // COMP1.1, P2SELx = 11
+        type COMPx_2   = Infallible; // Not used: CPxSEL 011b is N/A
+        type COMPx_3   = Infallible; // Not used: CPxSEL 100b is N/A
+        type COMPx_Out = Pin<P2, Pin1, Alternate2<Output>>; // COMP1.O, P2SELx = 10, out
         #[cfg(feature = "sac")]
-        type SACp = Amplifier<Sac1>;
+        type SACp = Amplifier<Sac1>; // CPPSEL 101b: OA1O
         #[cfg(feature = "sac")]
-        type SACn = Amplifier<Sac3>;
+        type SACn = Amplifier<Sac3>; // CPNSEL 101b: OA3O
 
-        type DeviceSpecific0    = (); // Internal 1.2V reference. No type required.
+        type DeviceSpecific0    = (); // Internal 1.2V reference (CPxSEL 010b). No type required.
         type DeviceSpecific1    = Infallible; // Not used
         type DeviceSpecific2Pos = Infallible; // Not used
         type DeviceSpecific2Neg = Infallible; // Not used
+        // CPPSEL 101b: OA1O, P1SELx = 11
         type DeviceSpecific3Pos = Pin<P1, Pin5, Alternate3<Input<Floating>>>;
+        // CPNSEL 101b: OA3O, P3SELx = 11
         type DeviceSpecific3Neg = Pin<P3, Pin5, Alternate3<Input<Floating>>>;
     }
 
-    /// List of possible inputs to the positive input of an eCOMP comparator.
+    /// List of possible inputs to the positive input of an eCOMP comparator (CPPSEL, SLASEC4D
+    /// Tables 6-23 and 6-24, p. 78).
     /// The amplifier output and DAC options take a reference to ensure they have been configured.
     #[allow(non_camel_case_types)]
     pub enum PositiveInput<'a, COMP: ECompInputs> {
@@ -240,14 +300,15 @@ pub mod ecomp {
         COMPx_0(COMP::COMPx_0),
         /// COMPx.1. P1.1 for COMP0, P2.4 for COMP1
         COMPx_1(COMP::COMPx_1),
-        /// Internal 1.2V reference
+        /// Internal 1.2V reference: the low-power 1.2 V reference, "fixed at channel 2" (SLASEC4D
+        /// 6.10.13, p. 78), 1.20 V typical (SLASEC4D Table 5-10, p. 41)
         _1V2,
         #[cfg(feature = "sac")]
         /// Output of amplifier SAC0 for eCOMP0, SAC1 for eCOMP1.
         ///
         /// Requires a reference to ensure that it has been configured.
         OAxO(&'a COMP::SACp),
-        /// This eCOMP's internal 6-bit DAC
+        /// This eCOMP's internal 6-bit DAC (SLASEC4D 6.10.13, p. 78)
         ///
         /// Requires a reference to ensure that it has been configured.
         Dac(&'a dyn CompDacPeriph<COMP>),
@@ -255,6 +316,7 @@ pub mod ecomp {
     impl<COMP: ECompInputs> PositiveInput<'_, COMP> {
         #[inline(always)]
         pub(crate) fn cppsel(&self) -> u8 {
+            // CPPSEL values (SLASEC4D Tables 6-23 and 6-24, p. 78)
             match self {
                 PositiveInput::COMPx_0(_) => 0b000,
                 PositiveInput::COMPx_1(_) => 0b001,
@@ -266,7 +328,8 @@ pub mod ecomp {
         }
     }
 
-    /// List of possible inputs to the negative input of an eCOMP comparator.
+    /// List of possible inputs to the negative input of an eCOMP comparator (CPNSEL, SLASEC4D
+    /// Tables 6-23 and 6-24, p. 78).
     /// The amplifier output and DAC options take a reference to ensure they have been configured.
     #[allow(non_camel_case_types)]
     pub enum NegativeInput<'a, COMP: ECompInputs> {
@@ -274,17 +337,19 @@ pub mod ecomp {
         COMPx_0(COMP::COMPx_0),
         /// COMPx.1. P1.1 for COMP0, P2.4 for COMP1
         COMPx_1(COMP::COMPx_1),
-        /// Internal 1.2V reference
+        /// Internal 1.2V reference: the low-power 1.2 V reference, "fixed at channel 2" (SLASEC4D
+        /// 6.10.13, p. 78), 1.20 V typical (SLASEC4D Table 5-10, p. 41)
         _1V2,
         #[cfg(feature = "sac")]
         /// Output of amplifier SAC2 for eCOMP0, SAC3 for eCOMP1.
         OAxO(&'a COMP::SACn),
-        /// This eCOMP's internal 6-bit DAC
+        /// This eCOMP's internal 6-bit DAC (SLASEC4D 6.10.13, p. 78)
         Dac(&'a dyn CompDacPeriph<COMP>),
     }
     impl<COMP: ECompInputs> NegativeInput<'_, COMP> {
         #[inline(always)]
         pub(crate) fn cpnsel(&self) -> u8 {
+            // CPNSEL values (SLASEC4D Tables 6-23 and 6-24, p. 78)
             match self {
                 NegativeInput::COMPx_0(_) => 0b000,
                 NegativeInput::COMPx_1(_) => 0b001,
@@ -308,6 +373,7 @@ mod eusci {
         pac::*,
     };
 
+    // eUSCI_A0, eUSCI_A1, eUSCI_B0 and eUSCI_B1 (SLASEC4D 6.10.8, p. 72)
     eusci_steal_impl!(EUsciA0);
     eusci_steal_impl!(EUsciA1);
     eusci_steal_impl!(EUsciB0);
@@ -365,27 +431,32 @@ mod i2c {
         ucb1iv,
         crate::pac::e_usci_b1::ucb1ifg::R,
     );
-    /// I2C SCL pin for eUSCI B0
+    // I2C pins, each in its PxSELx = 01 function, the macro's default Alternate1 (SLASEC4D Table 6-14,
+    // p. 72; SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-66, p. 102). UCLKI is the UCSSELx = 00b clock
+    // source (SLAU445I 24.4.1, p. 649), "Externally provided clock on the eUSCI_B SPI clock input pin"
+    // (SLAU445I Figure 24-1, p. 628), so it is the UCBxCLK pin.
+
+    /// I2C SCL pin for eUSCI B0: P1.3, UCB0SCL (P1SELx = 01)
     pub struct UsciB0SCLPin;
     impl_i2c_pin!(UsciB0SCLPin, P1, Pin3);
 
-    /// I2C SDA pin for eUSCI B0
+    /// I2C SDA pin for eUSCI B0: P1.2, UCB0SDA (P1SELx = 01)
     pub struct UsciB0SDAPin;
     impl_i2c_pin!(UsciB0SDAPin, P1, Pin2);
 
-    /// UCLKI pin for eUSCI B0. Used as an external clock source.
+    /// UCLKI pin for eUSCI B0. Used as an external clock source. P1.1, UCB0CLK (P1SELx = 01)
     pub struct UsciB0UCLKIPin;
     impl_i2c_pin!(UsciB0UCLKIPin, P1, Pin1);
 
-    /// I2C SCL pin for eUSCI B1
+    /// I2C SCL pin for eUSCI B1: P4.7, UCB1SCL (P4SELx = 01)
     pub struct UsciB1SCLPin;
     impl_i2c_pin!(UsciB1SCLPin, P4, Pin7);
 
-    /// I2C SDA pin for eUSCI B1
+    /// I2C SDA pin for eUSCI B1: P4.6, UCB1SDA (P4SELx = 01)
     pub struct UsciB1SDAPin;
     impl_i2c_pin!(UsciB1SDAPin, P4, Pin6);
 
-    /// UCLKI pin for eUSCI B1. Used as an external clock source.
+    /// UCLKI pin for eUSCI B1. Used as an external clock source. P4.5, UCB1CLK (P4SELx = 01)
     pub struct UsciB1UCLKIPin;
     impl_i2c_pin!(UsciB1UCLKIPin, P4, Pin5);
 
@@ -402,55 +473,59 @@ mod i2c {
 }
 
 /* Information Memory */
-/// Size of the Information Memory segment on this device, in bytes
+/// Size of the Information Memory segment on this device, in bytes (SLASEC4D Table 6-4, p. 65:
+/// information memory (FRAM), 512 bytes, 1800h to 19FFh)
 pub const INFO_MEM_SIZE: usize = 512;
 
 /* PWM */
 mod pwm {
     use crate::{gpio::*, pac::*, pwm::*};
 
-    // TB0
+    // Compare outputs TBx.n (SLASEC4D Tables 6-16 to 6-19, p. 73 to p. 75), on the pins with PxDIR = 1
+    // in the pin function tables. CCR0 sets the period and has no pin (SLASEC4D 6.10.9, p. 73).
+
+    // TB0: P1SELx = 10 (SLASEC4D Table 6-16, p. 73; SLASEC4D Table 6-63, p. 96)
     impl PwmPeriph<CCR1> for Tb0 {
-        type Gpio = Pin<P1, Pin6, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin6, Alternate2<Output>>; // TB0.1, P1SELx = 10
     }
     impl PwmPeriph<CCR2> for Tb0 {
-        type Gpio = Pin<P1, Pin7, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin7, Alternate2<Output>>; // TB0.2, P1SELx = 10
     }
 
-    // TB1
+    // TB1: P2SELx = 01 (SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-64, p. 98)
     impl PwmPeriph<CCR1> for Tb1 {
-        type Gpio = Pin<P2, Pin0, Alternate1<Output>>;
+        type Gpio = Pin<P2, Pin0, Alternate1<Output>>; // TB1.1, P2SELx = 01
     }
     impl PwmPeriph<CCR2> for Tb1 {
-        type Gpio = Pin<P2, Pin1, Alternate1<Output>>;
+        type Gpio = Pin<P2, Pin1, Alternate1<Output>>; // TB1.2, P2SELx = 01
     }
 
-    // TB2
+    // TB2: P5SELx = 01 (SLASEC4D Table 6-18, p. 74; SLASEC4D Table 6-67, p. 104)
     impl PwmPeriph<CCR1> for Tb2 {
-        type Gpio = Pin<P5, Pin0, Alternate1<Output>>;
+        type Gpio = Pin<P5, Pin0, Alternate1<Output>>; // TB2.1, P5SELx = 01
     }
     impl PwmPeriph<CCR2> for Tb2 {
-        type Gpio = Pin<P5, Pin1, Alternate1<Output>>;
+        type Gpio = Pin<P5, Pin1, Alternate1<Output>>; // TB2.2, P5SELx = 01
     }
 
-    // TB3
+    // TB3: P6SELx = 01 (SLASEC4D Table 6-19, p. 75; SLASEC4D Table 6-68, p. 106)
     impl PwmPeriph<CCR1> for Tb3 {
-        type Gpio = Pin<P6, Pin0, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin0, Alternate1<Output>>; // TB3.1, P6SELx = 01
     }
     impl PwmPeriph<CCR2> for Tb3 {
-        type Gpio = Pin<P6, Pin1, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin1, Alternate1<Output>>; // TB3.2, P6SELx = 01
     }
     impl PwmPeriph<CCR3> for Tb3 {
-        type Gpio = Pin<P6, Pin2, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin2, Alternate1<Output>>; // TB3.3, P6SELx = 01
     }
     impl PwmPeriph<CCR4> for Tb3 {
-        type Gpio = Pin<P6, Pin3, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin3, Alternate1<Output>>; // TB3.4, P6SELx = 01
     }
     impl PwmPeriph<CCR5> for Tb3 {
-        type Gpio = Pin<P6, Pin4, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin4, Alternate1<Output>>; // TB3.5, P6SELx = 01
     }
     impl PwmPeriph<CCR6> for Tb3 {
-        type Gpio = Pin<P6, Pin5, Alternate1<Output>>;
+        type Gpio = Pin<P6, Pin5, Alternate1<Output>>; // TB3.6, P6SELx = 01
     }
 }
 
@@ -460,32 +535,35 @@ mod sac {
     use crate::pac::{Sac0, Sac1, Sac2, Sac3};
     use crate::{gpio::*, hw_traits::sac::*};
 
+    // SAC pins, all three in their PxSELx = 11 function (the macro uses Alternate3): the OAx+ pin is
+    // PSEL = 00 and the OAx- pin is NSEL = 00 (SLASEC4D Tables 6-27 to 6-30, p. 79 to p. 80), and OAxO
+    // is the output pin (SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-65, p. 100)
     impl_sac_periph!(
-        Sac0, 
-        P1, Pin3, // Positive input pin
-        P1, Pin2, // Negative input pin
-        P1, Pin1, // Output pin
+        Sac0,
+        P1, Pin3, // Positive input pin: OA0+, P1SELx = 11
+        P1, Pin2, // Negative input pin: OA0-, P1SELx = 11
+        P1, Pin1, // Output pin: OA0O, P1SELx = 11
         sac0oa, sac0pga, sac0dac, sac0dat, sac0iv
     );
     impl_sac_periph!(
-        Sac1, 
-        P1, Pin7, 
-        P1, Pin6, 
-        P1, Pin5,
+        Sac1,
+        P1, Pin7, // OA1+, P1SELx = 11
+        P1, Pin6, // OA1-, P1SELx = 11
+        P1, Pin5, // OA1O, P1SELx = 11
         sac1oa, sac1pga, sac1dac, sac1dat, sac1iv
     );
     impl_sac_periph!(
-        Sac2, 
-        P3, Pin3, 
-        P3, Pin2, 
-        P3, Pin1,
+        Sac2,
+        P3, Pin3, // OA2+, P3SELx = 11
+        P3, Pin2, // OA2-, P3SELx = 11
+        P3, Pin1, // OA2O, P3SELx = 11
         sac2oa, sac2pga, sac2dac, sac2dat, sac2iv
     );
     impl_sac_periph!(
-        Sac3, 
-        P3, Pin7, 
-        P3, Pin6, 
-        P3, Pin5,
+        Sac3,
+        P3, Pin7, // OA3+, P3SELx = 11
+        P3, Pin6, // OA3-, P3SELx = 11
+        P3, Pin5, // OA3O, P3SELx = 11
         sac3oa, sac3pga, sac3dac, sac3dat, sac3iv
     );
 }
@@ -534,32 +612,41 @@ mod serial {
         type TxPin = UsciA1TxPin;
         type RxPin = UsciA1RxPin;
     }
-    /// UCLK pin for E_USCI_A0
+    // UART pins, each in its PxSELx = 01 function, the macro's default Alternate1 (SLASEC4D Table 6-14,
+    // p. 72; SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-66, p. 102). UCSSELx = 00b selects UCLK as
+    // the clock source (SLAU445I 22.4.1, p. 593), an external clock of up to 24 MHz (SLASEC4D
+    // Table 5-14, p. 45). The UCLK pins are taken to be the UCAxCLK pins: no document names the pin for
+    // UART mode, and SLASEC4D Table 6-14, p. 72 lists no UART function on them.
+
+    /// UCLK pin for E_USCI_A0: P1.5, UCA0CLK (P1SELx = 01)
     pub struct UsciA0ClockPin;
     impl_serial_pin!(UsciA0ClockPin, P1, Pin5);
 
-    /// Tx pin for E_USCI_A0
+    /// Tx pin for E_USCI_A0: P1.7, UCA0TXD (P1SELx = 01)
     pub struct UsciA0TxPin;
     impl_serial_pin!(UsciA0TxPin, P1, Pin7);
 
-    /// Rx pin for E_USCI_A0
+    /// Rx pin for E_USCI_A0: P1.6, UCA0RXD (P1SELx = 01)
     pub struct UsciA0RxPin;
     impl_serial_pin!(UsciA0RxPin, P1, Pin6);
 
-    /// UCLK pin for E_USCI_A1
+    /// UCLK pin for E_USCI_A1: P4.1, UCA1CLK (P4SELx = 01)
     pub struct UsciA1ClockPin;
     impl_serial_pin!(UsciA1ClockPin, P4, Pin1);
 
-    /// Tx pin for E_USCI_A1
+    /// Tx pin for E_USCI_A1: P4.3, UCA1TXD (P4SELx = 01), or inverted (P4SELx = 10)
     pub struct UsciA1TxPin;
     impl_serial_pin!(UsciA1TxPin, P4, Pin3);
-    // Alternate function 2 inverts the polarity of TXD and RXD (data sheet, Table 6-15 and pin functions)
+    // Alternate function 2 inverts the polarity of TXD and RXD (SLASEC4D 6.10.8, p. 73: "When PSEL = 10b,
+    // the inverted UART mode is enabled"; SLASEC4D Table 6-66, p. 102: inverted UCA1TXD on P4.3 and
+    // inverted UCA1RXD on P4.2 with P4SELx = 10. SLASEC4D Table 6-15, p. 73 gives RXD as P4.4, but
+    // SLASEC4D Table 6-14, p. 72 and SLASEC4D Table 6-66, p. 102 put UCA1RXD on P4.2.)
     impl_serial_pin!(UsciA1TxPin, P4, Pin3, Alternate2);
 
-    /// Rx pin for E_USCI_A1
+    /// Rx pin for E_USCI_A1: P4.2, UCA1RXD (P4SELx = 01), or inverted (P4SELx = 10)
     pub struct UsciA1RxPin;
     impl_serial_pin!(UsciA1RxPin, P4, Pin2);
-    impl_serial_pin!(UsciA1RxPin, P4, Pin2, Alternate2);
+    impl_serial_pin!(UsciA1RxPin, P4, Pin2, Alternate2); // 10: UCA1RXD, inverted
 }
 
 /* SPI */
@@ -642,66 +729,70 @@ mod spi {
         type SCLK = UsciB1SCLKPin;
         type STE = UsciB1STEPin;
     }
-    /// SPI MISO pin for eUSCI A0 (P1.6)
+
+    // SPI pins, each in its PxSELx = 01 function, the macro's default Alternate1 (SLASEC4D Table 6-14,
+    // p. 72; SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-66, p. 102)
+
+    /// SPI MISO pin for eUSCI A0 (P1.6, UCA0SOMI, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciA0MISOPin;
     impl_spi_pin!(UsciA0MISOPin, P1, Pin6);
 
-    /// SPI MOSI pin for eUSCI A0 (P1.7)
+    /// SPI MOSI pin for eUSCI A0 (P1.7, UCA0SIMO, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciA0MOSIPin;
     impl_spi_pin!(UsciA0MOSIPin, P1, Pin7);
 
-    /// SPI SCLK pin for eUSCI A0 (P1.5)
+    /// SPI SCLK pin for eUSCI A0 (P1.5, UCA0CLK, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciA0SCLKPin;
     impl_spi_pin!(UsciA0SCLKPin, P1, Pin5);
 
-    /// SPI STE pin for eUSCI A0 (P1.4)
+    /// SPI STE pin for eUSCI A0 (P1.4, UCA0STE, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciA0STEPin;
     impl_spi_pin!(UsciA0STEPin, P1, Pin4);
 
-    /// SPI MISO pin for eUSCI A1 (P4.2)
+    /// SPI MISO pin for eUSCI A1 (P4.2, UCA1SOMI, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciA1MISOPin;
     impl_spi_pin!(UsciA1MISOPin, P4, Pin2);
 
-    /// SPI MOSI pin for eUSCI A1 (P4.3)
+    /// SPI MOSI pin for eUSCI A1 (P4.3, UCA1SIMO, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciA1MOSIPin;
     impl_spi_pin!(UsciA1MOSIPin, P4, Pin3);
 
-    /// SPI SCLK pin for eUSCI A1 (P4.1)
+    /// SPI SCLK pin for eUSCI A1 (P4.1, UCA1CLK, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciA1SCLKPin;
     impl_spi_pin!(UsciA1SCLKPin, P4, Pin1);
-    /// SPI STE pin for eUSCI A1 (P4.0)
+    /// SPI STE pin for eUSCI A1 (P4.0, UCA1STE, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciA1STEPin;
     impl_spi_pin!(UsciA1STEPin, P4, Pin0);
 
-    /// SPI MISO pin for eUSCI B0 (P1.3)
+    /// SPI MISO pin for eUSCI B0 (P1.3, UCB0SOMI, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciB0MISOPin;
     impl_spi_pin!(UsciB0MISOPin, P1, Pin3);
 
-    /// SPI MOSI pin for eUSCI B0 (P1.2)
+    /// SPI MOSI pin for eUSCI B0 (P1.2, UCB0SIMO, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciB0MOSIPin;
     impl_spi_pin!(UsciB0MOSIPin, P1, Pin2);
 
-    /// SPI SCLK pin for eUSCI B0 (P1.1)
+    /// SPI SCLK pin for eUSCI B0 (P1.1, UCB0CLK, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciB0SCLKPin;
     impl_spi_pin!(UsciB0SCLKPin, P1, Pin1);
 
-    /// SPI STE pin for eUSCI B0 (P1.0)
+    /// SPI STE pin for eUSCI B0 (P1.0, UCB0STE, P1SELx = 01: SLASEC4D Table 6-63, p. 96)
     pub struct UsciB0STEPin;
     impl_spi_pin!(UsciB0STEPin, P1, Pin0);
 
-    /// SPI MISO pin for eUSCI B1 (P4.7)
+    /// SPI MISO pin for eUSCI B1 (P4.7, UCB1SOMI, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciB1MISOPin;
     impl_spi_pin!(UsciB1MISOPin, P4, Pin7);
 
-    /// SPI MOSI pin for eUSCI B1 (P4.6)
+    /// SPI MOSI pin for eUSCI B1 (P4.6, UCB1SIMO, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciB1MOSIPin;
     impl_spi_pin!(UsciB1MOSIPin, P4, Pin6);
 
-    /// SPI SCLK pin for eUSCI B1 (P4.5)
+    /// SPI SCLK pin for eUSCI B1 (P4.5, UCB1CLK, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciB1SCLKPin;
     impl_spi_pin!(UsciB1SCLKPin, P4, Pin5);
 
-    /// SPI STE pin for eUSCI B1 (P4.4)
+    /// SPI STE pin for eUSCI B1 (P4.4, UCB1STE, P4SELx = 01: SLASEC4D Table 6-66, p. 102)
     pub struct UsciB1STEPin;
     impl_spi_pin!(UsciB1STEPin, P4, Pin4);
 }
@@ -715,6 +806,8 @@ mod timer {
         timer::*,
     };
 
+    // Timer0_B3, Timer1_B3 and Timer2_B3 have three capture/compare registers each, Timer3_B7 seven
+    // (SLASEC4D 6.10.9, p. 73)
     timer_b_impl!(
         Tb0,
         tb0,
@@ -787,41 +880,53 @@ mod timer {
         [CCR6, tb3cctl6, tb3ccr6]
     );
 
+    // TBxCLK pins, the TBCLK input of each timer (SLASEC4D Tables 6-16 to 6-19, p. 73 to p. 75), each
+    // with PxSELx = 01 and PxDIR = 0 (SLASEC4D Table 6-64, p. 98; SLASEC4D Table 6-67, p. 104; SLASEC4D
+    // Table 6-68, p. 106). SLASEC4D Table 6-18, p. 74 lists TB2CLK on P2.7, but TB2CLK is P5.2
+    // (SLASEC4D Table 6-67, p. 104; SLASEC4D Table 4-2, p. 25: TB2CLK on pin 41 of the PT package,
+    // which SLASEC4D Table 4-2, p. 24 gives to P5.2).
     impl TimerPeriph for Tb0 {
-        type Tbxclk = Pin<P2, Pin7, Alternate1<Input<Floating>>>;
+        type Tbxclk = Pin<P2, Pin7, Alternate1<Input<Floating>>>; // TB0CLK, P2SELx = 01
     }
     impl CapCmpTimer3 for Tb0 {}
 
     impl TimerPeriph for Tb1 {
-        type Tbxclk = Pin<P2, Pin2, Alternate1<Input<Floating>>>;
+        type Tbxclk = Pin<P2, Pin2, Alternate1<Input<Floating>>>; // TB1CLK, P2SELx = 01
     }
     impl CapCmpTimer3 for Tb1 {}
 
     impl TimerPeriph for Tb2 {
-        type Tbxclk = Pin<P5, Pin2, Alternate1<Input<Floating>>>;
+        type Tbxclk = Pin<P5, Pin2, Alternate1<Input<Floating>>>; // TB2CLK, P5SELx = 01
     }
     impl CapCmpTimer3 for Tb2 {}
 
     impl TimerPeriph for Tb3 {
-        type Tbxclk = Pin<P6, Pin6, Alternate1<Input<Floating>>>;
+        type Tbxclk = Pin<P6, Pin6, Alternate1<Input<Floating>>>; // TB3CLK, P6SELx = 01
     }
     impl CapCmpTimer7 for Tb3 {}
 
-    // INCLK is the CCR2 output of TB0 on TB1. It isn't connected on TB0, and on TB2 and TB3 it is
-    // the TBxCLK pin again, the same as `TimerConfig::tbclk`. (Data sheet, Tables 6-16 to 6-19)
+    // INCLK is the CCR2 output of TB0 on TB1 ("Timer0_B3 CCR2B output", SLASEC4D Table 6-17, p. 74).
+    // It isn't connected on TB0 (SLASEC4D Table 6-16, p. 73: "N/A"), and on TB2 and TB3 it is the
+    // TBxCLK pin inverted (TB2CLK and TB3CLK written with an overline, SLASEC4D Table 6-18, p. 74 and
+    // SLASEC4D Table 6-19, p. 75): the pin of `TimerConfig::tbclk`, counted on its falling edges, as
+    // TBxR counts "with each rising edge of the clock signal" (SLAU445I 14.2.1, p. 393).
     impl CascadedTimer for Tb1 {
         type Source = Tb0;
     }
 
     // The TBxOUTH trigger is eCOMP0 or the TBxTRG pin for TB0 and TB1, eCOMP1 or the pin for TB2,
-    // and only eCOMP1 for TB3 (data sheet, Table 6-20; SLAU445I SYSCFG2)
+    // and only eCOMP1 for TB3 (SLASEC4D Table 6-20, p. 76). TB0TRGSEL to TB3TRGSEL are SYSCFG2
+    // bits 15 to 12, 0 for the internal and 1 for the external source (SLAU445I 1.16.1.3, Table 1-26,
+    // p. 77).
     impl HighImpedanceTimer for Tb0 { const TRGSEL: u16 = 1 << 15; }
     impl HighImpedanceTimer for Tb1 { const TRGSEL: u16 = 1 << 14; }
     impl HighImpedanceTimer for Tb2 { const TRGSEL: u16 = 1 << 13; }
     impl HighImpedanceTimer for Tb3 { const TRGSEL: u16 = 1 << 12; }
-    impl<PULL> HighImpedancePin<Tb0> for Pin<P1, Pin2, Alternate2<Input<PULL>>> {}
-    impl<PULL> HighImpedancePin<Tb1> for Pin<P2, Pin3, Alternate1<Input<PULL>>> {}
-    impl<PULL> HighImpedancePin<Tb2> for Pin<P5, Pin3, Alternate1<Input<PULL>>> {}
+    // The TBxTRG pins, inputs (SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-64, p. 98; SLASEC4D
+    // Table 6-67, p. 104). TB3 has none: TB3TRGSEL = 1 is "N/A" (SLASEC4D Table 6-20, p. 76).
+    impl<PULL> HighImpedancePin<Tb0> for Pin<P1, Pin2, Alternate2<Input<PULL>>> {} // TB0TRG, P1SELx = 10
+    impl<PULL> HighImpedancePin<Tb1> for Pin<P2, Pin3, Alternate1<Input<PULL>>> {} // TB1TRG, P2SELx = 01
+    impl<PULL> HighImpedancePin<Tb2> for Pin<P5, Pin3, Alternate1<Input<PULL>>> {} // TB2TRG, P5SELx = 01
 }
 
 pub mod clock {
@@ -829,18 +934,21 @@ pub mod clock {
 
     // The XT1 pins are defined once, here. Everything else, from the `Xt1Config` constructors to
     // keeping the pins selected through LPM3.5, derives the port, pin and PxSEL bits from these
-    // types. Both pins are selected with P2SELx = 10. On 01 the pins are TB0CLK and MCLK.
-    /// XT1 input pin (XIN), in its XT1 function
+    // types. Both pins are selected with P2SELx = 10. On 01 the pins are TB0CLK and MCLK. (SLASEC4D
+    // Table 6-64, p. 98)
+    /// XT1 input pin (XIN), in its XT1 function: P2.7 with P2SELx = 10 (SLASEC4D Table 6-64, p. 98)
     pub type Xt1Xin<DIR> = Pin<P2, Pin7, Alternate2<DIR>>;
-    /// XT1 output pin (XOUT), in its XT1 function
+    /// XT1 output pin (XOUT), in its XT1 function: P2.6 with P2SELx = 10 (SLASEC4D Table 6-64, p. 98)
     pub type Xt1Xout<DIR> = Pin<P2, Pin6, Alternate2<DIR>>;
 
-    /// FLLREFDIV setting for an undivided FLL reference
+    /// FLLREFDIV setting for an undivided FLL reference (FLLREFDIV = 000b divides fFLLREFCLK by 1,
+    /// SLAU445I 3.3.4, p. 116)
     pub(crate) const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::_1;
 }
 
 /* LPM */
 pub(crate) mod lpm {
+    // All six ports, P1 to P6 (SLASEC4D 6.10.3, p. 69)
     crate::lpm::reset_all_pin_functions_impl!(P1, P2, P3, P4, P5, P6);
 }
 
@@ -848,17 +956,23 @@ pub(crate) mod lpm {
 pub mod ir {
     use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
 
-    /// The eUSCI whose TXD pin carries the modulated signal
+    /// The eUSCI whose TXD pin carries the modulated signal (SLASEC4D 6.10.9, p. 75: Timer0_B3 and
+    /// Timer1_B3 "can be used to modulate the eUSCI_A pin of UCA0TXD/UCA0SIMO")
     pub type IrUsci = EUsciA0;
-    /// The pin mapping of that TXD pin
+    /// The pin mapping of that TXD pin. eUSCI_A0 has one set of pins, with UCA0TXD on P1.7
+    /// (SLASEC4D Table 6-14, p. 72).
     pub type IrMapping = DefaultMapping;
 
-    // The CCR2 outputs of Tb0 and Tb1 feed the modulator (data sheet: timer signal connections)
+    // The CCR2 outputs of Tb0 and Tb1 feed the modulator (SLASEC4D Table 6-16, p. 73: the TB0 CCR2
+    // output is the "IR carrier input"; SLASEC4D Table 6-17, p. 74: the TB1 CCR2 output is the "IR
+    // coding input"). TB0 is the first input: "In ASK modulation, the first PWM is used for carrier
+    // generation, and the second PWM generates the envelope" (SLAU445I 1.12.4.2, p. 54).
     impl IrInputTimer for Tb0 {}
     impl IrInputTimer for Tb1 {}
     impl IrFirstTimer for Tb0 {}
     impl IrSecondTimer for Tb1 {}
 
-    // eUSCI_A0's TXD pin (data sheet: timer signal connections)
+    // eUSCI_A0's TXD pin, P1.7 with P1SELx = 01 (SLASEC4D Table 6-63, p. 96), where the modulator
+    // output goes ("P1.7/UCA0TXD/UCA0SIMO" in SLAU445I Figure 1-13, p. 54)
     impl<DIR> IrOutputPin for Pin<P1, Pin7, Alternate1<DIR>> {}
 }

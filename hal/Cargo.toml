@@ -16,40 +16,64 @@ embedded-hal-02 = ["dep:embedded-hal-02", "dep:void"]
 defmt = ["dep:defmt"]
 
 # Device features. Provide exactly one of these.
+# MSP430FR2x5x: SLASEC4D Table 3-1, p. 8
 msp430fr2355 = ["2x5x", "sac_l3"] # 32kB FRAM + SAC unit
 msp430fr2353 = ["2x5x", "sac_l3"] # 16kB FRAM + SAC unit
 msp430fr2155 = ["2x5x"]           # 32kB FRAM
 msp430fr2153 = ["2x5x"]           # 16kB FRAM
+# MSP430FR2433: SLASE59F Table 3-1, p. 7
 msp430fr2433 = ["dep:msp430fr2433", "eusci_modclk", "adc", "adcpctl", "eusci_b", "info_mem"]
+# MSP430FR247x: SLASEO7C Table 6-1, p. 6
 msp430fr2475 = ["247x"]           # 6kB RAM
 msp430fr2476 = ["247x"]           # 8kB RAM
-msp430fr2512 = ["25x2"]           # 2kB RAM up to 8 self-capacitive and 16 mutual-capacitive sensors
-msp430fr2522 = ["25x2", "frwpoa"] # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
+# MSP430FR25x2: SLASEE4C 1.1, p. 2 (family members) and SLASEE4C Table 3-1, p. 8
+msp430fr2512 = ["25x2"]           # 2kB RAM up to 4 self-capacitive or mutual-capacitive sensors
+msp430fr2522 = ["25x2", "frwpoa"] # 2kB RAM up to 8 self-capacitive and 16 mutual-capacitive sensors
 
 # Derived features. Do not provide these.
 2x5x = ["dep:msp430fr2355", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "xt1_high_frequency", "enhanced_cs", "rtc_aclk", "frwpoa", "icc", "mfm"]
 247x = ["dep:msp430fr247x", "eusci_aclk", "info_mem", "enhanced_ref", "adc12bit", "ecomp", "eusci_b", "vloclk_source", "rtc_aclk"]
 25x2 = ["dep:msp430fr25x2", "eusci_aclk", "info_mem", "adc", "adcpctl", "eusci_b", "rtc_aclk"]
+# UCSSEL = 01b selects ACLK: SLASEC4D Table 6-9, p. 68; SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49
 eusci_aclk = [] # eUSCI peripherals can source from ACLK
+# UCSSEL = 01b selects MODCLK: SLASE59F Table 6-7, p. 46
 eusci_modclk = [] # eUSCI peripherals can source from MODCLK
+# 12-bit ADC: SLASEC4D Table 3-1, p. 8; SLASEO7C Table 6-1, p. 6
 adc12bit = ["adc"]
+# SYSCFG2.ADCPCTLx: SLAU445I Table 1-31, p. 82; SLASE59F Table 6-17, p. 55; SLASEE4C Table 6-15, p. 58
 adcpctl = [] # ADC functionality controlled via ADCPCTLx
+# ADC on every device, 10-bit on the MSP430FR2433 and MSP430FR25x2 (SLASE59F Table 3-1, p. 7; SLASEE4C
+# Table 3-1, p. 8)
 adc = []
+# Two eCOMP on the MSP430FR2x5x (SLASEC4D Table 3-1, p. 8), one on the MSP430FR247x (SLASEO7C Table 6-1, p. 6)
 ecomp = []
+# Internal shared reference of 1.5, 2.0 or 2.5 V (SLAU445I 2.1, p. 85): SLASEC4D 1.1, p. 1 and SLASEC4D
+# Table 5-10, p. 41; SLASEO7C 8.12.5.1, p. 33
 enhanced_ref = []
+# eUSCI_B: SLASEC4D Table 3-1, p. 8; SLASE59F Table 3-1, p. 7; SLASEO7C Table 6-1, p. 6;
+# SLASEE4C Table 3-1, p. 8
 eusci_b = []
+# SAC-L3, MSP430FR235x only: SLASEC4D 1.1, p. 1 and SLASEC4D Table 3-1, p. 8
 sac_l3 = ["sac"]
 sac_l1 = ["sac"]
 sac = []
 tia = []
+# Information FRAM: SLASEC4D Table 6-4, p. 65; SLASE59F Table 6-23, p. 61; SLASEO7C Table 9-31, p. 73;
+# SLASEE4C Table 6-19, p. 62
 info_mem = []
-vloclk_source = [] # ACLK can be sourced from VLOCLK (data sheet: ACLK from XT1, VLO or REFO)
-xt1_high_frequency = [] # XT1 supports 1 MHz to 24 MHz crystals and inputs besides 32 kHz (data sheet: XT1 up to 24 MHz)
-enhanced_cs = [] # Enhanced clock system: 20/24 MHz DCO, XT1FAULTOFF, low-power REFO (SLAU445I Table 3-1)
-rtc_aclk = [] # RTC can be sourced from ACLK, through SYSCFG2.RTCCKSEL (data sheet: clock distribution)
-icc = [] # Interrupt Compare Controller (data sheet)
-mfm = [] # Manchester Function Module (data sheet)
-frwpoa = [] # Part of the program FRAM can be left writable, through SYSCFG0.FRWPOA (SLAU445I 1.16, SYSCFG0)
+# ACLK from XT1, VLO or REFO: SLASEC4D 6.10.2, p. 68; SLASEO7C 9.10.2, p. 49
+vloclk_source = [] # ACLK can be sourced from VLOCLK
+# XT1 up to 24 MHz: SLASEC4D Table 5-4, p. 36
+xt1_high_frequency = [] # XT1 supports 1 MHz to 24 MHz crystals and inputs besides 32 kHz
+# Enhanced CS on the MSP430FR235x and MSP430FR215x: SLAU445I Table 3-1, p. 98
+enhanced_cs = [] # Enhanced clock system: 20/24 MHz DCO, XT1FAULTOFF, low-power REFO
+# RTCSS = 01b, note 1: SLASEC4D Table 6-9, p. 68; SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49
+rtc_aclk = [] # RTC can be sourced from ACLK, through SYSCFG2.RTCCKSEL
+icc = [] # Interrupt Compare Controller (SLASEC4D 6.10.7, p. 71)
+mfm = [] # Manchester Function Module (SLASEC4D 6.10.14, p. 79)
+# FRWPOA is valid "only in the MSP430FR235x and MSP430FR215x devices" (SLAU445I Table 1-24, note 2, p. 75)
+# and "in MSP430FR2522 and MSP430FR2422 devices" (SLAU445I Table 1-29, note 3, p. 80)
+frwpoa = [] # Part of the program FRAM can be left writable, through SYSCFG0.FRWPOA
 
 [dependencies]
 defmt = {version = "1.0", optional = true }

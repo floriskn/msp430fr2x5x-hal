@@ -12,6 +12,7 @@ use msp430_hal::{
 use panic_msp430 as _;
 
 // Configure one of the enhanced comparator (eCOMP) modules for use: If P2.2 is less than 1.2V then LED turns on
+// (P2.2 is J1 pin 5: SLAU802 Figure 10, p. 13. The LED is LED1 on P1.0: SLAU802 Figure 19, p. 25.)
 
 #[entry]
 fn main() -> ! {
@@ -27,6 +28,9 @@ fn main() -> ! {
 
     // eCOMP configuration
     let (_dac_conf, comp_conf) = ECompConfig::begin(periph.e_comp0);
+
+    // V+ is the low-power 1.2-V reference and V- is COMP0.1 on P2.2 (SLASEO7C Table 9-21, p. 63), with
+    // P2SEL = 11 (SLASEO7C Table 9-24, p. 66). The output is high while V+ > V- (SLAU445I 18.2.1, p. 505).
 
     let mut comparator = comp_conf.configure(
             PositiveInput::_1V2,

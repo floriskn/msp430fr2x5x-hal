@@ -1,4 +1,5 @@
-//! Why did the device reset? `Pmm::take_reset_cause` reads the reasons, highest priority first,
+//! Why did the device reset? `Pmm::take_reset_cause` reads the reasons, highest priority first
+//! (SYSRSTIV: SLAU445I 1.3.7, p. 36; values and priorities: SLASEO7C Table 9-10, p. 52),
 //! and RGB LED2 shows the first one:
 //!
 //! | LED2                   | Reset                                                    |
@@ -8,9 +9,13 @@
 //! | red                    | button S1, which calls `Pmm::software_bor()`             |
 //! | yellow (red and green) | button S2, which calls `Pmm::software_por()`             |
 //! | white                  | any other reason                                         |
-//! | off, with red LED1 on  | no reason: the debugger started the program after flashing it |
+//! | off, with LED1 on      | no reason: the debugger started the program after flashing it |
 //!
 //! The buttons reset the device when they are released.
+//!
+//! LED1 (P1.0) is green, LED2 is red on P5.1, green on P5.0 and blue on P4.7; S1 (P4.0) and S2 (P2.3)
+//! pull their pins low, and S3 is the reset button on RST (SLAU802 Figure 19, p. 25). The resets:
+//! brownout 02h, RST/NMI pin 04h, software BOR 06h, software POR 14h (SLASEO7C Table 9-10, p. 52).
 #![no_main]
 #![no_std]
 
@@ -31,6 +36,7 @@ fn main() -> ! {
     let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // Read the first reason, then the rest, which also clears them for the next reset
+    // (reading SYSRSTIV clears the highest pending flag: SLAU445I 1.3.7, p. 36)
     let first = pmm.take_reset_cause();
     while pmm.take_reset_cause().is_some() {}
 

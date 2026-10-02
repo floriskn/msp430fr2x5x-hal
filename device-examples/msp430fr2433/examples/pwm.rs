@@ -13,7 +13,7 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-// P1.1 LED should breathe from 0 to 100% brightness
+// P1.1 LED should breathe from 0 to 100% brightness (green LED2, SLAU739 Figure 18, p. 23)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2433::Peripherals::take().unwrap();
@@ -31,6 +31,7 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     let pwm = PwmParts3::new(periph.timer_0_a3, TimerConfig::smclk(&smclk), 5000);
+    // TA0.1 on P1.1: P1SELx = 10, P1DIR = 1 (SLASE59F Table 6-17, p. 55; SLASE59F Table 6-11, p. 50)
     let mut pwm1 = pwm.pwm1.init(p1.pin1.to_output().to_alternate2());
 
     loop {

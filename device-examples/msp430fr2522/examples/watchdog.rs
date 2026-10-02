@@ -7,6 +7,7 @@ use msp430_hal::{gpio::Batch, pmm::Pmm};
 use panic_msp430 as _;
 
 // The LED on P1.0 should flash rapidly
+// No board document covers the LED: there is none for the MSP430FR25x2.
 
 #[entry]
 fn main() -> ! {
@@ -21,6 +22,8 @@ fn main() -> ! {
     red_led.toggle().ok();
 
     // The watchdog will reset program execution after a few ms
+    // (SLAU445I 12.2.2, p. 363: after a PUC the WDT runs "with an initial 32-ms (approximate) reset
+    // interval using the SMCLK")
     loop {}
 }
 

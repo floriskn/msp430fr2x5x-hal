@@ -14,6 +14,7 @@ use nb::block;
 use panic_msp430 as _;
 
 // Red LED should blink 1 second on, 1 second off
+// No board document covers this LED (on P1.0 here): there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
@@ -33,6 +34,7 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut fram);
 
+    // 2^23 clock cycles, WDTIS = 010b (SLAU445I Table 12-2, p. 366): 8 MHz / 2^23 = 1.05 s
     const DELAY: WdtClkPeriods = WdtClkPeriods::_8192k;
 
     // blinks should be 1 second on, 1 second off

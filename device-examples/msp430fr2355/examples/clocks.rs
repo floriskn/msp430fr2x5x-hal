@@ -13,7 +13,7 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Red LED should blink 1 second on, 1 second off
+// Red LED should blink 1 second on, 1 second off (LED1, red, on P1.0: SLAU680 Figure 18, p. 26)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();

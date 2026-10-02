@@ -54,11 +54,11 @@ impl<PORT: PortNum, PIN: PinNum> PinProxy<PORT, PIN, Output> {
     #[inline(always)]
     pub fn to_input_floating(self) -> PinProxy<PORT, PIN, Input<Floating>> { make_proxy!() }
 
-    /// Configures pin as floating pullup
+    /// Configures pin as pullup input
     #[inline(always)]
     pub fn to_input_pullup(self) -> PinProxy<PORT, PIN, Input<Pullup>> { make_proxy!() }
 
-    /// Configures pin as floating pulldown
+    /// Configures pin as pulldown input
     #[inline(always)]
     pub fn to_input_pulldown(self) -> PinProxy<PORT, PIN, Input<Pulldown>> { make_proxy!() }
 }
@@ -196,7 +196,8 @@ impl<T: Pxsel1On> WritePxsel1 for T {
     fn pxsel1_on(&self) -> bool { true }
 }
 
-// Register marker trait implementations
+// Register marker trait implementations. PxDIR, PxREN and PxOUT follow SLAU445I Table 8-1, p. 313,
+// PxSEL0 and PxSEL1 follow SLAU445I Table 8-3, p. 314.
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Output> {}
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate1<Output>> {}
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate2<Output>> {}
@@ -361,10 +362,11 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
             .set_mask(self.pin7.pxsel1_mask());
 
         let p = unsafe { PORT::steal() };
-        // Turn off interrupts first so nothing fires during subsequent register writes
+        // Turn off interrupts first so nothing fires during subsequent register writes, which can set
+        // PxIFG flags (SLAU445I 8.2.6, p. 315)
         p.maybe_write_pxie(0);
         // Pins whose PxSEL0 and PxSEL1 bits both change switch through PxSELC, so they don't pass
-        // through another function on the way (user's guide, PxSELC). After that, every
+        // through another function on the way (SLAU445I 8.2.5, p. 314). After that, every
         // remaining change is a single bit.
         let both = (p.pxsel0_rd() ^ pxsel0) & (p.pxsel1_rd() ^ pxsel1);
         if both != 0 {
@@ -401,12 +403,14 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
     /// interrupt enable bits.
     ///
     /// Note that the pin's interrupt flags may become set as a result of
-    /// this operation.
+    /// this operation (SLAU445I 8.2.6, p. 315).
     ///
-    /// GPIO input/output operations only work after the LOCKLPM5 bit has been cleared, which
-    /// is ensured when passing `&Pmm` into the method, since [`Pmm::new`] clears LOCKLPM5.
+    /// GPIO input/output operations only work after the LOCKLPM5 bit has been cleared (SLAU445I
+    /// 8.3.1, p. 316), which is ensured when passing `&Pmm` into the method, since [`Pmm::new`]
+    /// clears LOCKLPM5.
     /// With [`Pmm::new_locked`] the configuration takes effect once [`Pmm::unlock_lpm5`] is
-    /// called.
+    /// called (SLAU445I 8.3.3, p. 318: "Any changes to the port configuration registers while
+    /// LOCKLPM5 is set have no effect on the I/O pins").
     #[inline]
     pub fn split(self, _pmm: &Pmm) -> Parts<PORT, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7> {
         self.write_regs();
@@ -557,7 +561,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Set all pins to inputs with pulldowns. Leaving unused pins as floating massively increases power usage (relatively speaking).
+    /// Set all pins to inputs with pulldowns. Leaving unused pins as floating massively increases power
+    /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
     #[inline(always)]
     pub fn pulldown_all(self) -> Batch<PORT, Pd, Pd, Pd, Pd, Pd, Pd, Pd, Pd> {
         Batch {
@@ -572,7 +577,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Set all pins to inputs with pullups. Leaving unused pins as floating massively increases power usage (relatively speaking).
+    /// Set all pins to inputs with pullups. Leaving unused pins as floating massively increases power
+    /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
     #[inline(always)]
     pub fn pullup_all(self) -> Batch<PORT, Pu, Pu, Pu, Pu, Pu, Pu, Pu, Pu> {
         Batch {

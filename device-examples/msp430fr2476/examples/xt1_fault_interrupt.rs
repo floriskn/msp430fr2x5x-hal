@@ -4,18 +4,24 @@
 //!
 //! The interrupt is the user NMI, which is non-maskable: it can't share data with the rest of the
 //! program through a critical section, so this example uses an atomic flag from `msp430-atomic`.
+//! (An oscillator fault is a user NMI source, and NMIs are not masked by GIE: SLAU445I 1.3.1,
+//! p. 33; SYSUNIV 04h, OFIFG: SLASEO7C Table 9-10, p. 53.)
 //!
 //! Wiring: function generator -> P2.1/XIN (J2 pin 18), ground -> J2 pin 20. Square wave,
 //! 32.768 kHz, 0 V to 3.3 V, 50 % duty, output load High-Z (see `xt1_bypass_aclk.rs`).
 //! Switch the generator on *before* resetting the board.
 //!
 //! What to try:
-//! 1. Red LED1 blinks every 0.5 s: the main loop is running. P2.2/ACLK (J1 pin 5) follows the
+//! 1. LED1 blinks every 0.5 s: the main loop is running. P2.2/ACLK (J1 pin 5) follows the
 //!    generator.
 //! 2. Switch the generator output off: the interrupt handler records the fault, and red LED2
-//!    turns on at the next blink. The fail-safe has switched ACLK to REFO (32.768 kHz).
+//!    turns on at the next blink. The fail-safe has switched ACLK to REFO (32.768 kHz)
+//!    (SLAU445I 3.2.13, p. 109).
 //! 3. Switch the generator back on: at the next blink, the main loop clears the fault, LED2 turns
 //!    off and the interrupt is enabled again for the next fault.
+//!
+//! (LED1 on P1.0 is green, the red part of LED2 is P5.1: SLAU802 Figure 19, p. 25. Header pins:
+//! SLAU802 Figure 10, p. 13. REFO runs at 32.768 kHz: SLASEO7C 8.12.3.4, p. 30.)
 #![no_main]
 #![no_std]
 #![feature(abi_msp430_interrupt)]
@@ -57,6 +63,7 @@ fn main() -> ! {
     let mut led1 = p1.pin0;
     let mut led2_red = p5.pin1;
 
+    // ACLK on P2.2 with P2SEL = 10 and P2DIR = 1, XIN on P2.1 with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 
@@ -76,6 +83,8 @@ fn main() -> ! {
         if XT1_FAULT.load() {
             led2_red.set_high().ok();
             // The fault can only be cleared once XT1 runs again
+            // (Cleared while the fault remains, the bits "are automatically set again":
+            // SLAU445I 3.2.13, p. 109)
             xt1clk.clear_fault();
             if !xt1clk.is_faulted() {
                 led2_red.set_low().ok();
@@ -90,6 +99,7 @@ fn main() -> ! {
 fn UNMI() {
     // This also disables the fault interrupt, which would otherwise be requested again straight
     // away for as long as the fault lasts
+    // ("as long as a fault condition still exists, the OFIFG remains set": SLAU445I 3.2.13, p. 110)
     if clock::take_fault_interrupt() {
         XT1_FAULT.store(true);
     }

@@ -15,6 +15,8 @@ use panic_msp430 as _;
 
 // Red LED blinks 2 seconds on, 2 off
 // Pressing P2.3 button toggles red LED
+// No board document covers the LED (on P1.0 here) or the button: there is none for the MSP430FR25x2.
+// P2.3 only exists on the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
@@ -37,6 +39,9 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut Fram::new(periph.frctl));
 
+    // VLO / 10: 1 kHz typical, so the RTC counts milliseconds. RTCSS = 11 is VLOCLK
+    // (SLASEE4C Table 6-12, p. 55), RTCPS = 001b divides by 10 (SLAU445I 15.3.1, p. 420). The VLO is
+    // 10 kHz typical (SLASEE4C Table 5-8, p. 28), within ±50 % (SLASEE4C Table 6-8, p. 49).
     let mut rtc = Rtc::new(periph.rtc).use_vloclk();
     rtc.set_clk_div(RtcDiv::_10);
 
@@ -44,7 +49,7 @@ fn main() -> ! {
     led.set_high().ok();
 
     loop {
-        // 2 seconds
+        // 2 seconds (2000 periods of the 1 kHz typical clock above)
         rtc.start(2000);
         while let Err(nb::Error::WouldBlock) = rtc.wait() {
             if button.wait_for_ifg().is_ok() {

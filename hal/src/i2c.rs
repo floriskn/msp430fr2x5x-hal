@@ -1,6 +1,6 @@
 //! I2C
 //!
-//! Peripherals eUSCI_B0 and eUSCI_B1 can be used for I2C communication.
+//! Peripherals eUSCI_B0 and eUSCI_B1 can be used for I2C communication (SLAU445I 24.1, p. 627).
 //!
 //! Begin by calling [`I2cConfig::new()`]. Depending on configuration, one of [`I2cSlave`], [`I2cSingleMaster`], [`I2cMultiMaster`],
 //! or [`I2cMasterSlave`] will be returned.
@@ -15,7 +15,7 @@
 //!
 //! ## [`I2cSlave`]
 //! In slave mode the peripheral responds to requests from master devices. The 'own address' is treated as 7-bit should a `u8`
-//! be provided, and 10-bit if a `u16` is provided.
+//! be provided, and 10-bit if a `u16` is provided (UCA10, SLAU445I Table 24-4, p. 649).
 //! Both polling and interrupt-based methods are available, though interrupt-based is recommended for slave devices, as the slave
 //! can 'fall behind' and lose information if polling is not done frequently enough.
 //!
@@ -27,7 +27,8 @@
 //! ## [`I2cSingleMaster`]
 //! Single master mode provides simplified error handling and ergonomics at the cost of being unsuitable for buses with more than one
 //! master - single master mode does not handle bus arbitration, so even if the device is not expected to be addressed as a slave it is not
-//! suitable for use on a multi-master bus.
+//! suitable for use on a multi-master bus (UCMM = 0 means "There is no other master in the system",
+//! SLAU445I Table 24-4, p. 649).
 //!
 //! An easy-to-use blocking implementation is available through [`embedded_hal::i2c::I2c`], which provides methods for read, write,
 //! write-read, and generic transactions. Additionally, slave detection is provided through [`is_slave_present()`](I2cRoleMaster::is_slave_present()).
@@ -38,8 +39,9 @@
 //!
 //! ## [`I2cMultiMaster`]
 //! [`I2cMultiMaster`] acts similarly to [`I2cSingleMaster`], but with the addition of bus arbitration logic.
-//! The MSP430 hardware automatically fails over from master to slave mode when arbitration is lost, so the methods check for this
-//! before performing operations. After losing arbitration [`return_to_master()`](I2cRoleMulti::return_to_master) must be called.
+//! The MSP430 hardware automatically fails over from master to slave mode when arbitration is lost
+//! (SLAU445I 24.3.5.3, p. 641), so the methods check for this before performing operations. After losing
+//! arbitration [`return_to_master()`](I2cRoleMulti::return_to_master) must be called.
 //!
 //! ## [`I2cMasterSlave`]
 //! [`I2cMasterSlave`] can act as either a master or slave device. It is multi-master capable by necessity.
@@ -48,8 +50,9 @@
 //! [`I2cMasterSlave::send_start()`], [`write_tx_buf_as_master()`](I2cMasterSlave::write_tx_buf_as_master),
 //! [`read_rx_buf_as_master()`](I2cMasterSlave::read_rx_buf_as_master), and [`schedule_stop()`](I2cRoleMaster::schedule_stop).
 //!
-//! The MSP430 hardware automatically fails over from master to slave mode when arbitration is lost or the device is addressed as a slave,
-//! so the master-related methods check for this before attempting master-related operations, returning an error if so.
+//! The MSP430 hardware automatically fails over from master to slave mode when arbitration is lost or the device is
+//! addressed as a slave (UCALIFG, SLAU445I Table 24-2, p. 646), so the master-related methods check for this
+//! before attempting master-related operations, returning an error if so.
 //! The device can be restored to master mode via [`return_to_master()`](I2cRoleMulti::return_to_master). If arbitration is lost this
 //! method may be called immediately, however if the device is addressed as a slave then this slave transaction must be resolved
 //! before the device can be returned to master mode.
@@ -61,7 +64,8 @@
 //! bus arbitration and slave addressing checks that the `_as_master` variants do, so these should only be called in slave mode.
 //!
 //! Pins used (pins with `RemappedMapping` in brackets). The external clock pin can optionally clock the bus in
-//! master modes.
+//! master modes: it's UCLKI, "the eUSCI_B SPI clock input pin" (SLAU445I Figure 24-1, p. 628), selected with
+//! UCSSELx = 00b, which slave mode ignores (SLAU445I Table 24-4, p. 649).
 //!
 //! | Device       | eUSCI | SCL             | SDA             | External clock  |
 //! |:-------------|:-----:|:---------------:|:---------------:|:---------------:|
@@ -72,8 +76,15 @@
 //! | MSP430FR247x | B1    | `P3.6` (`P4.3`) | `P3.2` (`P4.4`) | `P3.5` (`P5.3`) |
 //! | MSP430FR25x2 | B0    | `P1.3` (`P2.6`) | `P1.2` (`P2.5`) | `P1.1` (`P2.4`) |
 //!
+//! The pins are those of the eUSCI pin configuration tables: SLASEC4D Table 6-14, p. 72 (MSP430FR2x5x),
+//! SLASE59F Table 6-10, p. 49 (MSP430FR2433), SLASEO7C Table 9-11, p. 54 (MSP430FR247x) and
+//! SLASEE4C Table 6-11, p. 53 (MSP430FR25x2). The external clock pin is the one listed as SCLK in their
+//! SPI column.
+//!
 //! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
-//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
+//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI (the data sheet
+//! lists one register block per eUSCI: SLASE59F Table 6-40, p. 66; SLASE59F Table 6-41, p. 67;
+//! SLASE59F Table 6-42, p. 67).
 //!
 
 use core::convert::Infallible;
@@ -93,7 +104,7 @@ use nb::Error::{Other, WouldBlock};
 
 /// Enumerates the two I2C addressing modes: 7-bit and 10-bit.
 ///
-/// Used internally by the HAL.
+/// Used internally by the HAL. The values are those of UCA10 and UCSLA10 (SLAU445I Table 24-4, p. 649).
 #[derive(Clone, Copy)]
 pub enum AddressingMode {
     /// 7-bit addressing mode
@@ -111,7 +122,7 @@ impl From<AddressingMode> for bool {
     }
 }
 
-/// I2C transmission modes
+/// I2C transmission modes. The values are those of UCTR (SLAU445I Table 24-4, p. 650).
 #[derive(Debug, Clone, Copy)]
 pub enum TransmissionMode {
     /// Receiver mode
@@ -129,9 +140,15 @@ impl From<TransmissionMode> for bool {
     }
 }
 
+// The UCGLITx deglitch time of SDA and SCL (SLAU445I Table 24-1, p. 642)
 pub use crate::hw_traits::eusci::Ucglit as GlitchFilter;
 
 /// How long SCL may be held low before the clock low timeout flag is set (UCCLTO), counted in MODCLK cycles
+/// (SLAU445I 24.3.7.3, p. 643; SLAU445I Table 24-5, p. 651).
+///
+/// The cycle counts and times are the user's guide's. The time depends on MODCLK: the data sheets give
+/// typical times (tTIMEOUT) of 27, 30 and 33 ms (SLASE59F Table 5-19, p. 34; SLASEO7C 8.12.7.6, p. 39;
+/// SLASEE4C Table 5-19, p. 37), and of 36, 40 and 44 ms on the MSP430FR2x5x (SLASEC4D Table 5-19, p. 50).
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum ClockLowTimeout {
     /// No timeout, as after reset
@@ -147,7 +164,8 @@ pub enum ClockLowTimeout {
 
 /// One of the three additional own addresses of a slave, UCBxI2COA1 to UCBxI2COA3.
 ///
-/// Each own address has its own receive and transmit flags (user's guide, multiple slave addresses).
+/// Each own address has its own receive and transmit flags (user's guide, multiple slave addresses:
+/// SLAU445I 24.3.9.1, p. 644).
 /// [`poll()`](I2cRoleSlave::poll), [`read_rx_buf()`](I2cSlave::read_rx_buf) and
 /// [`write_tx_buf()`](I2cSlave::write_tx_buf) only check those of the first one, so serve the others with
 /// [`interrupt_source()`](I2cRoleCommon::interrupt_source) (`Slave1RxBufFull` to `Slave3TxBufEmpty`) and the
@@ -189,7 +207,8 @@ pub trait I2cUsci<M: PinMap = DefaultMapping>: EUsciI2C {
     type ClockPin;
     /// I2C SDA pin
     type DataPin;
-    /// I2C external clock source pin. Only necessary if UCLKI is selected as a clock source.
+    /// I2C external clock source pin. Only necessary if UCLKI is selected as a clock source (UCLKI is the
+    /// eUSCI_B SPI clock pin: SLAU445I Figure 24-1, p. 628).
     type ExternalClockPin;
 
     /// Additional configuration
@@ -198,7 +217,8 @@ pub trait I2cUsci<M: PinMap = DefaultMapping>: EUsciI2C {
 }
 
 // Allows a GPIO pin to be converted into an I2C object
-// The pin's alternate function defaults to Alternate1
+// The pin's alternate function defaults to Alternate1: PxSEL = 01b, the primary module function
+// (SLAU445I Table 8-3, p. 314). The device_specific files cite each pin's function in its data sheet.
 macro_rules! impl_i2c_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
         impl_i2c_pin!($struct_name, $port, $pin, Alternate1);
@@ -239,7 +259,7 @@ pub struct MasterSlave;
 impl I2cMarker for MasterSlave {}
 
 /// The smallest clock divider for a master role: the bit clock can be at most BRCLK/4 for a single master, and BRCLK/8
-/// with several masters on the bus (user's guide, I2C clock generation)
+/// with several masters on the bus (user's guide, I2C clock generation: SLAU445I 24.3.7, p. 642)
 trait MinClkDivisor {
     const MIN_CLK_DIVISOR: u16;
 }
@@ -280,6 +300,8 @@ where
 {
     /// Begin configuration of an eUSCI peripheral as an I2C device.
     pub fn new(usci: USCI, deglitch_time: GlitchFilter) -> I2cConfig<USCI, NoClockSet, NoRoleSet, M> {
+        // I2C mode is UCMODEx = 11b with UCSYNC = 1 (SLAU445I 24.3.1, p. 629; SLAU445I 24.3.5.1, p. 633), set
+        // up while UCSWRST = 1
         let ctlw0 = UcbCtlw0 {
             ucsync: true,
             ucswrst: true,
@@ -303,7 +325,7 @@ where
             i2coa1,
             i2coa2,
             i2coa3,
-            // All address bits compared, as after reset
+            // All address bits compared, as after reset (03FFh, mask off: SLAU445I Table 24-16, p. 659)
             addmask: 0x03FF,
             tbcnt: 0,
             clk_src: PhantomData,
@@ -312,6 +334,7 @@ where
         }
     }
     /// Configure this eUSCI peripheral as an I2C master on a bus with no other master devices.
+    /// (UCMST = 1 with UCMM = 0: SLAU445I 24.3.5.2, p. 636; SLAU445I Table 24-4, p. 649.)
     pub fn as_single_master(mut self) -> I2cConfig<USCI, NoClockSet, SingleMaster, M> {
         self.ctlw0.ucmst = true;
 
@@ -319,6 +342,7 @@ where
     }
 
     /// Configure this eUSCI peripheral as an I2C slave.
+    /// (UCMST = 0, the own address in UCBxI2COA0 and its size in UCA10: SLAU445I 24.3.5.1, p. 633.)
     pub fn as_slave<TenOrSevenBit>(
         mut self,
         own_address: TenOrSevenBit,
@@ -328,8 +352,9 @@ where
     {
         self.ctlw0.uca10 = TenOrSevenBit::addr_type().into();
 
+        // UCOAEN enables the own address, UCGCEN the general call (SLAU445I Table 24-11, p. 656)
         self.i2coa0 = UcbI2coa {
-            ucgcen: false, // Not yet implemented
+            ucgcen: false, // Set by general_call()
             ucoaen: true,
             i2coa0: own_address.into(),
         };
@@ -338,11 +363,12 @@ where
     }
 
     /// Configure this eUSCI peripheral as an I2C master on a bus with other master devices.
+    /// (UCMST = 1 with UCMM = 1: SLAU445I 24.3.5.2, p. 636; SLAU445I Table 24-4, p. 649.)
     ///
-    /// The address comparison unit is disabled so this device can't be addressed as a slave,
-    /// though the other masters may still contest the bus. The user's guide asks multi-master
-    /// devices to program their own address; use [`as_master_slave`](Self::as_master_slave) for
-    /// a device that other masters can address.
+    /// No own address is enabled (UCOAEN = 0, SLAU445I Table 24-11, p. 656), so this device can't be
+    /// addressed as a slave, though the other masters may still contest the bus. The user's guide asks
+    /// multi-master devices to program their own address (SLAU445I 24.3.5.2, p. 636); use
+    /// [`as_master_slave`](Self::as_master_slave) for a device that other masters can address.
     pub fn as_multi_master(mut self) -> I2cConfig<USCI, NoClockSet, MultiMaster, M> {
         self.ctlw0 = UcbCtlw0 { ucmst: true, ucmm: true, ..self.ctlw0 };
 
@@ -351,6 +377,7 @@ where
 
     /// Configure this EUSCI peripheral as an I2C master-slave on a bus with other master devices.
     /// The other masters may contest the bus and/or address this device as a slave.
+    /// (UCMM = 1 with the own address in UCBxI2COA0, as multi-master systems need: SLAU445I 24.3.5.2, p. 636.)
     pub fn as_master_slave<TenOrSevenBit>(
         mut self,
         own_address: TenOrSevenBit,
@@ -366,8 +393,10 @@ where
 
         // Note: If you add support for the other 3 own addresses (or the mask) you will also have to upgrade the logic for checking
         // that the peripheral isn't addressing itself, i.e. I2cMasterSlaveErr::TriedAddressingSelf
+        // (UCBxI2CSA = UCBxI2COAx is not allowed: SLAU445I 24.3.5.2, p. 636; the mask:
+        // SLAU445I 24.3.9.2, p. 644)
         self.i2coa0 = UcbI2coa {
-            ucgcen: false, // Not yet implemented
+            ucgcen: false, // Set by general_call()
             ucoaen: true,
             i2coa0: own_address.into(),
         };
@@ -389,11 +418,12 @@ where
         self.divisor = clk_divisor;
     }
 
-    /// Configures this peripheral to use SMCLK
+    /// Configures this peripheral to use SMCLK (UCSSELx = 10b, SLAU445I Table 24-4, p. 649)
     ///
     /// # Panics
     ///
-    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_smclk(
         mut self,
@@ -405,11 +435,13 @@ where
     }
 
     #[cfg(feature = "eusci_aclk")]
-    /// Configures this peripheral to use ACLK
+    /// Configures this peripheral to use ACLK (UCSSELx = 01b, which is ACLK on these devices:
+    /// SLASEC4D Table 6-9, p. 68; SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49)
     ///
     /// # Panics
     ///
-    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_aclk(
         mut self,
@@ -421,22 +453,25 @@ where
     }
 
     #[cfg(feature = "eusci_modclk")]
-    /// Configures this peripheral to use MODCLK
+    /// Configures this peripheral to use MODCLK (UCSSELx = 01b, which is MODCLK on the MSP430FR2433:
+    /// SLASE59F Table 6-7, p. 46)
     ///
     /// # Panics
     ///
-    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_modclk(mut self, clk_divisor: u16) -> I2cConfig<USCI, ClockSet, ROLE, M> {
         self.set_clock(Ucssel::DeviceSpecific, clk_divisor);
         return_self_config!(self)
     }
 
-    /// Configures this peripheral to use UCLK
+    /// Configures this peripheral to use UCLK (UCSSELx = 00b, UCLKI: SLAU445I Table 24-4, p. 649)
     ///
     /// # Panics
     ///
-    /// If `clk_divisor` is below the user's guide minimum: 4 for a single master, 8 with several masters.
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_uclk<Pin>(
         mut self,
@@ -461,6 +496,8 @@ where
     fn configure_regs(&self) {
         USCI::configure_pin_mapping();
 
+        // Initialization procedure of SLAU445I 24.3.1, p. 629: the registers are written with UCSWRST = 1
+        // ("Modify only when UCSWRST = 1": SLAU445I 24.4.1 to 24.4.13, p. 649 to p. 659)
         self.usci.ctw0_set_rst();
 
         self.usci.ctw0_wr(&self.ctlw0);
@@ -486,7 +523,7 @@ where
     M: PinMap,
 {
     /// Set the clock low timeout: if SCL is held low that long, the `ClockLowTimeout` interrupt flag is set
-    /// (UCCLTO).
+    /// (UCCLTO, SLAU445I 24.3.7.3, p. 643; SLAU445I Table 24-5, p. 651).
     pub fn clock_low_timeout(mut self, timeout: ClockLowTimeout) -> Self {
         use crate::hw_traits::eusci::Ucclto;
         self.ctlw1.ucclto = match timeout {
@@ -498,10 +535,12 @@ where
         self
     }
 
-    /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTP, UCBxTBCNT).
-    /// With `auto_stop`, a master then also sends the STOP condition itself; only use that with the
-    /// non-blocking interface and fixed-length transactions, without `schedule_stop()`. The count can only
-    /// change while the eUSCI is configured.
+    /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTP, UCBxTBCNT:
+    /// SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651).
+    /// With `auto_stop`, a master then also sends the STOP condition itself (SLAU445I 24.3.8.2, p. 644); only
+    /// use that with the non-blocking interface and fixed-length transactions, without `schedule_stop()`.
+    /// The count can only change while the eUSCI is configured (UCBxTBCNT: "Modify only when UCSWRST = 1",
+    /// SLAU445I Table 24-8, p. 654).
     pub fn byte_counter(mut self, count: u8, auto_stop: bool) -> Self {
         use crate::hw_traits::eusci::Ucastp;
         self.ctlw1.ucastp = if auto_stop { Ucastp::Ucastp10b } else { Ucastp::Ucastp01b };
@@ -517,7 +556,7 @@ macro_rules! slave_config {
             USCI: I2cUsci<M>,
             M: PinMap,
         {
-            /// Also respond to the general call address, 0 (UCGCEN).
+            /// Also respond to the general call address, 0 (UCGCEN, SLAU445I Table 24-11, p. 656).
             pub fn general_call(mut self) -> Self {
                 self.i2coa0.ucgcen = true;
                 self
@@ -533,8 +572,9 @@ where
     USCI: I2cUsci<M>,
     M: PinMap,
 {
-    /// Respond to another own address too (UCBxI2COA1 to UCBxI2COA3), in the same addressing mode (7 or 10
-    /// bits) as the first one. Its data has flags of its own, see [`OwnAddressSlot`].
+    /// Respond to another own address too (UCBxI2COA1 to UCBxI2COA3, SLAU445I 24.3.9.1, p. 644), in the same
+    /// addressing mode (7 or 10 bits) as the first one (one UCA10 bit for all: SLAU445I Table 24-4, p. 649).
+    /// Its data has flags of its own, see [`OwnAddressSlot`].
     pub fn own_address<TenOrSevenBit: AddressType>(mut self, slot: OwnAddressSlot, address: TenOrSevenBit) -> Self {
         let oa = UcbI2coa { ucgcen: false, ucoaen: true, i2coa0: address.into() };
         match slot {
@@ -546,21 +586,24 @@ where
     }
 
     /// Ignore the address bits that are 0 in `mask` when comparing a received address with the first own
-    /// address (UCBxADDMASK). [`I2cRoleSlave::received_address`] tells which address was received.
+    /// address (UCBxADDMASK, SLAU445I 24.3.9.2, p. 644; SLAU445I Table 24-16, p. 659).
+    /// [`I2cRoleSlave::received_address`] tells which address was received.
     pub fn address_mask(mut self, mask: u16) -> Self {
-        self.addmask = mask & 0x03FF;
+        self.addmask = mask & 0x03FF; // ADDMASKx is bits 9-0 (SLAU445I Table 24-16, p. 659)
         self
     }
 
     /// Acknowledge addresses matching through the address mask from software, with
-    /// [`I2cRoleSlave::acknowledge_address`], instead of automatically (UCSWACK).
+    /// [`I2cRoleSlave::acknowledge_address`], instead of automatically (UCSWACK, SLAU445I 24.3.9.2, p. 644;
+    /// SLAU445I Table 24-5, p. 651).
     pub fn software_address_ack(mut self) -> Self {
         self.ctlw1.ucswack = true;
         self
     }
 
     /// Request the Tx buffer (UCTXIFG0) at each START condition, before the address is known, to have the
-    /// first byte ready earlier (UCETXINT). Only with the first own address: don't use [`own_address`](Self::own_address).
+    /// first byte ready earlier (UCETXINT, SLAU445I 24.3.11.2, p. 645). Only with the first own address: don't
+    /// use [`own_address`](Self::own_address) (UCETXINT, SLAU445I Table 24-5, p. 651).
     pub fn early_tx_interrupt(mut self) -> Self {
         self.ctlw1.ucetxint = true;
         self
@@ -575,8 +618,8 @@ macro_rules! master_config {
             M: PinMap,
         {
             /// Acknowledge the last received byte as a master receiver too, instead of sending the NACK before the
-            /// STOP that the I2C specification requires (UCSTPNACK). Only for slaves that release SDA after a fixed
-            /// number of bytes.
+            /// STOP that the I2C specification requires (UCSTPNACK, SLAU445I Table 24-5, p. 651). Only for
+            /// slaves that release SDA after a fixed number of bytes.
             pub fn ack_last_byte(mut self) -> Self {
                 self.ctlw1.ucstpnack = true;
                 self
@@ -635,6 +678,7 @@ mod sealed {
     {
         type ErrorType: I2cError;
         fn set_addressing_mode(&mut self, mode: AddressingMode) {
+            // UCSLA10, the size of the slave address (SLAU445I Table 24-4, p. 649)
             self.usci().set_ucsla10(mode.into())
         }
 
@@ -645,17 +689,21 @@ mod sealed {
             send_start: bool,
             send_stop: bool,
         ) -> Result<(), Self::ErrorType> {
-            // Hardware doesn't support zero byte reads.
+            // Hardware doesn't support zero byte reads: a master receiver sends its STOP after NACKing a
+            // received byte (SLAU445I 24.3.5.2.2, p. 639; UCTXSTP, SLAU445I Table 24-4, p. 650).
             if buffer.is_empty() { return Ok(()) }
 
-            // Clear any flags from previous transactions
+            // Clear any flags from previous transactions (they aren't cleared automatically:
+            // SLAU445I 24.3.11, p. 645)
             self.usci().ifg_rst();
+            // Master receiver: UCBxI2CSA and UCTR = 0, then UCTXSTT (SLAU445I 24.3.5.2.2, p. 639)
             self.usci().i2csa_wr(address);
             self.usci().set_uctr(TransmissionMode::Receive.into());
 
             if send_start {
                 self.usci().transmit_start();
-                // Wait for initial address byte and (N)ACK to complete.
+                // Wait for initial address byte and (N)ACK to complete. ("The UCTXSTT flag is cleared as
+                // soon as the complete address is sent", SLAU445I 24.3.5.2.2, p. 639.)
                 while self.usci().uctxstt_rd() {
                     asm::nop();
                 }
@@ -663,6 +711,8 @@ mod sealed {
 
             let len = buffer.len();
             for (idx, byte) in buffer.iter_mut().enumerate() {
+                // "The next byte received from the slave is followed by a NACK and a STOP condition"
+                // (SLAU445I 24.3.5.2.2, p. 639)
                 if send_stop && (idx == len - 1) {
                     self.usci().transmit_stop();
                 }
@@ -677,6 +727,7 @@ mod sealed {
             }
 
             if send_stop {
+                // UCTXSTP clears once the STOP is generated (SLAU445I Table 24-4, p. 650)
                 while self.usci().uctxstp_rd() {
                     asm::nop();
                 }
@@ -692,8 +743,10 @@ mod sealed {
             send_start: bool,
             send_stop: bool,
         ) -> Result<(), Self::ErrorType> {
-            // Clear any flags from previous transactions
+            // Clear any flags from previous transactions (they aren't cleared automatically:
+            // SLAU445I 24.3.11, p. 645)
             self.usci().ifg_rst();
+            // Master transmitter: UCBxI2CSA and UCTR = 1, then UCTXSTT (SLAU445I 24.3.5.2.1, p. 637)
             self.usci().i2csa_wr(address);
             self.usci().set_uctr(TransmissionMode::Transmit.into());
 
@@ -705,6 +758,8 @@ mod sealed {
                 self.usci().transmit_start();
             }
 
+            // UCTXIFG0 is set when the START is generated, so the first byte goes into the buffer before the
+            // address is acknowledged (SLAU445I 24.3.5.2.1, p. 637)
             for (idx, &byte) in bytes.iter().enumerate() {
                 loop {
                     let ifg = self.usci().ifg_rd();
@@ -715,11 +770,14 @@ mod sealed {
                 }
                 self.usci().uctxbuf_wr(byte);
             }
+            // UCTXIFG0 is set again as the last byte moves to the shift register (SLAU445I 24.3.5.2.1, p. 637)
             while !self.usci().ifg_rd().uctxifg0() {
                 self.handle_errs(&self.usci().ifg_rd(), bytes.len().saturating_sub(1))?;
             }
 
             if send_stop {
+                // The STOP follows the next acknowledge (SLAU445I 24.3.5.2.1, p. 637), and UCBBUSY is
+                // "cleared after a STOP" (SLAU445I 24.3.2, p. 630)
                 self.usci().transmit_stop();
                 while self.usci().is_bus_busy() {
                     self.handle_errs(&self.usci().ifg_rd(), bytes.len())?;
@@ -730,9 +788,14 @@ mod sealed {
         }
 
         fn zero_byte_write(&mut self) -> Result<(), Self::ErrorType> {
-            // To send only the address, set UCTXSTT and UCTXSTP at the same time (user's guide)
+            // To send only the address, set UCTXSTT and UCTXSTP at the same time (user's guide:
+            // SLAU445I 24.3.8.2, p. 644)
             self.usci().transmit_start_stop();
-            self.usci().uctxbuf_wr(0); // Bus stalls if nothing in Tx, even if a stop is scheduled
+            // An earlier note said "Bus stalls if nothing in Tx, even if a stop is scheduled", but
+            // SLAU445I 24.3.5.2.1, p. 637 says a STOP set while the eUSCI waits for data comes "even if no
+            // data was transmitted", and with UCTXSTP set before the data starts "only the address is
+            // transmitted", so this byte isn't sent.
+            self.usci().uctxbuf_wr(0);
             while self.usci().uctxstt_rd() || self.usci().uctxstp_rd() {
                 self.handle_errs(&self.usci().ifg_rd(), 0)?;
             }
@@ -746,6 +809,8 @@ mod sealed {
             address: SevenOrTenBit,
             mode: TransmissionMode,
         ) {
+            // UCSLA10, UCTR and UCBxI2CSA, then UCTXSTT (SLAU445I 24.3.5.2.1, p. 637;
+            // SLAU445I 24.3.5.2.2, p. 639)
             self.set_addressing_mode(SevenOrTenBit::addr_type());
             self.usci().set_uctr(mode.into());
             self.usci().i2csa_wr(address.into());
@@ -809,6 +874,7 @@ mod sealed {
             ifg: &<Self::USCI as EUsciI2C>::IfgOut,
         ) -> nb::Result<(), Self::ErrorType> {
             if ifg.ucnackifg() {
+                // The byte counter restarts at each START and skips address bytes (SLAU445I 24.3.8, p. 643)
                 let nack_type = match self.usci().byte_count() {
                     0 => NackType::Address(0),
                     n => NackType::Data(n as usize),
@@ -816,6 +882,7 @@ mod sealed {
 
                 return Err(Other(Self::ErrorType::nack(nack_type)));
             }
+            // UCTXIFG0: the transmitter can take a new byte (SLAU445I 24.3.11.1, p. 645)
             if !ifg.uctxifg0() {
                 return Err(WouldBlock);
             }
@@ -828,6 +895,7 @@ mod sealed {
             ifg: &<Self::USCI as EUsciI2C>::IfgOut,
         ) -> nb::Result<u8, Self::ErrorType> {
             if ifg.ucnackifg() {
+                // The byte counter restarts at each START and skips address bytes (SLAU445I 24.3.8, p. 643)
                 let nack_type = match self.usci().byte_count() {
                     0 => NackType::Address(0),
                     n => NackType::Data(n as usize),
@@ -835,6 +903,7 @@ mod sealed {
 
                 return Err(Other(Self::ErrorType::nack(nack_type)));
             }
+            // UCRXIFG0: a byte was received into UCBxRXBUF (SLAU445I 24.3.11.3, p. 645)
             if !ifg.ucrxifg0() {
                 return Err(WouldBlock);
             }
@@ -858,6 +927,7 @@ mod sealed {
     {
         #[inline]
         fn sl_write_tx_buf(&mut self, byte: u8) -> nb::Result<(), Infallible> {
+            // UCTXIFG0 is the flag of the first own address (SLAU445I 24.3.11.1, p. 645)
             if !self.usci().ifg_rd().uctxifg0() {
                 return Err(WouldBlock);
             }
@@ -866,6 +936,7 @@ mod sealed {
         }
         #[inline]
         fn sl_read_rx_buf(&mut self) -> nb::Result<u8, Infallible> {
+            // UCRXIFG0 is the flag of the first own address (SLAU445I 24.3.11.3, p. 645)
             if !self.usci().ifg_rd().ucrxifg0() {
                 return Err(WouldBlock);
             }
@@ -879,13 +950,15 @@ use sealed::*;
 pub trait I2cRoleCommon<M>: I2cRoleBase<M>
 where M: PinMap
 {
-    /// Get the number of bytes received/transmitted since the last Start or Repeated Start condition.
+    /// Get the number of bytes received/transmitted since the last Start or Repeated Start condition
+    /// (UCBCNTx, SLAU445I Table 24-7, p. 653).
     #[inline(always)]
     fn byte_count(&mut self) -> u8 { self.usci().byte_count() }
 
     /// Get the event that triggered the current interrupt. Used as part of the interrupt-based interface.
     fn interrupt_source(&mut self) -> I2cVector {
         use I2cVector::*;
+        // UCBxIV values (SLAU445I Table 24-20, p. 664)
         match self.usci().iv_rd() {
             0x00 => None,
             0x02 => ArbitrationLost,
@@ -907,10 +980,12 @@ where M: PinMap
         }
     }
 
-    /// Set the bits in the interrupt enable register that correspond to the bits set in `intrs`.
+    /// Set the bits in the interrupt enable register that correspond to the bits set in `intrs`
+    /// (UCBxIE, SLAU445I Table 24-18, p. 660).
     #[inline(always)]
     fn set_interrupts(&mut self, intrs: I2cInterruptFlags) { self.usci().ie_set(intrs.bits()) }
-    /// Clear the bits in the interrupt enable register that correspond to the bits *set* in `intrs`.
+    /// Clear the bits in the interrupt enable register that correspond to the bits *set* in `intrs`
+    /// (UCBxIE, SLAU445I Table 24-18, p. 660).
     #[inline(always)]
     fn clear_interrupts(&mut self, intrs: I2cInterruptFlags) { self.usci().ie_clr(!(intrs.bits())) }
 }
@@ -921,15 +996,22 @@ where M: PinMap
 {
     /// Manually schedule a stop condition to be sent. Used as part of the non-blocking interface.
     ///
-    /// The stop will be sent after the current byte operation. If the bus stalls waiting for the Rx or Tx buffer then the stop won't be sent until that condition is dealt with.
+    /// The stop will be sent after the current byte operation: after the next acknowledge as a transmitter,
+    /// after the next byte, which is NACKed, as a receiver. If the bus is stalled waiting for the Tx buffer,
+    /// the STOP is sent "even if no data was transmitted" (SLAU445I 24.3.5.2.1, p. 637); if it's stalled
+    /// waiting for the Rx buffer to be read, the NACK "occurs immediately", followed by the STOP
+    /// (SLAU445I 24.3.5.2.2, p. 639).
     #[inline(always)]
     fn schedule_stop(&mut self) {
         self.usci().transmit_stop();
-        self.usci().ifg_rst(); // For some reason the TXIFG flag needs to be cleared between transactions
+        // For some reason the TXIFG flag needs to be cleared between transactions (the flags aren't cleared
+        // automatically: SLAU445I 24.3.11, p. 645)
+        self.usci().ifg_rst();
     }
 
     /// Checks whether a slave with the specified address is present on the I2C bus.
-    /// Sends a zero-byte write and records whether the slave sends an ACK or not.
+    /// Sends a zero-byte write and records whether the slave sends an ACK or not (only the address is sent:
+    /// SLAU445I 24.3.8.2, p. 644; a missing ACK sets UCNACKIFG: SLAU445I Table 24-2, p. 646).
     ///
     /// A `u8` address will use the 7-bit addressing mode, a `u16` address uses 10-bit addressing.
     #[inline]
@@ -953,6 +1035,7 @@ pub trait I2cRoleSlave<M>: I2cRoleSlavePrivate<M>
 where M: PinMap
 {
     /// Returns whether the device is currently in receive mode or transmit mode.
+    /// (UCTR, which a slave sets from the R/W bit it receives: SLAU445I 24.3.5.1, p. 633.)
     #[inline(always)]
     fn transmission_mode(&mut self) -> TransmissionMode {
         match self.usci().is_transmitter() {
@@ -962,6 +1045,8 @@ where M: PinMap
     }
     /// Check the I2C bus flags for any events that should be dealt with. Returns `Err(WouldBlock)` if no events have occurred yet, otherwise `Ok(I2cEvent)`.
     fn poll(&mut self) -> nb::Result<I2cEvent, Infallible> {
+        // UCSTPIFG, UCSTTIFG, UCRXIFG0, UCTXIFG0 with UCTR (SLAU445I Table 24-2, p. 646;
+        // SLAU445I Table 24-19, p. 662)
         if self.usci().stop_received() {
             self.usci().clear_start_stop_flags();
             return Ok(I2cEvent::Stop);
@@ -979,8 +1064,10 @@ where M: PinMap
             (false, true,  false) => Ok(I2cEvent::Write),
             (false, false, true ) => Ok(I2cEvent::Read),
             // Rx buffer filled, then repeated start then Tx buffer empty. (Can't be reverse because empty Tx buf stalls the bus).
+            // (A slave transmitter holds SCL low until its Tx buffer is written: SLAU445I 24.3.5.1.1, p. 633.)
             (true,  true,  true ) => Ok(I2cEvent::OverrunWrite), // Don't clear the start flag yet.
             // The same, with the start flag already cleared, by reading the interrupt vector say
+            // (reading UCBxIV resets the highest pending flag: SLAU445I 24.3.11.5, p. 646)
             (false, true,  true ) => Ok(I2cEvent::OverrunWrite),
             // Start flag but no Rx / Tx events yet. Don't clear the flag yet.
             (_,     false, false) => Err(WouldBlock),
@@ -988,32 +1075,36 @@ where M: PinMap
     }
 
     /// Check whether the device is currently being addressed as a slave.
+    /// (UCSTTIFG is set by a START "together with its own address": SLAU445I Table 24-2, p. 646.)
     #[inline(always)]
     fn is_being_addressed(&mut self) -> bool {
         !self.usci().is_master() && self.usci().ifg_rd().ucsttifg()
     }
 
     /// Queue a NACK to be sent on the I2C bus. If this is called in response to a packet being received the NACK will be sent on the following byte.
+    /// (SLAU445I 24.3.5.1.2, p. 634: "during the next acknowledgment cycle".)
     ///
     /// Used as part of the non-blocking / interrupt-based interface. NACKs can only be sent as a slave receiver (user's
-    /// guide, UCTXNACK), so only use this while receiving as a slave.
+    /// guide, UCTXNACK: SLAU445I Table 24-4, p. 650), so only use this while receiving as a slave.
     #[inline(always)]
     fn send_nack(&mut self) { self.usci().transmit_nack(); }
 
-    /// The address this device was last addressed with (UCBxADDRX), useful with several own addresses or an
-    /// address mask.
+    /// The address this device was last addressed with (UCBxADDRX, SLAU445I Table 24-15, p. 658), useful with
+    /// several own addresses or an address mask.
     #[inline(always)]
     fn received_address(&mut self) -> u16 { self.usci().addrx_rd() }
 
     /// With [`software_address_ack`](I2cConfig::software_address_ack), acknowledge the received address or not,
-    /// after the start flag is set (UCTXACK). SCL is held low until this is called. When not acknowledging a
-    /// read, this also clears the Tx buffer flag, as the user's guide requires.
+    /// after the start flag is set (UCTXACK, SLAU445I Table 24-4, p. 649). SCL is held low until this is
+    /// called. When not acknowledging a read, this also clears the Tx buffer flag, as the user's guide requires
+    /// (SLAU445I 24.3.9.2, p. 644: "TXIFG0 must be reset").
     #[inline]
     fn acknowledge_address(&mut self, ack: bool) {
         if ack {
             self.usci().transmit_ack();
         } else {
-            // Any write to the low byte of UCBxCTLW0 with UCTXACK = 0 continues without an ACK
+            // Any write to the low byte of UCBxCTLW0 with UCTXACK = 0 continues without an ACK ("The clock is
+            // stretched until the UCBxCTL1 register has been written", SLAU445I Table 24-4, p. 649)
             self.usci().clear_txack();
             self.usci().clear_txifg0();
         }
@@ -1038,16 +1129,18 @@ where M: PinMap
     }
 
     /// After losing arbitration (or after being addressed as a slave) call this method to return the peripheral to master mode.
+    /// (The eUSCI clears UCMST in both cases: UCALIFG, SLAU445I Table 24-2, p. 646.)
     #[inline(always)]
     fn return_to_master(&mut self) { self.usci().set_master(); }
 
-    /// Check whether the device is currently in master mode.
+    /// Check whether the device is currently in master mode (UCMST, SLAU445I Table 24-4, p. 649).
     #[inline(always)]
     fn is_master(&mut self) -> bool { self.usci().is_master() }
 }
 
 /// An eUSCI peripheral that has been configured as an I2C master.
 /// This variant offers simplified error handling and ease of use, but is not suitable for use on a multi-master bus.
+/// (UCMM = 0: "There is no other master in the system", SLAU445I Table 24-4, p. 649.)
 pub struct I2cSingleMaster<USCI, M = DefaultMapping> {
     usci: USCI,
     _pin_map: PhantomData<M>,
@@ -1078,6 +1171,8 @@ where
         idx: usize,
     ) -> Result<(), Self::ErrorType> {
         if ifg.ucnackifg() {
+            // After a NACK "The master must react with either a STOP condition or a repeated START condition"
+            // (SLAU445I 24.3.5.2.1, p. 637)
             self.usci.transmit_stop();
             let nack = if idx == 0 { NackType::Address(idx) } else { NackType::Data(idx) };
             while self.usci.uctxstp_rd() {
@@ -1115,7 +1210,8 @@ where
     ///
     /// Returns `Err(WouldBlock)` if the Rx buffer is empty, `Err(GotNACK(n))` if a NACK was received from a previous byte
     /// (will prevent the Rx buffer from filling), where `n` is the number of
-    /// bytes since the latest Start or Repeated Start condition. otherwise `Ok(n)`.
+    /// bytes since the latest Start or Repeated Start condition (UCBCNTx, SLAU445I Table 24-7, p. 653).
+    /// otherwise `Ok(n)`.
     #[inline(always)]
     pub fn read_rx_buf(&mut self) -> nb::Result<u8, I2cSingleMasterErr> {
         self.mst_read_rx_buf(&self.usci.ifg_rd())
@@ -1125,7 +1221,8 @@ where
     ///
     /// Returns `Err(WouldBlock)` if the Tx buffer is still full, `Err(GotNACK(n))` if a NACK was received from a previous byte
     /// (will prevent the Tx buffer from emptying), where `n` is the number of
-    /// bytes since the latest Start or Repeated Start condition. Otherwise returns `Ok(())`.
+    /// bytes since the latest Start or Repeated Start condition (UCBCNTx, SLAU445I Table 24-7, p. 653).
+    /// Otherwise returns `Ok(())`.
     #[inline(always)]
     pub fn write_tx_buf(&mut self, byte: u8) -> nb::Result<(), I2cSingleMasterErr> {
         self.mst_write_tx_buf(byte, &self.usci.ifg_rd())
@@ -1160,6 +1257,7 @@ where
     type ErrorType = I2cMultiMasterErr;
     fn can_proceed(&mut self, _address: u16) -> Result<(), I2cMultiMasterErr> {
         // Multimaster doesn't need to check anything with the address, but it keeps the interface the same so we can abstract it
+        // (UCMST is cleared when arbitration is lost: SLAU445I Table 24-4, p. 649)
         if !self.usci.is_master() {
             return Err(I2cMultiMasterErr::ArbitrationLost);
         }
@@ -1168,6 +1266,7 @@ where
 
     fn handle_errs(&mut self, ifg: &USCI::IfgOut, idx: usize) -> Result<(), I2cMultiMasterErr> {
         if ifg.ucnackifg() {
+            // A NACK needs a STOP or a repeated START (SLAU445I 24.3.5.2.1, p. 637)
             self.usci.transmit_stop();
             let nack = if idx == 0 { NackType::Address(idx) } else { NackType::Data(idx) };
             while self.usci.uctxstp_rd() {
@@ -1264,7 +1363,8 @@ where
     /// Useful in cases where you already know the Rx buffer is ready (e.g. an Rx interrupt occurred).
     /// Used as part of the non-blocking / interrupt-based interface.
     /// # Safety
-    /// If the buffer is not ready then the data will be invalid.
+    /// If the buffer is not ready then the data will be invalid (UCBxRXBUF holds "the last received
+    /// character": SLAU445I Table 24-9, p. 655).
     #[inline(always)]
     pub unsafe fn read_rx_buf_unchecked(&mut self) -> u8 { self.usci.ucrxbuf_rd() }
 
@@ -1272,7 +1372,8 @@ where
     /// Useful in cases where you already know the Tx buffer is ready (e.g. a Tx interrupt occurred).
     /// Used as part of the non-blocking / interrupt-based interface.
     /// # Safety
-    /// If the buffer is not ready then previous data may be clobbered.
+    /// If the buffer is not ready then previous data may be clobbered (UCBxTXBUF "holds the data waiting to be
+    /// moved into the transmit shift register": SLAU445I Table 24-10, p. 655).
     #[inline(always)]
     pub unsafe fn write_tx_buf_unchecked(&mut self, byte: u8) { self.usci.uctxbuf_wr(byte); }
 
@@ -1316,7 +1417,8 @@ where
 {
     type ErrorType = I2cMasterSlaveErr;
     fn can_proceed(&mut self, address: u16) -> Result<(), I2cMasterSlaveErr> {
-        // Are we a master? If not, why?
+        // Are we a master? If not, why? (Addressed after losing arbitration: UCALIFG with UCSTTIFG,
+        // SLAU445I Figure 24-12, p. 638; SLAU445I Figure 24-13, p. 640)
         if !self.usci.is_master() {
             return match self.usci.ifg_rd().ucsttifg() {
                 false => Err(I2cMasterSlaveErr::ArbitrationLost),
@@ -1324,6 +1426,7 @@ where
             };
         }
         // Check if the eUSCI is addressing itself. The hardware isn't capable of this.
+        // (SLAU445I 24.3.5.2, p. 636: "There is no hardware detection for this case")
         let own_addr_reg = self.usci.i2coa_rd(0);
         if own_addr_reg.ucoaen && own_addr_reg.i2coa0 == address {
             return Err(I2cMasterSlaveErr::TriedAddressingSelf);
@@ -1333,6 +1436,7 @@ where
 
     fn handle_errs(&mut self, ifg: &USCI::IfgOut, idx: usize) -> Result<(), I2cMasterSlaveErr> {
         if ifg.ucnackifg() {
+            // A NACK needs a STOP or a repeated START (SLAU445I 24.3.5.2.1, p. 637)
             self.usci.transmit_stop();
             let nack = if idx == 0 { NackType::Address(idx) } else { NackType::Data(idx) };
             while self.usci.uctxstp_rd() {
@@ -1340,6 +1444,7 @@ where
             }
             return Err(I2cMasterSlaveErr::GotNACK(nack));
         }
+        // UCALIFG with UCSTTIFG: addressed as a slave after losing arbitration (SLAU445I Figure 24-12, p. 638)
         if ifg.ucalifg() {
             return match ifg.ucsttifg() {
                 false => Err(I2cMasterSlaveErr::ArbitrationLost),  // Lost arbitration
@@ -1404,7 +1509,8 @@ where
     /// Useful in cases where you already know the Rx buffer is ready (e.g. an Rx interrupt occurred).
     /// Used as part of the non-blocking / interrupt-based interface.
     /// # Safety
-    /// If the buffer is not ready then the data will be invalid.
+    /// If the buffer is not ready then the data will be invalid (UCBxRXBUF holds "the last received
+    /// character": SLAU445I Table 24-9, p. 655).
     #[inline(always)]
     pub unsafe fn read_rx_buf_as_slave_unchecked(&mut self) -> u8 { self.usci.ucrxbuf_rd() }
 
@@ -1441,7 +1547,8 @@ where
     ///
     /// Used as part of the non-blocking / interrupt-based interface.
     /// # Safety
-    /// If the buffer is not ready then previous data may be clobbered.
+    /// If the buffer is not ready then previous data may be clobbered (UCBxTXBUF "holds the data waiting to be
+    /// moved into the transmit shift register": SLAU445I Table 24-10, p. 655).
     #[inline(always)]
     pub unsafe fn write_tx_buf_as_slave_unchecked(&mut self, byte: u8) {
         self.usci.uctxbuf_wr(byte);
@@ -1468,7 +1575,8 @@ macro_rules! impl_i2c_error {
 ///
 /// If this originated from a blocking method the byte number counts up from the beginning of the transaction
 /// (i.e. the initial start condition) where byte 0 is the address byte, byte 1 is the first data byte, etc..
-/// If it originated from a non-blocking method it counts up from the most recent Start or Repeated Start condition.
+/// If it originated from a non-blocking method it counts up from the most recent Start or Repeated Start condition
+/// (the byte counter: SLAU445I 24.3.8, p. 643).
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub enum NackType {
@@ -1498,7 +1606,7 @@ pub enum I2cMultiMasterErr {
     /// Received a NACK. The contained value denotes the byte where the NACK occurred.
     GotNACK(NackType),
     /// Another master on the bus talked over us, so the transaction was aborted.
-    /// The peripheral has been forced into slave mode.
+    /// The peripheral has been forced into slave mode (SLAU445I 24.3.5.3, p. 641).
     /// Call [`return_to_master()`](I2cRoleMulti::return_to_master) to resume the master role.
     ArbitrationLost,
     // Other errors like the 'clock low timeout' UCCLTOIFG may appear here in future.
@@ -1513,20 +1621,25 @@ pub enum I2cMasterSlaveErr {
     /// Received a NACK. The contained value denotes the byte where the NACK occurred.
     GotNACK(NackType),
     /// Another master on the bus talked over us, so the transaction was aborted.
-    /// The peripheral has been forced into slave mode.
+    /// The peripheral has been forced into slave mode (SLAU445I 24.3.5.3, p. 641).
     /// Call [`return_to_master()`](I2cRoleMulti::return_to_master) to resume the master role.
     ArbitrationLost,
-    /// Another master on the bus addressed us as a slave device. The peripheral has been forced into slave mode.
+    /// Another master on the bus addressed us as a slave device. The peripheral has been forced into slave mode
+    /// (UCALIFG, SLAU445I Table 24-2, p. 646).
     /// The slave transaction *must* be completed before master operations can be resumed with
     /// [`return_to_master()`](I2cRoleMulti::return_to_master).
     AddressedAsSlave,
-    /// The eUSCI peripheral attempted to address itself. The hardware does not support this operation.
+    /// The eUSCI peripheral attempted to address itself. The hardware does not support this operation
+    /// (SLAU445I 24.3.5.2, p. 636).
     TriedAddressingSelf,
     // Other errors like the 'clock low timeout' UCCLTOIFG may appear here in future.
 }
 impl_i2c_error!(I2cMasterSlaveErr);
 
 /// A list of events that may occur on the I2C bus.
+///
+/// Writing the Tx buffer clears UCTXIFGx and reading the Rx buffer clears UCRXIFGx
+/// (SLAU445I Table 24-9, p. 655; SLAU445I Table 24-10, p. 655).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum I2cEvent {
     /// The master sent a (repeated) start and wants to read from us. Write to the Tx buffer to clear this event.
@@ -1552,6 +1665,9 @@ pub enum I2cEvent {
 /// List of possible I2C interrupt sources.
 ///
 /// Used when reading from the I2C interrupt vector register via [`interrupt_source()`](I2cRoleCommon::interrupt_source())
+///
+/// The values are those of UCBxIV (SLAU445I Table 24-20, p. 664); the flags behind them are described in
+/// SLAU445I Table 24-2, p. 646 and SLAU445I Table 24-19, p. 662.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum I2cVector {
     /// No interrupt.
@@ -1562,8 +1678,11 @@ pub enum I2cVector {
     NackReceived     = 0x04,
     /// Received a Start condition on the I2C bus along with one of our own addresses.
     StartReceived    = 0x06,
-    /// Received a Stop condition on the I2C bus.
-    /// This is usually set when acting as an I2C slave, but that this can occur as an I2C master during a zero byte write.
+    /// Received a Stop condition on the I2C bus (UCSTPIFG: "set when the I2C module detects a STOP
+    /// condition on the bus", SLAU445I Table 24-2, p. 646).
+    /// This is usually set when acting as an I2C slave, but this can also occur as an I2C master: during a
+    /// zero byte write (SLAU445I 24.3.5.2.1, p. 637), and as a master receiver "If a STOP condition was
+    /// generated by the eUSCI_B module" (SLAU445I 24.3.5.2.2, p. 639).
     StopReceived     = 0x08,
     /// Slave address 3 received a data byte.
     Slave3RxBufFull  = 0x0A,
@@ -1593,6 +1712,9 @@ bitflags::bitflags! {
     /// Human-friendly list of possible I2C interrupt source flags.
     ///
     /// Used for writing to the I2C interrupt enable register e.g. via the [`set_interrupts()`](I2cSingleMaster::set_interrupts()) method.
+    ///
+    /// The bits are those of UCBxIE (SLAU445I Figure 24-31, p. 660; SLAU445I Table 24-18, p. 660); the flags
+    /// they enable are described in SLAU445I Table 24-2, p. 646 and SLAU445I Table 24-19, p. 662.
     pub struct I2cInterruptFlags: u16 {
         /// UCRXIE0. Trigger an interrupt when data is waiting in the Rx buffer. In slave mode slave address 0 must be on the I2C bus when this occurred.
         const RxBufFull           = 1 << 0;
@@ -1600,8 +1722,12 @@ bitflags::bitflags! {
         const TxBufEmpty          = 1 << 1;
         /// UCSTTIE. Trigger an interrupt when a Start condition is received on the I2C bus along with one of our own addresses.
         const StartReceived       = 1 << 2;
-        /// UCSTPIE. Trigger an interrupt when a Stop condition is received on the I2C bus in a transaction we are a part of.
-        /// Typically this triggers when acting as an I2C slave, but this also triggers as an I2C master during a zero byte write.
+        /// UCSTPIE. Trigger an interrupt when a Stop condition is detected on the I2C bus: UCSTPIFG is
+        /// "set when the I2C module detects a STOP condition on the bus" (SLAU445I Table 24-2, p. 646), and
+        /// the state change flags "are independent of the address comparison result"
+        /// (SLAU445I 24.3.9.1, p. 644). Typically this triggers when acting as an I2C slave, but this also
+        /// triggers as an I2C master during a zero byte write, and when a master receiver sends a STOP (see
+        /// `I2cVector::StopReceived`).
         const StopReceived        = 1 << 3;
         /// UCALIE. Trigger an interrupt when arbitration was lost during an attempted transmission.
         const ArbitrationLost     = 1 << 4;

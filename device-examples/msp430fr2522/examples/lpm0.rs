@@ -27,6 +27,8 @@ use panic_msp430 as _;
 static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
 // P1.0 should toggle when P2.3 is pressed
+// No board document covers the LED or the button: there is none for the MSP430FR25x2. P2.3 only exists on
+// the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
@@ -36,6 +38,8 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
+    // (SLAU445I 8.3.2, p. 317: "To prevent a floating input and to reduce power consumption";
+    // SLASEE4C Table 4-4, p. 16)
     let p1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -59,6 +63,8 @@ fn main() -> ! {
 
     loop {
         // Since no peripherals were configured to use SMCLK / ACLK we could just as well enter LPM3 / LPM4 here
+        // (SLASEE4C Table 6-1, p. 45: LPM3 stops SMCLK, LPM4 also ACLK, and I/O interrupts wake both).
+        // LPM3 and LPM4 entry has errata: SLAZ705H CS13 and SLAZ705H PMM32.
         enter_lpm0();
         green_led.toggle().ok();
 
@@ -70,6 +76,9 @@ fn main() -> ! {
 }
 
 // Interrupt handlers with the `wake_cpu` argument will set the MSP430 back to Active Mode after the interrupt completes.
+// (SLAU445I 1.4.2, p. 40: "The SR bits stored on the stack can be modified within the interrupt service
+// routine to return to a different operating mode")
+// Port 2 interrupt, P2IV (SLASEE4C Table 6-2, p. 46: vector FFE4h)
 #[interrupt(wake_cpu)]
 fn PORT2() {
     with(|cs| {

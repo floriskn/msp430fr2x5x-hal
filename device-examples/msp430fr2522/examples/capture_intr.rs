@@ -36,8 +36,10 @@ static VECTOR: Mutex<UnsafeCell<Option<TBxIV<msp430fr25x2::Ta0, DefaultMapping>>
 static RED_LED: Mutex<UnsafeCell<Option<Pin<P1, Pin0, Output>>>> =
     Mutex::new(UnsafeCell::new(None));
 
-// Connect push button input to P1.6. When button is pressed, red LED should toggle. No debouncing,
-// so sometimes inputs are missed.
+// Connect push button input to P1.5, TA0.CCI2A, the capture input set up below (P1.6 is TA0CLK, no
+// capture input: SLASEE4C Table 6-15, p. 58; SLASEE4C Figure 6-2, p. 54). When button is pressed, red
+// LED should toggle. No debouncing, so sometimes inputs are missed. No board document covers the button
+// or the LED (P1.0): there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     let Some(periph) = msp430fr25x2::Peripherals::take() else {
@@ -60,6 +62,8 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut fram);
 
+    // P1.5 as TA0.CCI2A, capture input A of CCR2: P1SELx = 10 with P1DIR = 0 (SLASEE4C Table 6-15, p. 58;
+    // SLASEE4C Figure 6-2, p. 54)
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
         .config_cap2_input_A(p1.pin5.to_alternate2())
         .config_cap2_trigger(CapTrigger::FallingEdge)
@@ -81,6 +85,7 @@ fn setup_capture<T: CapCmp<C>, C>(capture: &mut Capture<T, C>) {
     capture.enable_interrupts();
 }
 
+// Timer0_A3 CCR1, CCR2 and overflow interrupt, TA0IV (SLASEE4C Table 6-2, p. 46: vector FFF6h)
 #[interrupt]
 fn TIMER0_A1() {
     with(|cs| {

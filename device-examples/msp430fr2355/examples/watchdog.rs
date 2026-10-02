@@ -6,7 +6,7 @@ use msp430_rt::entry;
 use msp430_hal::{gpio::Batch, pmm::Pmm};
 use panic_msp430 as _;
 
-// The LED on P1.0 should flash rapidly
+// The LED on P1.0 should flash rapidly (LED1, red: SLAU680 Figure 18, p. 26)
 
 #[entry]
 fn main() -> ! {
@@ -20,7 +20,8 @@ fn main() -> ! {
 
     red_led.toggle().ok();
 
-    // The watchdog will reset program execution after a few ms
+    // The watchdog will reset program execution after about 32 ms (SLAU445I 12.1, p. 361: after a PUC
+    // the WDT runs in watchdog mode "with an initial approximately 32-ms reset interval using the SMCLK")
     loop {}
 }
 

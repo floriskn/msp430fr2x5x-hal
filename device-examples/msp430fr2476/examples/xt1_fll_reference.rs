@@ -1,4 +1,5 @@
 //! XT1 as the FLL reference: the DCO is locked to the external signal on XIN instead of REFO.
+//! (The FLL reference can be XT1CLK or REFOCLK, selected by SELREF: SLAU445I 3.2.5, p. 104)
 //!
 //! Wiring: function generator -> P2.1/XIN (J2 pin 18), ground -> J2 pin 20. Square wave,
 //! 32.768 kHz, 0 V to 3.3 V, 50 % duty, output load High-Z (see `xt1_bypass_aclk.rs`).
@@ -8,14 +9,21 @@
 //! - P1.7/SMCLK (J3 pin 23): MCLK / 8 = 999.4 kHz, easier to measure precisely
 //! - P2.2/ACLK (J1 pin 5): REFO at 32.768 kHz, as a fixed reference
 //!
+//! (Header pins: SLAU802 Figure 10, p. 13.)
+//!
 //! What to try:
 //! 1. Detune the generator, e.g. to 30 kHz: MCLK should follow proportionally
 //!    (244 x 30 kHz = 7.32 MHz, SMCLK 915 kHz). If the FLL were still referenced to REFO,
-//!    MCLK would not move at all.
-//! 2. Keep detuning until the FLL can no longer follow: the blue LED2 shows the FLL is unlocked.
+//!    MCLK would not move at all. (fDCOCLKDIV = (FLLN + 1) × (fFLLREFCLK ÷ n): SLAU445I 3.2.5,
+//!    p. 104)
+//! 2. Keep detuning until the FLL can no longer follow: the blue LED2 shows the FLL is unlocked
+//!    (FLLUNLOCK: SLAU445I 3.2.9, p. 105).
 //! 3. Switch the generator off: the FLL reference falls back to REFO, MCLK returns to 7.995 MHz
-//!    and red LED1 reports the XT1 fault.
-//! 4. Switch the generator back on: the fault clears and MCLK tracks the generator again.
+//!    and LED1 reports the XT1 fault (SLAU445I 3.2.13, p. 109).
+//! 4. Switch the generator back on: the fault clears and MCLK tracks the generator again
+//!    (SLAU445I 3.2.13, p. 110).
+//!
+//! (LED1 on P1.0 is green, the blue part of LED2 is P4.7: SLAU802 Figure 19, p. 25.)
 #![no_main]
 #![no_std]
 
@@ -51,6 +59,8 @@ fn main() -> ! {
     let mut led1 = p1.pin0;
     let mut led2_blue = p4.pin7;
 
+    // MCLK on P1.3, SMCLK on P1.7 and ACLK on P2.2, each with PxSEL = 10 and PxDIR = 1; XIN on P2.1
+    // with P2SEL = 01 (SLASEO7C Table 9-23, p. 65; SLASEO7C Table 9-24, p. 66)
     let _mclk_out = p1.pin3.to_output().to_alternate2();
     let _smclk_out = p1.pin7.to_output().to_alternate2();
     let _aclk_out = p2.pin2.to_output().to_alternate2();
@@ -66,15 +76,16 @@ fn main() -> ! {
 
     loop {
         // Clearing the sticky fault flag also lets the FLL move back to XT1 once the signal is
-        // healthy again
+        // healthy again (SLAU445I 3.2.13, p. 110)
         xt1clk.clear_fault();
         led1.set_state(xt1clk.is_faulted().into()).ok();
         led2_blue.set_state(fll_unlocked().into()).ok();
     }
 }
 
-/// Whether the FLL currently reports the DCO as too fast, too slow or out of range. The HAL
-/// has no API for this, so it goes through the PAC.
+/// Whether the FLL currently reports the DCO as too fast, too slow or out of range
+/// (CSCTL7.FLLUNLOCK: SLAU445I Table 3-11, p. 121). The HAL has no API for this, so it goes
+/// through the PAC.
 fn fll_unlocked() -> bool {
     let cs = unsafe { &*msp430fr247x::Cs::ptr() };
     !cs.csctl7().read().fllunlock().is_fllunlock_0()

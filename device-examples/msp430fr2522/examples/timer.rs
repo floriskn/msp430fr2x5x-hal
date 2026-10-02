@@ -38,6 +38,7 @@ fn main() -> ! {
     let parts = TimerParts3::new(
         periph.ta0,
         // ACLK (REFO, 32768 Hz) / 32 = 1024 Hz
+        // (REFO: SLASEE4C Table 5-7, p. 27. ID divides by 8 and TAIDEX by 4: SLAU445I 13.2.1.1, p. 370)
         TimerConfig::aclk(&aclk).clk_div(TimerDiv::_8, TimerExDiv::_4),
     );
     let mut timer = parts.timer;

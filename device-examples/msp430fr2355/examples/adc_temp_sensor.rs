@@ -13,7 +13,7 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Turn on P1.0 if temp between 20 and 25C
+// Turn on P1.0 if temp between 20 and 25C (LED1, red: SLAU680 Figure 18, p. 26)
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -27,8 +27,10 @@ fn main() -> ! {
     led.set_low().ok();
 
     // ADC setup.
-    // Temp sensor needs >= 30 us sample time.
-    // MODCLK is < ~4.6MHz, so 256 cycles / 4.6 MHz = 55 us sample time.
+    // Temp sensor needs >= 30 us sample time (SLAU445I 21.2.7.8, p. 556: the sample period must be
+    // greater than 30 us).
+    // MODCLK is < ~4.6MHz, so 256 cycles / 4.6 MHz = 55 us sample time (fMODOSC is 4.6 MHz at most:
+    // SLASEC4D Table 5-9, p. 41).
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
@@ -45,6 +47,9 @@ fn main() -> ! {
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
     // against the internal 1.5 V reference at full resolution, so measure the same way. This is much more
     // accurate than the typical sensor voltage and slope from the data sheet.
+    // (Calibration: SLASEC4D Table 6-70, p. 108, ADC internal shared 1.5-V reference at 30 C and at a
+    // high temperature, 105 C; SLAU445I 1.13.3.3, p. 60. Typical values: VSENSOR 788 mV at 30 C and
+    // TCSENSOR 2.32 mV per degree C, SLASEC4D Table 5-10, p. 41.)
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
     let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
 

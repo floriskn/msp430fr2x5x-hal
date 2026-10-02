@@ -6,13 +6,19 @@
 //!   offset), output load set to High-Z. Check the levels on the scope *before* connecting:
 //!   a negative or >3.6 V signal can damage the pin.
 //!
+//! (XIN reaches J2 pin 18 through R1, while R2 and R3, which would connect the crystal Y1, are not
+//! fitted: SLAU802 Figure 18, p. 24. Header pins: SLAU802 Figure 10, p. 13. The bypass input is a
+//! logic-level square wave with a 40 % to 60 % duty cycle: SLASEO7C 8.12.3.1, p. 27. Any pin may see
+//! –0.3 V to VCC + 0.3 V at most: SLASEO7C 8.1, p. 20, and the LaunchPad's VCC is 3.3 V:
+//! SLAU802 2.3.1, p. 10.)
+//!
 //! Scope:
 //! - P2.2/ACLK (J1 pin 5): follows the generator exactly
 //! - P1.3/MCLK (J1 pin 9): 8 MHz from the DCO, independent of the generator
 //! - P1.7/SMCLK (J3 pin 23): MCLK / 8 = 1 MHz
 //!
-//! Red LED1 turns on once `freeze()` has returned. Change the generator frequency (e.g. 20 kHz):
-//! ACLK should follow while MCLK and SMCLK stay put.
+//! LED1 turns on once `freeze()` has returned (LED1 on P1.0 is green: SLAU802 Figure 19, p. 25).
+//! Change the generator frequency (e.g. 20 kHz): ACLK should follow while MCLK and SMCLK stay put.
 #![no_main]
 #![no_std]
 
@@ -45,11 +51,15 @@ fn main() -> ! {
     let mut led = p1.pin0;
 
     // Route the internal clocks to pins so they can be measured
+    // (MCLK on P1.3, SMCLK on P1.7 and ACLK on P2.2, each with PxSEL = 10 and PxDIR = 1:
+    // SLASEO7C Table 9-23, p. 65; SLASEO7C Table 9-24, p. 66)
     let _mclk_out = p1.pin3.to_output().to_alternate2();
     let _smclk_out = p1.pin7.to_output().to_alternate2();
     let _aclk_out = p2.pin2.to_output().to_alternate2();
 
     // Bypass mode only needs XIN; XOUT (P2.0) stays a normal GPIO
+    // (SLAU445I 3.2.4, p. 103: "XT1OUT is configured as a general-purpose I/O". XIN is P2.1 with
+    // P2SEL = 01: SLASEO7C Table 9-24, p. 66)
     let xin = p2.pin1.to_alternate1();
 
     let (_smclk, _aclk, _xt1clk, _delay) = ClockConfig::new(periph.cs)

@@ -10,6 +10,8 @@ use nb::block;
 use panic_msp430 as _;
 
 // 0.5 second on, 0.5 second off
+// (LED1 on P1.0: SLAU802 Figure 19, p. 25. TA0 counts ACLK from the VLO, typically 10 kHz:
+// SLASEO7C 8.12.3.5, p. 30, divided by 2 and by 5: SLAU445I 13.2.1.1, p. 370.)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();

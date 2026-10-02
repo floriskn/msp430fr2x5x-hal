@@ -14,6 +14,8 @@
 // Connect:
 // P1.2 <--> P4.6.
 // P1.3 <--> P4.7.
+// (UCB0SDA to UCB1SDA and UCB0SCL to UCB1SCL: SLASEC4D Table 6-14, p. 72. On the BoosterPack header
+// that is pin 10 to pin 15 and pin 9 to pin 14: SLAU680 Figure 10, p. 15.)
 
 // This example is quite big (particularly debug builds on old compiler versions), so we use a couple of tricks here to shrink binary size:
 // Anything that can panic (like RefCell) will pull in some string formatting, which bloats the binary! Instead use UnsafeCell (carefully).
@@ -45,6 +47,7 @@ const ARR_LEN: usize = 8;
 static ARR: [AtomicU8; ARR_LEN] = [const { AtomicU8::new(0) }; ARR_LEN];
 
 // Red LED on P1.0 should blink rapidly. Green LED on pin P6.6 should blink once for every ten red blinks.
+// (LED1, red, on P1.0 and LED2, green, on P6.6: SLAU680 Figure 18, p. 26)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();
@@ -57,9 +60,13 @@ fn main() -> ! {
     let mut red_led = p1.pin0.to_output();
     let mut green_led = Batch::new(periph.p6).split(&pmm).pin6.to_output();
     let p4 = Batch::new(periph.p4).split(&pmm);
+    // UCB1SCL on P4.7 and UCB1SDA on P4.6, P4SELx = 01 (SLASEC4D Table 6-66, p. 102)
     let sl_scl = p4.pin7.to_alternate1();
     let sl_sda = p4.pin6.to_alternate1();
 
+    // UCB0SCL on P1.3 and UCB0SDA on P1.2, P1SELx = 01 (SLASEC4D Table 6-63, p. 96). The internal
+    // pull-ups are 20 to 50 kOhm (SLASEC4D Table 5-11, p. 43), and I2C needs pull-ups on SDA and SCL
+    // (SLAU445I 24.3, p. 629).
     let scl = p1.pin3.pullup().to_alternate1(); // You may need stronger external pullup resistors
     let sda = p1.pin2.pullup().to_alternate1();
 
@@ -71,7 +78,7 @@ fn main() -> ! {
 
     let mut i2c_master = I2cConfig::new(periph.e_usci_b0, GlitchFilter::Max50ns)
         .as_single_master()
-        .use_smclk(&smclk, 80) // 8MHz / 80 = 100kHz
+        .use_smclk(&smclk, 80) // 8MHz / 80 = 100kHz (fBitClock = fBRCLK/UCBRx: SLAU445I 24.3.7, p. 642)
         .configure(scl, sda);
 
     const SLAVE_ADDR: u8 = 0x1A;
@@ -104,6 +111,7 @@ fn main() -> ! {
 }
 
 // Static mut variables defined inside an interrupt handler are safe. See: https://docs.rust-embedded.org/book/start/interrupts.html
+// The eUSCI_B1 receive or transmit vector at FFDEh (SLASEC4D Table 6-2, p. 64)
 #[allow(static_mut_refs)]
 #[interrupt]
 fn EUSCI_B1() {

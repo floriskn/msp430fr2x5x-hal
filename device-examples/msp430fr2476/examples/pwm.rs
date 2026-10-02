@@ -13,7 +13,10 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-// P6.4 LED should be bright, P6.3 LED should be dim
+// An LED on P4.3 (J3 pin 24) should be bright and an LED on P5.2 (J4 pin 40) dim: their duty cycles
+// are 3795 and 100 out of 5000. This LaunchPad has no LEDs on these pins (SLAU802 Figure 10, p. 13;
+// SLAU802 Figure 19, p. 25). The output is high from the start of each period until the timer
+// reaches the duty cycle (Reset/Set mode: SLAU445I Table 14-4, p. 401).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
@@ -32,6 +35,8 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     let pwm = PwmParts7::new(periph.tb0, TimerConfig::smclk(&smclk), 5000);
+    // TB0.4 is P5.2 and TB0.5 is P4.3 (SLASEO7C Table 9-15, p. 59), each with PxSEL = 10 and PxDIR = 1
+    // (SLASEO7C Table 9-27, p. 69; SLASEO7C Table 9-26, p. 68)
     let mut pwm4 = pwm.pwm4.init(p5.pin2.to_output().to_alternate2());
     let mut pwm5 = pwm.pwm5.init(p4.pin3.to_output().to_alternate2());
 

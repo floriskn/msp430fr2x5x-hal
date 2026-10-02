@@ -6,13 +6,18 @@
 //!
 //! Scope: CH1 on RST (J2 pin 16), CH2 on P1.0/LED1 (J3 pin 27), CH3 on P2.2/ACLK (J1 pin 5).
 //! Trigger on the rising edge of RST, when the reset button is released.
+//! (Header pins: SLAU802 Figure 10, p. 13. The reset button S3 pulls RST low, R11 pulls it up:
+//! SLAU802 Figure 19, p. 25.)
 //!
 //! What to try:
 //! 1. Generator on, reset the board: XT1 starts, green LED2 turns on and ACLK is 20 kHz.
 //! 2. Generator off, reset the board: about 1 s later `try_freeze` gives up, the fallback
-//!    configuration runs ACLK from REFO (32.768 kHz) and red LED1 turns on. Measure the time
+//!    configuration runs ACLK from REFO (32.768 kHz) and LED1 turns on. Measure the time
 //!    from reset to LED1 to check the timeout.
 //! 3. Generator off, reset, and switch the generator on within the second: XT1 still starts.
+//!
+//! (LED1 on P1.0 is green as well; the green part of LED2 is P5.0: SLAU802 Figure 19, p. 25.
+//! REFO runs at 32.768 kHz: SLASEO7C 8.12.3.4, p. 30.)
 #![no_main]
 #![no_std]
 
@@ -52,6 +57,7 @@ fn main() -> ! {
     led1.set_low().ok();
     led2_green.set_low().ok();
 
+    // ACLK on P2.2 with P2SEL = 10 and P2DIR = 1, XIN on P2.1 with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 

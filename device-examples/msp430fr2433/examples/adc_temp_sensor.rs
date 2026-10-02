@@ -14,6 +14,7 @@ use nb::block;
 use panic_msp430 as _;
 
 // Turn on P1.0 if temp between 20 and 25C
+// P1.0 drives the red LED1 (SLAU739 Figure 18, p. 23).
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -27,8 +28,8 @@ fn main() -> ! {
     led.set_low().ok();
 
     // ADC setup.
-    // Temp sensor needs >= 30 us sample time.
-    // MODCLK is < ~4.6MHz, so 256 cycles / 4.6 MHz = 55 us sample time.
+    // Temp sensor needs >= 30 us sample time (SLASE59F Table 5-22, p. 36: tSENSOR(sample), AM).
+    // MODCLK is at most 5.8 MHz (SLASE59F Table 5-9, p. 26), so 256 cycles / 5.8 MHz = 44 us sample time.
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
@@ -45,6 +46,8 @@ fn main() -> ! {
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
     // against the internal 1.5 V reference at full resolution, so measure the same way. This is much more
     // accurate than the typical sensor voltage and slope from the data sheet.
+    // (TLV entries "ADC 1.5-V reference temperature 30 C" and "85 C": SLASE59F Table 6-22, p. 60; their use:
+    // SLAU445I 1.13.3.3, Equation 9, p. 60; typical VSENSOR and TCSENSOR: SLASE59F Table 5-22, p. 36.)
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
     let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
 

@@ -8,29 +8,33 @@
 //! # Non-maskable interrupts
 //!
 //! The general interrupt enable (GIE) doesn't mask NMIs: once a source is enabled, it interrupts even
-//! with interrupts disabled. Two vectors take them (SLAU445I 1.3.1, data sheets: System Module
-//! Interrupt Vector Registers):
+//! with interrupts disabled (SLAU445I 1.3.1, p. 33 and SLAU445I 1.3.4, p. 33). Two vectors take them
+//! (SLAU445I 1.3.1, p. 33; vector tables: SLASEC4D Table 6-2, p. 63, SLASE59F Table 6-2, p. 41,
+//! SLASEO7C Table 9-2, p. 46, SLASEE4C Table 6-2, p. 46; SYSUNIV and SYSSNIV: SLASEC4D Table 6-12,
+//! p. 70, SLASE59F Table 6-9, p. 48, SLASEO7C Table 9-10, p. 53, SLASEE4C Table 6-10, p. 52):
 //!
 //! | Vector   | Sources                                                    | In the handler, call                  |
 //! |:--------:|:----------------------------------------------------------:|:-------------------------------------:|
 //! | `UNMI`   | An edge on the RST/NMI pin in NMI mode, oscillator faults  | [`take_nmi_pin_interrupt()`], [`clock::take_fault_interrupt()`](crate::clock::take_fault_interrupt) |
 //! | `SYSNMI` | Vacant memory access, the JTAG mailbox, FRAM bit errors    | [`take_system_nmi()`]                 |
 //!
-//! While one NMI of a vector is handled, further NMIs of that vector wait until it returns. A handler
-//! must clear the flag it handles, or the NMI repeats as soon as it returns.
+//! While one NMI of a vector is handled, further NMIs of that vector wait until it returns (SLAU445I
+//! 1.3.1, p. 33). A handler must clear the flag it handles, or the NMI repeats as soon as it returns
+//! (SLAU445I 1.3.4.1, step 5, p. 33: "Multiple source flags remain set for servicing by software";
+//! SLAU445I 1.3.7, p. 36).
 
 use crate::_pac;
 use core::{convert::Infallible, marker::PhantomData};
 
-const SYSFLTE: u16 = 1 << 4; // Missing from most PACs
+const SYSFLTE: u16 = 1 << 4; // SFRRPCR bit 4 (SLAU445I Table 1-11, p. 64). Missing from most PACs
 
 /// The system control functions of the special function registers (SFR)
 pub struct SysParts {
-    /// The RST/NMI pin, in reset mode as after a brownout reset
+    /// The RST/NMI pin, in reset mode as after a brownout reset (SLAU445I 1.2.1, p. 32)
     pub rst_nmi_pin: RstNmiPin<ResetMode>,
     /// The vacant memory access interrupt
     pub vacant_memory: VacantMemory,
-    /// The JTAG mailbox, in 16-bit mode as after reset
+    /// The JTAG mailbox, in 16-bit mode as after reset (JMBMODE, SLAU445I Table 1-15, p. 68)
     pub jtag_mailbox: JtagMailbox<Mode16>,
 }
 
@@ -53,15 +57,16 @@ fn sfr() -> &'static _pac::sfr::RegisterBlock { unsafe { &*_pac::Sfr::ptr() } }
 #[inline(always)]
 fn sys() -> &'static _pac::sys::RegisterBlock { unsafe { &*_pac::Sys::ptr() } }
 
-/// Typestate for the RST/NMI pin in reset mode: a low level resets the device
+/// Typestate for the RST/NMI pin in reset mode: a low level resets the device (SLAU445I 1.2, p. 30)
 pub struct ResetMode;
-/// Typestate for the RST/NMI pin in NMI mode: an edge requests the user NMI
+/// Typestate for the RST/NMI pin in NMI mode: an edge requests the user NMI (SLAU445I 1.7, p. 43)
 pub struct NmiMode;
 
-/// The resistor on the RST/NMI pin (SFRRPCR.SYSRSTRE, SYSRSTUP)
+/// The resistor on the RST/NMI pin (SFRRPCR.SYSRSTRE, SYSRSTUP, SLAU445I Table 1-11, p. 64)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RstPull {
-    /// Pull-up, as after reset. The user's guide requires this or an external resistor if the pin is unused.
+    /// Pull-up, as after reset. The user's guide requires this or an external resistor if the pin is unused
+    /// (SLAU445I 1.7, p. 43).
     Up,
     /// Pull-down
     Down,
@@ -69,7 +74,7 @@ pub enum RstPull {
     None,
 }
 
-/// The edge of the RST/NMI pin that requests the NMI (SFRRPCR.SYSNMIIES)
+/// The edge of the RST/NMI pin that requests the NMI (SFRRPCR.SYSNMIIES, SLAU445I Table 1-11, p. 64)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum NmiEdge {
     /// Rising edge
@@ -78,7 +83,9 @@ pub enum NmiEdge {
     Falling,
 }
 
-/// The RST/NMI pin (SFRRPCR, SLAU445I 1.7). It is also the Spy-Bi-Wire data pin (SBWTDIO).
+/// The RST/NMI pin (SFRRPCR, SLAU445I 1.7, p. 43). It is also the Spy-Bi-Wire data pin (SBWTDIO:
+/// SLASEC4D Table 4-1, p. 18; SLASE59F Table 4-1, p. 10; SLASEO7C Table 7-1, p. 11; SLASEE4C Table 4-1,
+/// p. 11).
 pub struct RstNmiPin<MODE>(PhantomData<MODE>);
 
 impl<MODE> RstNmiPin<MODE> {
@@ -88,17 +95,19 @@ impl<MODE> RstNmiPin<MODE> {
         sfr().sfrrpcr().modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull)) });
     }
 
-    /// Use the pin as reset input, as after a brownout reset. A low level then resets the device,
-    /// right away if the pin is low.
+    /// Use the pin as reset input, as after a brownout reset (SLAU445I 1.2.1, p. 32). A low level then
+    /// resets the device, right away if the pin is low (SLAU445I 1.2, p. 30).
     #[inline]
     pub fn into_reset(self, pull: RstPull) -> RstNmiPin<ResetMode> {
         disable_nmi_pin_interrupt();
+        // SYSNMI, bit 0, = 0 selects the reset function (SLAU445I Table 1-11, p. 64)
         sfr().sfrrpcr().modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull) & !0b01) });
         RstNmiPin(PhantomData)
     }
 
     /// Use the pin as NMI input: `edge` sets the NMI flag, which requests the `UNMI` interrupt once
-    /// enabled with [`RstNmiPin::enable_interrupts()`]. The pin no longer resets the device.
+    /// enabled with [`RstNmiPin::enable_interrupts()`]. The pin no longer resets the device (SLAU445I
+    /// 1.7, p. 43).
     #[inline]
     pub fn into_nmi(self, edge: NmiEdge, pull: RstPull) -> RstNmiPin<NmiMode> {
         let enabled = nmi_pin_interrupt_enabled();
@@ -108,8 +117,9 @@ impl<MODE> RstNmiPin<MODE> {
             NmiEdge::Rising => 0,
             NmiEdge::Falling => 0b10,
         };
-        // Changing SYSNMIIES in NMI mode can set the flag, so set it before switching to NMI mode
-        // (SFRRPCR register description)
+        // Changing SYSNMIIES (bit 1) in NMI mode can set the flag, so set it before switching to NMI
+        // mode with SYSNMI (bit 0) (SLAU445I Table 1-11, p. 64: "Modify this bit when SYSNMI = 0 to avoid
+        // triggering an accidental NMI")
         rpcr.modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull) & !0b10 | ies) });
         rpcr.modify(|r, w| unsafe { w.bits(r.bits() | 0b01) });
         clear_nmi_pin_flag();
@@ -122,8 +132,9 @@ impl<MODE> RstNmiPin<MODE> {
 
 impl RstNmiPin<ResetMode> {
     /// Enable or disable the digital filter that suppresses short pulses on the pin, so they don't
-    /// reset the device (SFRRPCR.SYSFLTE). It is enabled after reset. See the data sheet for the
-    /// shortest pulse that resets the device.
+    /// reset the device (SFRRPCR.SYSFLTE, SLAU445I 1.7, p. 43 and SLAU445I Table 1-11, p. 64). It is enabled
+    /// after reset. See the data sheet for the shortest pulse that resets the device (tRESET: SLASEC4D
+    /// Table 5-2, p. 34; SLASE59F Table 5-3, p. 22; SLASEO7C 8.12.2.1, p. 26; SLASEE4C Table 5-3, p. 24).
     #[inline]
     pub fn set_filter(&mut self, enabled: bool) {
         sfr().sfrrpcr().modify(|r, w| unsafe {
@@ -133,11 +144,13 @@ impl RstNmiPin<ResetMode> {
 }
 
 impl RstNmiPin<NmiMode> {
-    /// Change the edge that requests the NMI. This can set the NMI flag, so this clears it.
+    /// Change the edge that requests the NMI. This can set the NMI flag, so this clears it (SLAU445I
+    /// Table 1-11, p. 64).
     #[inline]
     pub fn set_edge(&mut self, edge: NmiEdge) {
         let enabled = nmi_pin_interrupt_enabled();
         disable_nmi_pin_interrupt();
+        // SYSNMIIES is bit 1 (SLAU445I Table 1-11, p. 64)
         sfr().sfrrpcr().modify(|r, w| unsafe {
             w.bits(match edge {
                 NmiEdge::Rising => r.bits() & !0b10,
@@ -150,19 +163,19 @@ impl RstNmiPin<NmiMode> {
         }
     }
 
-    /// Request the `UNMI` interrupt on the selected edge (NMIIE). Clear the flag with
-    /// [`take_nmi_pin_interrupt()`] in the handler.
+    /// Request the `UNMI` interrupt on the selected edge (NMIIE, SLAU445I Table 1-9, p. 62). Clear the
+    /// flag with [`take_nmi_pin_interrupt()`] in the handler.
     #[inline]
     pub fn enable_interrupts(&mut self) { enable_nmi_pin_interrupt(); }
 
-    /// Stop requesting the `UNMI` interrupt (NMIIE).
+    /// Stop requesting the `UNMI` interrupt (NMIIE, SLAU445I Table 1-9, p. 62).
     #[inline]
     pub fn disable_interrupts(&mut self) { disable_nmi_pin_interrupt(); }
 }
 
 #[inline(always)]
 fn with_pull(rpcr: u16, pull: RstPull) -> u16 {
-    // SYSRSTRE is bit 3, SYSRSTUP bit 2
+    // SYSRSTRE is bit 3, SYSRSTUP bit 2 (SLAU445I Table 1-11, p. 64)
     let rpcr = rpcr & !0b1100;
     match pull {
         RstPull::Up => rpcr | 0b1100,
@@ -183,8 +196,9 @@ fn disable_nmi_pin_interrupt() { unsafe { sfr().sfrie1().clear_bits(|w| w.nmiie(
 #[inline(always)]
 fn clear_nmi_pin_flag() { unsafe { sfr().sfrifg1().clear_bits(|w| w.nmiifg().clear_bit()) } }
 
-/// Returns `true`, and clears the flag (NMIIFG), if an edge on the RST/NMI pin requested the user NMI.
-/// Call this in the `UNMI` handler, where an oscillator fault can request it too.
+/// Returns `true`, and clears the flag (NMIIFG, SLAU445I Table 1-10, p. 63), if an edge on the RST/NMI
+/// pin requested the user NMI. Call this in the `UNMI` handler, where an oscillator fault can request it
+/// too (SLAU445I 1.3.1, p. 33).
 #[inline]
 pub fn take_nmi_pin_interrupt() -> bool {
     let sfr = sfr();
@@ -195,16 +209,17 @@ pub fn take_nmi_pin_interrupt() -> bool {
     requested
 }
 
-/// The vacant memory access interrupt (SFRIE1.VMAIE)
+/// The vacant memory access interrupt (SFRIE1.VMAIE, SLAU445I Table 1-9, p. 62)
 ///
 /// Vacant memory is address space with nothing behind it. Reads return 3FFFh, and executing from it
-/// runs `JMP $`, which hangs the CPU (SLAU445I 1.9.2). This catches such accesses, for example
+/// runs `JMP $`, which hangs the CPU (SLAU445I 1.9.2, p. 45). This catches such accesses, for example
 /// through a corrupted pointer, with the `SYSNMI` interrupt.
 pub struct VacantMemory(());
 
 impl VacantMemory {
-    /// Request the `SYSNMI` interrupt when the CPU accesses vacant memory. [`take_system_nmi()`]
-    /// then returns [`SystemNmi::VacantMemoryAccess`].
+    /// Request the `SYSNMI` interrupt when the CPU accesses vacant memory (SLAU445I 1.9.2, p. 45), after
+    /// clearing VMAIFG (SLAU445I Table 1-10, p. 63). [`take_system_nmi()`] then returns
+    /// [`SystemNmi::VacantMemoryAccess`].
     #[inline]
     pub fn enable_interrupts(&mut self) {
         unsafe { sfr().sfrifg1().clear_bits(|w| w.vmaifg().clear_bit()) };
@@ -218,39 +233,45 @@ impl VacantMemory {
     }
 }
 
-/// Typestate for 16-bit JTAG mailbox transfers, through SYSJMBI0 and SYSJMBO0
+/// Typestate for 16-bit JTAG mailbox transfers, through SYSJMBI0 and SYSJMBO0 (SLAU445I 1.10.1 to
+/// 1.10.3, p. 46)
 pub struct Mode16;
-/// Typestate for 32-bit JTAG mailbox transfers, through SYSJMBI0-1 and SYSJMBO0-1
+/// Typestate for 32-bit JTAG mailbox transfers, through SYSJMBI0-1 and SYSJMBO0-1 (SLAU445I 1.10.1 to
+/// 1.10.3, p. 46)
 pub struct Mode32;
 
 /// The JTAG mailbox, which exchanges messages with a debugger through the JTAG or Spy-Bi-Wire
-/// connection (SLAU445I 1.10). The debugger needs to support it.
+/// connection (SLAU445I 1.10, p. 46). The debugger needs to support it.
 pub struct JtagMailbox<MODE>(PhantomData<MODE>);
 
 impl<MODE> JtagMailbox<MODE> {
-    /// Request the `SYSNMI` interrupt when a message from the debugger arrives (JMBINIE).
-    /// [`take_system_nmi()`] then returns [`SystemNmi::JtagMailboxIn`].
+    /// Request the `SYSNMI` interrupt when a message from the debugger arrives (JMBINIE, SLAU445I
+    /// Table 1-9, p. 62; SLAU445I 1.10.4, p. 47). [`take_system_nmi()`] then returns
+    /// [`SystemNmi::JtagMailboxIn`].
     #[inline]
     pub fn enable_rx_interrupts(&mut self) { unsafe { sfr().sfrie1().set_bits(|w| w.jmbinie().set_bit()) } }
 
-    /// Stop requesting the `SYSNMI` interrupt for messages from the debugger (JMBINIE).
+    /// Stop requesting the `SYSNMI` interrupt for messages from the debugger (JMBINIE, SLAU445I Table 1-9,
+    /// p. 62).
     #[inline]
     pub fn disable_rx_interrupts(&mut self) { unsafe { sfr().sfrie1().clear_bits(|w| w.jmbinie().clear_bit()) } }
 
     /// Request the `SYSNMI` interrupt when the debugger has read the outgoing message, so the next one
-    /// can be written (JMBOUTIE). [`take_system_nmi()`] then returns [`SystemNmi::JtagMailboxOut`].
-    /// The mailbox starts out empty, so this requests the interrupt right away until a message is written.
+    /// can be written (JMBOUTIE, SLAU445I Table 1-9, p. 62; SLAU445I 1.10.4, p. 46). [`take_system_nmi()`]
+    /// then returns [`SystemNmi::JtagMailboxOut`]. The mailbox starts out empty, so this requests the
+    /// interrupt right away until a message is written (JMBOUTIFG resets to 1, SLAU445I Table 1-10, p. 63).
     #[inline]
     pub fn enable_tx_interrupts(&mut self) { unsafe { sfr().sfrie1().set_bits(|w| w.jmboutie().set_bit()) } }
 
-    /// Stop requesting the `SYSNMI` interrupt for outgoing messages (JMBOUTIE).
+    /// Stop requesting the `SYSNMI` interrupt for outgoing messages (JMBOUTIE, SLAU445I Table 1-9, p. 62).
     #[inline]
     pub fn disable_tx_interrupts(&mut self) { unsafe { sfr().sfrie1().clear_bits(|w| w.jmboutie().clear_bit()) } }
 }
 
 impl JtagMailbox<Mode16> {
     /// Switch to 32-bit transfers (JMBMODE). Read and write any partial message first, the user's
-    /// guide warns that it can be lost otherwise.
+    /// guide warns that it can be lost otherwise (SLAU445I Table 1-15, p. 68: "pad and flush out any
+    /// partial content to avoid data drops").
     #[inline]
     pub fn into_32bit(self) -> JtagMailbox<Mode32> {
         unsafe { sys().sysjmbc().set_bits(|w| w.jmbmode().set_bit()) };
@@ -258,7 +279,7 @@ impl JtagMailbox<Mode16> {
     }
 
     /// Send `msg` to the debugger. Returns `WouldBlock` until the debugger has read the previous
-    /// message (JMBOUT0FG).
+    /// message (JMBOUT0FG, SLAU445I Table 1-15, p. 68).
     #[inline]
     pub fn write(&mut self, msg: u16) -> nb::Result<(), Infallible> {
         let sys = sys();
@@ -270,7 +291,7 @@ impl JtagMailbox<Mode16> {
     }
 
     /// A message from the debugger, or `WouldBlock` if none has arrived (JMBIN0FG). Reading it
-    /// clears the flag.
+    /// clears the flag, with JMBCLR0OFF = 0 as after reset (SLAU445I Table 1-15, p. 68).
     #[inline]
     pub fn read(&mut self) -> nb::Result<u16, Infallible> {
         let sys = sys();
@@ -283,7 +304,8 @@ impl JtagMailbox<Mode16> {
 
 impl JtagMailbox<Mode32> {
     /// Switch to 16-bit transfers (JMBMODE). Read and write any partial message first, the user's
-    /// guide warns that it can be lost otherwise.
+    /// guide warns that it can be lost otherwise (SLAU445I Table 1-15, p. 68: "pad and flush out any
+    /// partial content to avoid data drops").
     #[inline]
     pub fn into_16bit(self) -> JtagMailbox<Mode16> {
         unsafe { sys().sysjmbc().clear_bits(|w| w.jmbmode().clear_bit()) };
@@ -291,7 +313,8 @@ impl JtagMailbox<Mode32> {
     }
 
     /// Send `msg` to the debugger, the low half through SYSJMBO0 and the high half through SYSJMBO1.
-    /// Returns `WouldBlock` until the debugger has read the previous message (JMBOUT0FG, JMBOUT1FG).
+    /// Returns `WouldBlock` until the debugger has read the previous message (JMBOUT0FG, JMBOUT1FG,
+    /// SLAU445I 1.10.2, p. 46).
     #[inline]
     pub fn write(&mut self, msg: u32) -> nb::Result<(), Infallible> {
         let sys = sys();
@@ -304,8 +327,9 @@ impl JtagMailbox<Mode32> {
         Ok(())
     }
 
-    /// A message from the debugger, or `WouldBlock` if none has arrived (JMBIN0FG, JMBIN1FG). The
-    /// low half comes from SYSJMBI0 and the high half from SYSJMBI1. Reading it clears the flags.
+    /// A message from the debugger, or `WouldBlock` if none has arrived (JMBIN0FG, JMBIN1FG, SLAU445I
+    /// 1.10.3, p. 46). The low half comes from SYSJMBI0 and the high half from SYSJMBI1. Reading it
+    /// clears the flags, with JMBCLR0OFF = JMBCLR1OFF = 0 as after reset (SLAU445I Table 1-15, p. 68).
     #[inline]
     pub fn read(&mut self) -> nb::Result<u32, Infallible> {
         let sys = sys();
@@ -319,8 +343,8 @@ impl JtagMailbox<Mode32> {
     }
 }
 
-/// The sources of the system NMI, in priority order (SYSSNIV, data sheets: System Module Interrupt
-/// Vector Registers)
+/// The sources of the system NMI, in priority order (SYSSNIV: SLASEC4D Table 6-12, p. 70; SLASE59F
+/// Table 6-9, p. 48; SLASEO7C Table 9-10, p. 53; SLASEE4C Table 6-10, p. 52)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SystemNmi {
@@ -342,11 +366,12 @@ pub enum SystemNmi {
     Reserved(u16),
 }
 
-/// Returns the highest-priority pending system NMI source and clears its flag (SYSSNIV), or `None`
-/// if none is pending. Call this in the `SYSNMI` handler, until it returns `None` if several
-/// sources are enabled.
+/// Returns the highest-priority pending system NMI source and clears its flag (SYSSNIV, SLAU445I
+/// 1.3.7, p. 36), or `None` if none is pending. Call this in the `SYSNMI` handler, until it returns
+/// `None` if several sources are enabled.
 #[inline]
 pub fn take_system_nmi() -> Option<SystemNmi> {
+    // SYSSNIV values from the data sheet tables cited on `SystemNmi`
     match sys().syssniv().read().bits() {
         0x00 => None,
         0x02 => Some(SystemNmi::SvsLowPowerResetEntry),

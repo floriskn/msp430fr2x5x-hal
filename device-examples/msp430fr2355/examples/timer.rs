@@ -15,6 +15,8 @@ use nb::block;
 use panic_msp430 as _;
 
 // 0.5 second on, 0.5 second off
+// (TB0 counts ACLK, which is VLOCLK, 10 kHz typical (SLASEC4D Table 5-8, p. 40), divided by 2 and by 5.
+// LED1, red, is on P1.0: SLAU680 Figure 18, p. 26.)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();

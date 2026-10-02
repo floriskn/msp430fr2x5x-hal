@@ -24,13 +24,15 @@ static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
 // Red LED should blink 1 second on, 1 second off
 // Both green and red LEDs should blink when P2.3 LED is pressed
+// No board document covers the LEDs (the red one on P1.0 here) or the button: there is none for the
+// MSP430FR25x2. P2.3 and P2.6 only exist on the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
     let mut wdt = Wdt::constrain(periph.wdt_a).to_interval();
 
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
-        .mclk_refoclk(MclkDiv::_1) // 32 kHz MCLK
+        .mclk_refoclk(MclkDiv::_1) // 32 kHz MCLK (REFO, 32768 Hz: SLASEE4C Table 5-7, p. 27)
         .smclk_on(SmclkDiv::_2) // 16 kHz SMCLK
         .aclk_refoclk()
         .freeze(&mut Fram::new(periph.frctl));
@@ -44,13 +46,15 @@ fn main() -> ! {
     let red_led = p1.pin0.to_output();
     // Onboard button with interrupt disabled
     let mut button = p2.pin3;
-    // Some random pin with interrupt enabled. IFG will be set manually.
+    // Some random pin with interrupt enabled. IFG will be set manually. (P1 and P2 pins can interrupt:
+    // SLASEE4C 6.10.3, p. 51)
     let mut pin = p2.pin6.pulldown();
     let p2iv = p2.pxiv;
 
     with(|cs| RED_LED.borrow_ref_mut(cs).replace(red_led));
     with(|cs| P2IV.borrow_ref_mut(cs).replace(p2iv));
 
+    // ACLK / 2^15, WDTIS = 100b: "1 s at 32.768 kHz" (SLAU445I Table 12-2, p. 366)
     wdt.set_aclk(&aclk)
         .enable_interrupts()
         .set_interval_and_start(WdtClkPeriods::_32k);
@@ -65,6 +69,7 @@ fn main() -> ! {
     }
 }
 
+// Port 2 interrupt, P2IV (SLASEE4C Table 6-2, p. 46: P2IFG.0 to P2IFG.6, vector FFE4h)
 #[interrupt]
 fn PORT2() {
     with(|cs| {
@@ -81,6 +86,7 @@ fn PORT2() {
     });
 }
 
+// Watchdog timer interval mode interrupt (SLASEE4C Table 6-2, p. 46: WDTIFG, vector FFEEh)
 #[interrupt]
 fn WDT() {
     with(|cs| {

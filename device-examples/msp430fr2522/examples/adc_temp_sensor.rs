@@ -14,6 +14,7 @@ use nb::block;
 use panic_msp430 as _;
 
 // Turn on P1.0 if temp between 20 and 25C
+// No board document covers an LED on P1.0: there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -27,8 +28,9 @@ fn main() -> ! {
     led.set_low().ok();
 
     // ADC setup.
-    // Temp sensor needs >= 30 us sample time.
-    // MODCLK is at most 5.8 MHz, so 256 cycles take at least 44 us.
+    // Temp sensor needs >= 30 us sample time (SLASEE4C Table 5-22, p. 39: tSENSOR(sample) 30 µs minimum;
+    // SLAU445I 21.2.7.8, p. 556).
+    // MODCLK is at most 5.8 MHz, so 256 cycles take at least 44 us (SLASEE4C Table 5-9, p. 28).
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
@@ -39,12 +41,16 @@ fn main() -> ! {
     .use_modclk()
     .configure(periph.adc);
 
+    // The temperature sensor is ADC channel 12 (SLASEE4C Table 6-13, p. 55)
     let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
     // against the internal 1.5 V reference at full resolution, so measure the same way. This is much more
     // accurate than the typical sensor voltage and slope from the data sheet.
+    // SLASEE4C Table 6-18, p. 61: "ADC 1.5-V reference, temperature 30°C" and "85°C";
+    // SLAU445I 1.13.3.3, p. 60. Full resolution is 10 bits on this device (SLASEE4C 6.10.12, p. 55).
+    // Typical sensor voltage and slope: VSENSOR and TCSENSOR, SLASEE4C Table 5-22, p. 39.
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
     let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
 

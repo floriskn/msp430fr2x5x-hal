@@ -5,6 +5,10 @@
 //! TA1 could count up to 65536 s like this, about 18 hours.
 //!
 //! On the MSP430FR25x2, TA1 can count the periods of TA0.
+//!
+//! REFO: SLASEE4C Table 5-7, p. 27. TA0's CCR2 output is the TASSEL = 11 clock of TA1
+//! (SLASEE4C Figure 6-2, p. 54); both timers are 16 bits (SLASEE4C 6.10.8, p. 54). No board document
+//! covers the LED: there is none for the MSP430FR25x2.
 #![no_main]
 #![no_std]
 
@@ -46,12 +50,13 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     let ta0 = TimerParts3::new(periph.ta0, TimerConfig::aclk(&aclk));
-    // CCR2 of TA0 now pulses once per period, to clock TA1
+    // CCR2 of TA0 now pulses once per period, to clock TA1 (SLASEE4C Figure 6-2, p. 54)
     let ta0_periods = ta0.subtimer2.into_cascade_output();
     let mut ta0 = ta0.timer;
     let mut ta1 = TimerParts3::new(periph.ta1, TimerConfig::cascade(&ta0_periods)).timer;
 
     // The timers count from 0 up to and including the given value
+    // (Up mode, SLAU445I 13.2.3.1, p. 371: "The number of timer counts in the period is TAxCCR0 + 1")
     ta1.start(PERIODS - 1);
     ta0.start(ACLK_CYCLES - 1);
 

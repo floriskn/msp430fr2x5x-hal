@@ -17,6 +17,10 @@
 //! * `DefaultMapping` — Uses the primary pin layout defined by the device.
 //! * `RemappedMapping` — Uses an alternate pin layout enabled through a remapping register.
 //!
+//! The remapping bits are in SYSCFG2 and SYSCFG3 (SLAU445I Table 1-31, p. 82; SLAU445I Table 1-32, p. 83).
+//! The MSP430FR247x and MSP430FR25x2 use them to move eUSCI signals to other pins (SLASEO7C Table 9-11,
+//! p. 54; SLASEE4C Table 6-11, p. 53).
+//!
 //! Peripheral implementations select one of these mapping strategies when implementing
 //! traits such as `SerialUsci<M>`, allowing the HAL to remain generic while supporting
 //! multiple device pin configurations.

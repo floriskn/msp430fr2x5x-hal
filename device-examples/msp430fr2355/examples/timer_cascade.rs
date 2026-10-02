@@ -3,8 +3,10 @@
 //! TB0 runs from ACLK (REFO, 32.768 kHz) with a period of 1 s, and red LED1 toggles every period.
 //! The CCR2 output of TB0 clocks TB1, which counts those periods: green LED2 toggles every
 //! 5 periods, so every 5 s. TB1 could count up to 65536 s like this, about 18 hours.
+//! (REFO: SLASEC4D Table 5-7, p. 40. LED1 is on P1.0 and LED2 on P6.6: SLAU680 Figure 18, p. 26.)
 //!
-//! On the MSP430FR2x5x, TB1 can count the periods of TB0.
+//! On the MSP430FR2x5x, TB1 can count the periods of TB0: TB1's INCLK input is the "Timer0_B3 CCR2B
+//! output" (SLASEC4D Table 6-17, p. 74).
 #![no_main]
 #![no_std]
 
@@ -55,6 +57,7 @@ fn main() -> ! {
     let mut tb1 = TimerParts3::new(periph.tb1, TimerConfig::cascade(&tb0_periods)).timer;
 
     // The timers count from 0 up to and including the given value
+    // ("The number of timer counts in the period is TBxCL0 + 1": SLAU445I 14.2.3.1, p. 394)
     tb1.start(PERIODS - 1);
     tb0.start(ACLK_CYCLES - 1);
 

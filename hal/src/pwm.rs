@@ -1,20 +1,29 @@
 //! PWM ports
 //!
 //! Configures the board's TimerB peripherals into PWM ports. Each PWM port consists of multiple PWM
-//! pins which all share the same period but have their own duty cycles.
+//! pins which all share the same period but have their own duty cycles (CCR0 sets the period: SLAU445I
+//! 13.2.3.1, p. 371).
 //!
 //! Each PWM pin starts off in an "uninitialized" state and must be initialized by passing in the
 //! appropriate alternate-function GPIO pin. Only initialized pins can be used for PWM.
 //!
-//! The outputs go high at the start of each period with [`PwmParts3::new`], or are centered on the timer's
-//! return to 0 with [`PwmParts3::new_center_aligned`]. [`Pwm::set_polarity`] makes an output active low. On a
-//! Timer_B a new duty cycle takes effect at the start of the next period, so no period is cut short.
+//! The outputs go high at the start of each period with [`PwmParts3::new`] (output mode reset/set,
+//! SLAU445I Figure 13-12, p. 377), or are centered on the timer's return to 0 with
+//! [`PwmParts3::new_center_aligned`] (output mode toggle/reset in up/down mode, SLAU445I Figure 13-14,
+//! p. 379). [`Pwm::set_polarity`] makes an output active low. On a Timer_B the compare latches are set up
+//! so that a new duty cycle takes effect at the start of the next period, so no period is cut short
+//! (SLAU445I 14.2.4.2.1, p. 400), and with center-aligned PWM when the timer next counts to the top or to
+//! 0 (SLAU445I Table 14-2, p. 400). In up mode, which edge-aligned PWM uses, the MSP430FR2x5x and
+//! MSP430FR247x load a new duty cycle at once instead (erratum TB25: SLAZ695J TB25, p. 11; SLAZ726B TB25,
+//! p. 8).
 //!
 //! # Timer_B outputs and the comparators
 //!
-//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while it is
-//! high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (data sheets: TBxOUTH). Measured on an MSP430FR2476, a TB0
-//! PWM output stops whenever eCOMP0's output is high, even with the comparator used for something else.
+//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while
+//! it is high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (SLASEC4D Table 6-20, p. 76; SLASEO7C
+//! Table 9-17, p. 61). SYSCFG2.TBxTRGSEL resets to 0, "Internal source selected" (SLAU445I Table 1-26,
+//! p. 77; SLAU445I Table 1-31, p. 82). Measured on an MSP430FR2476, a TB0 PWM output stops whenever
+//! eCOMP0's output is high, even with the comparator used for something else.
 //! [`TimerConfig::high_impedance_trigger`](crate::timer::TimerConfig::high_impedance_trigger) selects the TBxTRG
 //! pin instead, or nothing.
 
@@ -38,6 +47,8 @@ pub trait PwmPeriph<C, M: PinMap = DefaultMapping>: CapCmp<C> + CapCmp<CCR0> + T
 
 fn setup_pwm<T: TimerPeriph<M>, M: PinMap>(timer: &T, config: TimerConfig<T, M>, period: u16) {
     config.write_regs(timer);
+    // CCR0 sets the period, written while the timer is stopped (SLAU445I 13.2.3.1.1, p. 371). Its
+    // output toggles once per period, for the period output (SLAU445I Table 13-2, p. 376).
     CCRn::<CCR0>::set_ccrn(timer, period);
     CCRn::<CCR0>::config_outmod(timer, Outmod::Toggle);
 }
@@ -50,17 +61,26 @@ enum Alignment {
 }
 
 /// Configure a PWM channel: its output mode, and on Timer_B when its compare latch loads the duty cycle,
-/// so a new duty cycle starts with a period instead of cutting one short
+/// so a new duty cycle starts with a period instead of cutting one short (SLAU445I 14.2.4.2.1, p. 400).
+/// Erratum TB25 breaks this in up mode, see below.
 fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
     match alignment {
         Alignment::Edge => {
+            // Set as the timer wraps to 0, reset when it reaches CCRn (SLAU445I Table 13-2, p. 376;
+            // SLAU445I Figure 13-12, p. 377)
             CCRn::<C>::config_outmod(timer, Outmod::ResetSet);
-            // Load when the timer counts to 0
+            // Load when the timer counts to 0 (CLLD = 01b, SLAU445I Table 14-2, p. 400). In up mode the
+            // MSP430FR2x5x and MSP430FR247x load at once instead: "TBxCCRn will update immediately instead
+            // of the described condition" (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
             CCRn::<C>::set_clld(timer, 0b01);
         }
         Alignment::Center => {
+            // In up/down mode: high from CCRn on the way down to CCRn on the way up, reset at the top
+            // (SLAU445I Table 13-2, p. 376; SLAU445I Figure 13-14, p. 379)
             CCRn::<C>::config_outmod(timer, Outmod::ToggleReset);
-            // Load when the timer counts to 0 or to the top, so both halves of a period match
+            // Load when the timer counts to 0 or to the top (CLLD = 10b, SLAU445I Table 14-2, p. 400). A
+            // duty cycle written while the timer counts down loads at 0, in the middle of a high stretch,
+            // so that one stretch is not symmetric.
             CCRn::<C>::set_clld(timer, 0b10);
         }
     }
@@ -79,8 +99,8 @@ pub struct PwmParts3<T: CapCmpTimer3<M>, M: PinMap = DefaultMapping> {
 
 impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
     /// Create uninitialized PWM pins with the same period. The timer counts from 0 up to and
-    /// including `period`, so each PWM period is `period + 1` timer clock cycles, and each output is
-    /// high at the start of the period.
+    /// including `period`, so each PWM period is `period + 1` timer clock cycles (SLAU445I 13.2.3.1,
+    /// p. 371; 14.2.3.1, p. 394), and each output is high at the start of the period.
     pub fn new(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Edge);
@@ -92,9 +112,10 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
 
     /// Create uninitialized center-aligned PWM pins with the same period. The timer counts from 0 up
     /// to `period` and back down (up/down mode), so each PWM period is `2 * period` timer clock
-    /// cycles, and each output is high for a stretch centered on the timer's return to 0. Duty cycles go
-    /// up to `period`. Two outputs with nearly the same duty cycle, one of them active low, drive the two
-    /// sides of a half bridge with a dead time between them (user's guide 13.2.3.5).
+    /// cycles (SLAU445I 13.2.3.4, p. 373; 14.2.3.4, p. 396), and each output is high for a stretch
+    /// centered on the timer's return to 0. Duty cycles go up to `period`. Two outputs with nearly the
+    /// same duty cycle, one of them active low, drive the two sides of a half bridge with a dead time
+    /// between them (SLAU445I 13.2.3.5 and Figure 13-9, p. 374; SLAU445I 14.2.3.5 and Figure 14-9, p. 397).
     pub fn new_center_aligned(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Center);
@@ -134,8 +155,8 @@ pub struct PwmParts7<T: CapCmpTimer7<M>, M: PinMap = DefaultMapping> {
 
 impl<T: CapCmpTimer7<M>, M: PinMap> PwmParts7<T, M> {
     /// Create uninitialized PWM pins with the same period. The timer counts from 0 up to and
-    /// including `period`, so each PWM period is `period + 1` timer clock cycles, and each output is
-    /// high at the start of the period.
+    /// including `period`, so each PWM period is `period + 1` timer clock cycles (SLAU445I 13.2.3.1,
+    /// p. 371; 14.2.3.1, p. 394), and each output is high at the start of the period.
     pub fn new(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         Self::setup_channels(&timer, Alignment::Edge);
@@ -175,10 +196,15 @@ impl<T: CapCmpTimer7<M>, M: PinMap> PwmParts7<T, M> {
     }
 }
 
-/// The uninitialized output of capture-compare register 0, which toggles once per PWM period: a square wave at half
-/// the PWM frequency (a quarter of it for center-aligned PWM), useful as a clock for other circuits.
+/// The uninitialized output of capture-compare register 0, which toggles once per PWM period: a square wave
+/// at half the PWM frequency (SLAU445I Table 13-2, p. 376), useful as a clock for other circuits. That holds
+/// for center-aligned PWM too: in up/down mode the timer reaches CCR0 once per period (SLAU445I 13.2.3.4,
+/// p. 373).
 ///
-/// Only some timers have a pin for it: on the MSP430FR247x TA2, TA3 and TB0 (data sheet: TA2.0, TA3.0, TB0.0).
+/// Only some timers have a pin for it: on the MSP430FR247x TA2, TA3 and TB0 (data sheet: TA2.0, TA3.0,
+/// TB0.0; SLASEO7C Table 9-14, p. 58; SLASEO7C Table 9-15, p. 59; SLASEO7C Table 9-16, p. 60). The other
+/// data sheets say the CCR0 outputs are not connected to pins (SLASEC4D 6.10.9, p. 73; SLASE59F 6.10.8,
+/// p. 50 to p. 51; SLASEE4C 6.10.8, p. 54).
 pub struct PeriodOutputUninit<T, M = DefaultMapping>(PhantomData<T>, PhantomData<M>);
 
 impl<T: PwmPeriph<CCR0, M>, M: PinMap> PeriodOutputUninit<T, M> {
@@ -193,7 +219,8 @@ pub struct PeriodOutput<T: PwmPeriph<CCR0, M>, M: PinMap = DefaultMapping> {
 }
 
 impl<T: PwmPeriph<CCR0, M>, M: PinMap> PeriodOutput<T, M> {
-    /// Disconnect the pin from the timer. It then drives its GPIO output level (PxOUT).
+    /// Disconnect the pin from the timer (PxSEL: SLAU445I 8.2.5, p. 314). It then drives its GPIO output
+    /// level (PxOUT, SLAU445I 8.2.2, p. 313).
     #[inline]
     pub fn disable(&mut self) { self.pin.set_function_gpio(); }
 
@@ -238,10 +265,12 @@ impl<T: CapCmp<CCR2>, M> PwmUninit<T, CCR2, M> {
 #[cfg(feature = "adc")]
 impl<T: CapCmp<CCR1> + crate::adc::AdcTriggerTimer, M> PwmUninit<T, CCR1, M> {
     /// Use this PWM output to start ADC conversions with
-    /// [`TriggerSource::Timer`](crate::adc::TriggerSource::Timer) instead of driving a pin. The output is high
-    /// for the first `high_cycles` timer cycles of each period, so it rises at the start of each period; it
-    /// needs to be at least 1. With [`SampleMode::WhileHigh`](crate::adc::SampleMode::WhileHigh) it sets the
-    /// sample time.
+    /// [`TriggerSource::Timer`](crate::adc::TriggerSource::Timer) instead of driving a pin (ADC trigger
+    /// TB1.1B or TA1.1B: SLASEC4D Table 6-22, p. 77; SLASE59F Table 6-16, p. 53; SLASEO7C Table 9-20, p. 62;
+    /// SLASEE4C Table 6-14, p. 56). The output is high for the first `high_cycles` timer cycles of each
+    /// period, so it rises at the start of each period (reset/set, SLAU445I Table 13-2, p. 376); it needs to
+    /// be at least 1. With [`SampleMode::WhileHigh`](crate::adc::SampleMode::WhileHigh) it sets the sample
+    /// time (extended sample mode, SLAU445I 21.2.5.1, p. 543).
     #[inline]
     pub fn into_adc_trigger(self, high_cycles: u16) -> AdcTriggerOutput<T> {
         let mut output = AdcTriggerOutput(PhantomData);
@@ -251,8 +280,11 @@ impl<T: CapCmp<CCR1> + crate::adc::AdcTriggerTimer, M> PwmUninit<T, CCR1, M> {
 }
 
 impl<T: CapCmp<CCR2> + crate::ir::IrInputTimer, M> PwmUninit<T, CCR2, M> {
-    /// Use this PWM output as an input of the infrared modulator, see [`crate::ir`], instead of driving a pin.
-    /// The output is high for the first `high_cycles` timer cycles of each period.
+    /// Use this PWM output as an input of the infrared modulator, see [`crate::ir`], instead of driving a pin
+    /// (CCR2 of TB0/TB1 or TA0/TA1: SLASEC4D Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASE59F
+    /// Table 6-11, p. 50; SLASE59F Table 6-12, p. 51; SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13,
+    /// p. 56; SLASEE4C Figure 6-2, p. 54). The output is high for the first `high_cycles` timer cycles of
+    /// each period (reset/set, SLAU445I Table 13-2, p. 376).
     #[inline]
     pub fn into_ir_input(self, high_cycles: u16) -> crate::ir::IrInput<T> {
         let timer = unsafe { T::steal() };
@@ -274,8 +306,10 @@ impl<T: CapCmp<CCR1>> AdcTriggerOutput<T> {
 }
 
 /// The duty cycle of 100 %, in timer clock cycles. In up mode it's the period: the timer counts from 0 up
-/// to and including CCR0. With CCR0 at 65535 the period is 65536 cycles, which a `u16` can't hold, so 100 %
-/// isn't reachable. For center-aligned PWM (up/down mode) it's CCR0.
+/// to and including CCR0 (SLAU445I 13.2.3.1, p. 371). With CCR0 at 65535 the period is 65536 cycles, which
+/// a `u16` can't hold, so 100 % isn't reachable. For center-aligned PWM (up/down mode) it's CCR0: the period
+/// is 2 * CCR0 cycles (SLAU445I 13.2.3.4, p. 373), and the output is high while the count is below CCRn, on
+/// the way down and on the way up (SLAU445I Figure 13-14, p. 379).
 #[inline]
 fn max_duty<T: CapCmp<CCR0> + TimerBase>() -> u16 {
     let timer = unsafe { T::steal() };
@@ -296,15 +330,18 @@ pub struct Pwm<T: PwmPeriph<C, M>, C, M: PinMap = DefaultMapping> {
 }
 
 impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
-    /// The duty cycle in timer clock cycles: the output is high for this many cycles of each period.
+    /// The duty cycle in timer clock cycles: the output is high for this many cycles of each period, or
+    /// twice as many with center-aligned PWM, where the timer passes each count twice per period (SLAU445I
+    /// 13.2.3.4, p. 373; SLAU445I Figure 13-14, p. 379).
     #[inline]
     pub fn duty(&self) -> u16 {
         let timer = unsafe { T::steal() };
         CCRn::<C>::get_ccrn(&timer)
     }
 
-    /// Disconnect the pin from the timer. It then drives its GPIO output level (PxOUT), for example low if it was
-    /// set up with [`to_output_low()`](crate::gpio::Pin::to_output_low). The timer keeps running.
+    /// Disconnect the pin from the timer (PxSEL: SLAU445I 8.2.5, p. 314). It then drives its GPIO output
+    /// level (PxOUT, SLAU445I 8.2.2, p. 313), for example low if it was set up with
+    /// [`to_output_low()`](crate::gpio::Pin::to_output_low). The timer keeps running.
     #[inline]
     pub fn disable(&mut self) { self.pin.set_function_gpio(); }
 
@@ -313,12 +350,13 @@ impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
     pub fn enable(&mut self) { self.pin.set_function_from_type(); }
 
     /// Select the level the output has for the duty cycle. The change takes effect at once, without
-    /// passing through other output modes (user's guide 13.2.5.1.3).
+    /// passing through other output modes (SLAU445I 13.2.5.1.3, p. 379; 14.2.5.1.3, p. 404, note
+    /// "Switching between output modes": "one of the OUTMOD bits should remain set during the transition").
     #[inline]
     pub fn set_polarity(&mut self, polarity: Polarity) {
         let timer = unsafe { T::steal() };
         // Edge-aligned PWM uses reset/set (7) or set/reset (3), center-aligned toggle/reset (2) or
-        // toggle/set (6). The top output mode bit picks between each pair.
+        // toggle/set (6) (SLAU445I Table 13-2, p. 376). The top output mode bit picks between each pair.
         let center = CCRn::<C>::outmod_rd(&timer) & 0b011 == 0b010;
         let high_bit = (polarity == Polarity::ActiveHigh) != center;
         CCRn::<C>::set_outmod_high_bit(&timer, high_bit);
@@ -335,8 +373,9 @@ mod ehal1 {
     }
 
     impl<T: PwmPeriph<C, M>, C, M: PinMap> SetDutyCycle for Pwm<T, C, M> {
-        /// The PWM period in timer clock cycles, `period + 1`. A duty cycle of 0 keeps the output
-        /// low and the maximum keeps it high.
+        /// The PWM period in timer clock cycles, `period + 1` (SLAU445I 13.2.3.1, p. 371). For
+        /// center-aligned PWM it's `period`, half the period of `2 * period` cycles (SLAU445I 13.2.3.4,
+        /// p. 373). A duty cycle of 0 keeps the output low and the maximum keeps it high.
         #[inline]
         fn max_duty_cycle(&self) -> u16 { max_duty::<T>() }
 
@@ -373,8 +412,9 @@ mod ehal02 {
         #[inline]
         fn get_duty(&self) -> Self::Duty { self.duty() }
 
-        /// The PWM period in timer clock cycles, `period + 1`. A duty of 0 keeps the output low and
-        /// the maximum keeps it high.
+        /// The PWM period in timer clock cycles, `period + 1` (SLAU445I 13.2.3.1, p. 371). For
+        /// center-aligned PWM it's `period`, half the period of `2 * period` cycles (SLAU445I 13.2.3.4,
+        /// p. 373). A duty of 0 keeps the output low and the maximum keeps it high.
         #[inline]
         fn get_max_duty(&self) -> Self::Duty { max_duty::<T>() }
 

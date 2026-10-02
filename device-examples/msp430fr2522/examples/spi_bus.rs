@@ -26,6 +26,9 @@ fn main() -> ! {
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
     let p2 = Batch::new(periph.p2).split(&pmm);
+    // eUSCI_A0 in its remapped mapping, USCIARMP = 1: UCA0SIMO on P2.0 and UCA0SOMI on P2.1 with
+    // P2SELx = 01, UCA0CLK on P1.6 with P1SELx = 01 (SLASEE4C Table 6-11, p. 53;
+    // SLASEE4C Table 6-16, p. 60; SLASEE4C Table 6-15, p. 58)
     let mosi = p2.pin0.to_alternate1();
     let miso = p2.pin1.to_alternate1();
     let sck = p1.pin6.to_alternate1();
@@ -41,6 +44,8 @@ fn main() -> ! {
     // In single master mode SCK and MOSI are always outputs.
     // Multi-master mode allows another master to control whether this device's SCK
     // and MOSI pins are outputs or high impedance via the STE pin.
+    // (SLAU445I 23.3.3.1, p. 608: with STE master-inactive, "UCxSIMO and UCxCLK are set to inputs"; that
+    // mode has erratum SLAZ705H USCI50.) The bit clock is fBRCLK / UCBRx (SLAU445I 23.3.6, p. 609).
     let mut spi: Spi<_, RemappedMapping> = SpiConfig::new(periph.e_usci_a0, MODE_0, true)
         .to_master_using_smclk(&smclk, 16) // 8MHz / 16 = 500kHz
         .single_master_bus(miso, mosi, sck);
@@ -58,6 +63,8 @@ fn main() -> ! {
         // These methods do return errors, but because we haven't used the non-blocking
         // API (from embedded-hal-nb) or interrupts the Rx buffer should never overrun because
         // the blocking interface automatically reads after every write.
+        // (Overrun, UCOE: "set when a character is transferred into UCxRXBUF before the previous character
+        // was read", SLAU445I Table 23-5, p. 615)
         spi.write(&[0x12]).unwrap();
         spi.read(&mut recv[0..2]).unwrap();
         spi.transfer(&mut recv[2..], &[0x34, 0x56]).unwrap();

@@ -3,7 +3,9 @@
 //!
 //! MCLK runs from the DCO, locked by the FLL to REFO. Every DCO frequency except 16 MHz is
 //! trimmed in software at start-up; 16 MHz uses the factory trim. Change `DCO_FREQ` to check
-//! each of them. Red LED1 turns on once the clocks are configured.
+//! each of them. LED1, which is green, turns on once the clocks are configured (SLAU802 Figure 19,
+//! p. 25). TI recommends the factory trim for the highest DCO range and the software trim for other
+//! frequencies (SLAU445I 3.2.11.1, p. 106).
 //!
 //! Pins (LP-MSP430FR2476), with the frequencies for `_8MHz`:
 //! - P1.3/MCLK (J1 pin 9): 244 x REFO = 7.995 MHz nominal
@@ -11,8 +13,12 @@
 //! - P2.2/ACLK (J1 pin 5): REFO, 32.768 kHz nominal
 //! - GND: J2 pin 20 or J3 pin 22
 //!
-//! REFO is only accurate to ±3.5 %, and MCLK inherits that. The FLL locks MCLK to an exact
-//! multiple of REFO though, so MCLK / ACLK is exactly the FLL multiplier:
+//! (Header pins: SLAU802 Figure 10, p. 13. Clock output pins: SLASEO7C Table 9-23, p. 65 and
+//! SLASEO7C Table 9-24, p. 66.)
+//!
+//! REFO is only accurate to ±3.5 % (SLASEO7C 8.12.3.4, p. 30), and MCLK inherits that. The FLL
+//! locks MCLK to an exact multiple of REFO though, fDCOCLKDIV = (FLLN + 1) × (fFLLREFCLK ÷ n) with
+//! n = 1 by default (SLAU445I 3.2.5, p. 104), so MCLK / ACLK is exactly the FLL multiplier:
 //!
 //! | `DCO_FREQ` | multiplier | nominal MCLK |
 //! |------------|------------|--------------|
@@ -54,6 +60,8 @@ fn main() -> ! {
     let mut led = p1.pin0;
     led.set_low().ok();
 
+    // MCLK on P1.3, SMCLK on P1.7 and ACLK on P2.2 each need PxSEL = 10 and PxDIR = 1
+    // (SLASEO7C Table 9-23, p. 65; SLASEO7C Table 9-24, p. 66)
     let _mclk_out = p1.pin3.to_output().to_alternate2();
     let _smclk_out = p1.pin7.to_output().to_alternate2();
     let _aclk_out = p2.pin2.to_output().to_alternate2();

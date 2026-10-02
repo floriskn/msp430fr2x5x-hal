@@ -1,7 +1,9 @@
-// Functionality common to both TimerA and TimerB
+// Functionality common to both TimerA and TimerB (Timer_B is identical to Timer_A apart from the
+// differences in SLAU445I 14.1.1, p. 391)
 
 use super::Steal;
 
+// TASSEL/TBSSEL values (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
 pub enum Tbssel {
     Tbxclk,
     Aclk,
@@ -9,7 +11,7 @@ pub enum Tbssel {
     Inclk,
 }
 
-/// Timer clock divider
+/// Timer clock divider (ID: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
 pub enum TimerDiv {
     /// No division
     _1,
@@ -21,7 +23,8 @@ pub enum TimerDiv {
     _8,
 }
 
-/// Timer expansion clock divider, applied on top of the normal clock divider
+/// Timer expansion clock divider, applied on top of the normal clock divider (TAIDEX/TBIDEX: SLAU445I
+/// 13.2.1.1, p. 370; SLAU445I Table 13-9, p. 389; SLAU445I Table 14-11, p. 414)
 pub enum TimerExDiv {
     /// No division
     _1,
@@ -41,6 +44,7 @@ pub enum TimerExDiv {
     _8,
 }
 
+// OUTMOD values (SLAU445I Table 13-2, p. 376; SLAU445I Table 14-4, p. 401)
 pub enum Outmod {
     Out,
     Set,
@@ -52,6 +56,7 @@ pub enum Outmod {
     ResetSet,
 }
 
+// CM values (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
 pub enum Cm {
     NoCap,
     RisingEdge,
@@ -59,6 +64,7 @@ pub enum Cm {
     BothEdges,
 }
 
+// CCIS values (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
 pub enum Ccis {
     InputA,
     InputB,
@@ -67,37 +73,42 @@ pub enum Ccis {
 }
 
 pub trait TimerBase: Steal {
-    /// Reset timer countdown
+    /// Reset timer countdown (TBCLR: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn reset(&self);
 
+    // The three mode functions write MC, set TBCLR and clear TBIFG (SLAU445I Table 13-4, p. 384; SLAU445I
+    // Table 14-6, p. 409)
     /// Set to upmode, reset timer, and clear interrupts
     fn upmode(&self);
     /// Set to continuous mode, reset timer, and clear interrupts
     fn continuous(&self);
     /// Set to up/down mode, reset timer, and clear interrupts
     fn updown_mode(&self);
-    /// The counting mode (MC)
+    /// The counting mode (MC: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn mode_rd(&self) -> u8;
-    /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none.
+    /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none
+    /// (SLAU445I Table 14-6, p. 409; SLAU445I 14.1.1, p. 391).
     fn set_cntl(&self, cntl: u8);
 
-    /// Apply clock select settings
+    /// Apply clock select settings (TBSSEL and ID: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn config_clock(&self, tbssel: Tbssel, div: TimerDiv);
 
     /// Check if timer is stopped
     fn is_stopped(&self) -> bool;
 
-    /// Stop timer
+    /// Stop timer (MC = 0: SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394)
     fn stop(&self);
 
     /// Resume a *stopped* timer. Assumes the previous mode was 'stop'.
     /// Atomic, fast.
     fn resume(&self, mode: RunningMode);
 
-    /// Change a timer's mode. Non-atomic, slower.
+    /// Change a timer's mode. Non-atomic, slower. To go from one mode to another the user's guide stops the
+    /// timer first (MC = 0) (SLAU445I 13.2.3, p. 371; 14.2.3, p. 394).
     fn change_mode(&self, mode: Mode);
 
-    /// Set expansion register clock divider settings
+    /// Set expansion register clock divider settings (TBIDEX: SLAU445I Table 13-9, p. 389; SLAU445I
+    /// Table 14-11, p. 414)
     fn set_tbidex(&self, tbidex: TimerExDiv);
 
     fn tbifg_rd(&self) -> bool;
@@ -108,10 +119,11 @@ pub trait TimerBase: Steal {
 
     fn tbxiv_rd(&self) -> u16;
 
-    /// Get the current timer value.
+    /// Get the current timer value (TBxR: SLAU445I Table 13-5, p. 385; SLAU445I Table 14-7, p. 410).
     fn get_tbxr(&self) -> u16;
 }
 
+// MC values (SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394)
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RunningMode {
@@ -144,16 +156,20 @@ pub trait CCRn<C>: Steal {
     fn cov_ccifg_clr(&self);
     fn cov_clr(&self);
 
-    /// The output mode (OUTMOD)
+    /// The output mode (OUTMOD: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     fn outmod_rd(&self) -> u8;
-    /// Switch between an output mode and its inverse (set, reset or toggle ↔ toggle/reset ↔
-    /// toggle/set, set/reset ↔ reset/set) by setting or clearing the top OUTMOD bit. The other two bits
-    /// stay, so this never passes through mode 0 (SLAU445I 13.2.5.1.3).
+    /// Switch between an output mode and its inverse (set ↔ reset, toggle/reset ↔ toggle/set,
+    /// set/reset ↔ reset/set: SLAU445I Table 13-2, p. 376) by setting or clearing the top OUTMOD bit. The
+    /// other two bits stay, so this never passes through mode 0 (SLAU445I 13.2.5.1.3, p. 379; 14.2.5.1.3,
+    /// p. 404, note "Switching between output modes").
     fn set_outmod_high_bit(&self, set: bool);
-    /// Switch the capture input between GND and VCC (CCIS bit 0), for a software capture
+    /// Switch the capture input between GND and VCC (CCIS bit 0), for a software capture (SLAU445I
+    /// 13.2.4.1.1, p. 376; 14.2.4.1.1, p. 399)
     fn toggle_ccis_low_bit(&self);
-    /// Set when the compare latch loads (Timer_B CLLD: 0 = at once, 1 = when the timer counts to 0).
-    /// Timer_A has no compare latch.
+    /// Set when the compare latch loads (Timer_B CLLD: 0 = at once, 1 = when the timer counts to 0,
+    /// 2 = also when it counts to the top in up/down mode). Timer_A has no compare latch (SLAU445I
+    /// Table 14-2, p. 400; SLAU445I Table 14-8, p. 411; SLAU445I 14.1.1, p. 391). In up mode 1 and 2 load
+    /// at once on the MSP430FR2x5x and MSP430FR247x (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
     fn set_clld(&self, clld: u8);
 }
 
@@ -197,6 +213,8 @@ macro_rules! ccrn_impl {
             #[inline(always)]
             fn get_ccrn(&self) -> u16 { self.$tbxccrn().read().bits() }
 
+            // A write: OUTMOD, with CAP = 0 (compare mode) and every other field cleared (SLAU445I
+            // Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
             #[inline(always)]
             fn config_outmod(&self, outmod: Outmod) {
                 self.$tbxcctln().write(|w| unsafe { w.outmod().bits(outmod as u8) });
@@ -204,6 +222,9 @@ macro_rules! ccrn_impl {
 
             #[inline(always)]
             fn config_cap_mode(&self, cm: Cm, ccis: Ccis) {
+                // CAP = 1 selects capture mode (SLAU445I 13.2.4.1, p. 374). SCS synchronizes the capture with
+                // the timer clock, which the user's guide recommends (SLAU445I 13.2.4.1, p. 375; SLAU445I
+                // 14.2.4.1, p. 398).
                 self.$tbxcctln().write(|w| unsafe { w
                     .cap().set_bit()
                     .scs().set_bit()
@@ -246,12 +267,13 @@ macro_rules! ccrn_impl {
                 };
             }
 
+            // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
             #[inline(always)]
             fn outmod_rd(&self) -> u8 { (self.$tbxcctln().read().bits() >> 5) as u8 & 0b111 }
 
             #[inline(always)]
             fn set_outmod_high_bit(&self, set: bool) {
-                // OUTMOD is bits 7..5
+                // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
                 if set {
                     unsafe { self.$tbxcctln().set_bits(|w| w.bits(1 << 7)) };
                 } else {
@@ -261,10 +283,11 @@ macro_rules! ccrn_impl {
 
             #[inline(always)]
             fn toggle_ccis_low_bit(&self) {
-                // CCIS is bits 13..12
+                // CCIS is bits 13..12 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
                 self.$tbxcctln().modify(|r, w| unsafe { w.bits(r.bits() ^ (1 << 12)) });
             }
 
+            // CLLD is a Timer_B field (SLAU445I Table 14-8, p. 411)
             #[inline(always)]
             fn set_clld(&self, clld: u8) {
                 $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxcctln(), clld, clld);
@@ -289,11 +312,16 @@ macro_rules! timer_base_impl {
         }
 
         impl TimerBase for $TBx {
+            // TBCLR clears the count, the clock divider logic and the count direction (SLAU445I Table 13-4,
+            // p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn reset(&self) {
                 unsafe { self.$tbxctl().set_bits(|w| w.$txclr().set_bit()) };
             }
 
+            // The three mode functions set TBCLR along with MC, which also restarts the divider logic as a
+            // TBIDEX change needs (SLAU445I 13.3.6, p. 389; SLAU445I 14.3.6, p. 414). MC values: SLAU445I
+            // Table 13-1, p. 371; SLAU445I Table 14-1, p. 394.
             #[inline(always)]
             fn upmode(&self) {
                 self.$tbxctl().modify(|r, w| {
@@ -337,6 +365,9 @@ macro_rules! timer_base_impl {
                 $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), cntl, cntl);
             }
 
+            // A write, so MC = 0 and the timer stops: the clock source and the dividers are only to be
+            // changed while it's stopped (SLAU445I 13.2.1.1, p. 370, note "Timer_A dividers"; 13.2.7,
+            // p. 382; 14.2.1.2, p. 393; 14.2.7, p. 407)
             #[inline(always)]
             fn config_clock(&self, tbssel: Tbssel, div: TimerDiv) {
                 self.$tbxctl()
@@ -391,6 +422,7 @@ macro_rules! timer_base_impl {
                 unsafe { self.$tbxctl().clear_bits(|w| w.$txie().clear_bit()) };
             }
 
+            // Reading TBxIV clears the highest pending flag (SLAU445I 13.2.6.2, p. 380; 14.2.6.2, p. 405)
             #[inline(always)]
             fn tbxiv_rd(&self) -> u16 {
                 self.$tbxiv().read().bits()

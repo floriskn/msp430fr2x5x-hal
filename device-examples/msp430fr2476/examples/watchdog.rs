@@ -7,6 +7,7 @@ use msp430_hal::{gpio::Batch, pmm::Pmm};
 use panic_msp430 as _;
 
 // The LED on P1.0 should flash rapidly
+// (LED1: SLAU802 Figure 19, p. 25)
 
 #[entry]
 fn main() -> ! {
@@ -21,6 +22,7 @@ fn main() -> ! {
     red_led.toggle().ok();
 
     // The watchdog will reset program execution after a few ms
+    // (about 32 ms, clocked by SMCLK, after a PUC: SLAU445I 12.2.2, p. 363)
     loop {}
 }
 

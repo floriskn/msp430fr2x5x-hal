@@ -30,7 +30,8 @@ static VECTOR: Mutex<UnsafeCell<Option<TBxIV<msp430fr247x::Ta2, DefaultMapping>>
 static RED_LED: Mutex<UnsafeCell<Option<Pin<P1, Pin0, Output>>>> =
     Mutex::new(UnsafeCell::new(None));
 
-// Connect push button input to P1.6. When button is pressed, red LED should toggle. No debouncing,
+// Connect push button input to P3.3, J4 pin 35 (SLAU802 Figure 10, p. 13). When button is pressed,
+// LED1 (P1.0), which is green, should toggle (SLAU802 Figure 19, p. 25). No debouncing,
 // so sometimes inputs are missed.
 #[entry]
 fn main() -> ! {
@@ -55,6 +56,8 @@ fn main() -> ! {
         .aclk_vloclk()
         .freeze(&mut fram);
 
+    // TA2 CCR1 input A (CCI1A) is P3.3 with P3SEL = 01 and P3DIR = 0 (SLASEO7C Table 9-14, p. 58;
+    // SLASEO7C Table 9-25, p. 67)
     let captures = CaptureParts3::config(periph.ta2, TimerConfig::aclk(&aclk))
         .config_cap1_input_A(p3.pin3.to_alternate1())
         .config_cap1_trigger(CapTrigger::FallingEdge)

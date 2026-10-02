@@ -21,7 +21,8 @@ use panic_msp430 as _;
 #[cfg(not(debug_assertions))]
 use panic_never as _;
 
-// Prints "HELLO" when started then echos on UART1
+// Prints "HELLO" when started then echos on eUSCI_A0, the only UART of this device
+// (SLASEE4C 6.10.7, p. 53)
 // Serial settings are listed in the code
 #[entry]
 fn main() -> ! {
@@ -38,16 +39,20 @@ fn main() -> ! {
         let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
         let p1 = Batch::new(periph.p1).split(&pmm);
 
+        // No board document covers an LED on P1.0: there is none for the MSP430FR25x2.
         let mut led = p1.pin0.to_output();
 
         led.set_low().ok();
 
+        // TXD on P1.4 and RXD on P1.5: UCA0TXD and UCA0RXD with P1SELx = 01 in the default mapping,
+        // USCIARMP = 0 (SLASEE4C Table 6-11, p. 53; SLASEE4C Table 6-15, p. 58)
         let (mut tx, mut rx) = SerialConfig::<_, _, DefaultMapping>::new(
             periph.e_usci_a0,
             BitOrder::LsbFirst,
             BitCount::EightBits,
             StopBits::OneStopBit,
             // Launchpad UART-to-USB converter doesn't handle parity, so we don't use it
+            // (no LaunchPad or other board document covers the MSP430FR25x2)
             Parity::NoParity,
             Loopback::NoLoop,
             9600,

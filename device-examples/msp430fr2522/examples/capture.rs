@@ -17,8 +17,11 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Connect push button input to P1.1. When button is pressed, putty should print the # of cycles
-// since the last press. Sometimes we get 2 consecutive readings due to lack of debouncing.
+// Connect push button input to P1.5, TA0.CCI2A, the capture input set up below (P1.1 is no timer
+// input on this device: SLASEE4C Table 6-15, p. 58; SLASEE4C Figure 6-2, p. 54). When button is
+// pressed, putty should print the # of cycles since the last press. Sometimes we get 2 consecutive
+// readings due to lack of debouncing. No board document covers a button: there is none for the
+// MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
@@ -37,6 +40,8 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut fram);
 
+    // TXD on P1.4: UCA0TXD with P1SELx = 01 in the default mapping, USCIARMP = 0
+    // (SLASEE4C Table 6-11, p. 53; SLASEE4C Table 6-15, p. 58)
     let mut tx = SerialConfig::new(
         periph.e_usci_a0,
         BitOrder::LsbFirst,
@@ -49,6 +54,8 @@ fn main() -> ! {
     .use_smclk(&smclk)
     .tx_only(p1.pin4.to_alternate1());
 
+    // P1.5 as TA0.CCI2A, capture input A of CCR2: P1SELx = 10 with P1DIR = 0 (SLASEE4C Table 6-15, p. 58;
+    // SLASEE4C Figure 6-2, p. 54)
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
         .config_cap2_input_A(p1.pin5.to_alternate2())
         .config_cap1_trigger(CapTrigger::FallingEdge)

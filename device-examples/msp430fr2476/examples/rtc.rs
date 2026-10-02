@@ -13,8 +13,11 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-// Red LED blinks 2 seconds on, 2 off
-// Pressing P2.3 button toggles red LED
+// LED1 blinks 2 seconds on, 2 off
+// Pressing P2.3 button toggles LED1
+// (LED1 on P1.0 is green, the P2.3 button is S2: SLAU802 Figure 19, p. 25. 2000 ticks of the VLO
+// divided by 10 take 2 s at the VLO's typical 10 kHz: SLASEO7C 8.12.3.5, p. 30; RTC predivider:
+// SLAU445I 15.2.2, p. 417.)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();

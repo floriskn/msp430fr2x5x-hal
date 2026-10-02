@@ -22,6 +22,7 @@ use panic_never as _;
 
 // Prints "HELLO" when started then echos on UART0
 // Serial settings are listed in the code
+// eUSCI_A0 is the LaunchPad's backchannel UART to the PC (SLAU739 2.2.4, p. 9).
 #[entry]
 fn main() -> ! {
     let Some(periph) = msp430fr2433::Peripherals::take() else { loop{} };
@@ -36,7 +37,9 @@ fn main() -> ! {
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
-    let mut led = port1.pin0.to_output();
+    let mut led = port1.pin0.to_output(); // Red LED1 (SLAU739 Figure 18, p. 23)
+    // P1.4 UCA0TXD and P1.5 UCA0RXD, P1SELx = 01 below (SLASE59F Table 6-17, p. 55): the backchannel
+    // UART's TXD and RXD, through the J101 jumpers (SLAU739 Figure 18, p. 23; SLAU739 Table 2, p. 8)
     let tx_pin = port1.pin4;
     let rx_pin = port1.pin5;
     

@@ -13,12 +13,16 @@
 //!
 //! The ADC measures against AVCC, the operating voltage of the MSP430, unless
 //! [`with_reference()`](Adc::with_reference()) selects the internal shared reference or an external one on the
-//! VeREF+ (P1.0) and VeREF- (P1.2) pins.
+//! VeREF+ (P1.0) and VeREF- (P1.2) pins (ADCSREFx, reset to AVCC and AVSS: SLAU445I Table 21-8, p. 567; the
+//! pins are A0/Veref+ and A2/Veref- in the ADC channel tables listed below).
 //!
 //! Besides single conversions with [`read_count()`](Adc::read_count()), [`start()`](Adc::start()) converts a
 //! sequence of channels and repeats conversions, started by software, the RTC, a timer or the comparator. The
 //! window comparator ([`set_window()`](Adc::set_window())) flags results outside or inside a range, and
-//! [`enable_interrupts()`](Adc::enable_interrupts()) requests the `ADC` interrupt for these events.
+//! [`enable_interrupts()`](Adc::enable_interrupts()) requests the `ADC` interrupt for these events (SLAU445I
+//! 21.2.7, p. 546: conversion modes; SLAU445I Table 21-4, p. 563, and the trigger tables cited at
+//! `TriggerSource`: triggers; SLAU445I 21.2.7.7, p. 555: window comparator; SLAU445I 21.2.7.10, p. 558:
+//! interrupts).
 //!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
 //! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
@@ -30,12 +34,26 @@
 //! | MSP430FR2433 | 10-bit     | P1.0 to P1.7    |                             | `to_adc_mode()`   |
 //! | MSP430FR25x2 | 10-bit     | P1.0 to P1.3, P2.2 to P2.5 |                  | `to_adc_mode()`   |
 //!
+//! The table follows each data sheet's ADC section with its ADC Channel Connections table, and its pin
+//! function tables (`to_alternate3()` is PxSELx = 11 there, the tertiary module function: SLAU445I
+//! Table 8-3, p. 314):
+//! - MSP430FR2x5x: SLASEC4D 6.10.12, p. 77; SLASEC4D Table 6-21, p. 77; SLASEC4D Table 6-63, p. 96;
+//!   SLASEC4D Table 6-67, p. 104
+//! - MSP430FR247x: SLASEO7C 9.10.12, p. 62; SLASEO7C Table 9-19, p. 62; SLASEO7C Table 9-23, p. 65;
+//!   SLASEO7C Table 9-26, p. 68; SLASEO7C Table 9-27, p. 69
+//! - MSP430FR2433: SLASE59F 6.10.12, p. 53; SLASE59F Table 6-15, p. 53; SLASE59F Table 6-17, p. 55
+//! - MSP430FR25x2: SLASEE4C 6.10.12, p. 55; SLASEE4C Table 6-13, p. 55 to p. 56; SLASEE4C Table 6-15,
+//!   p. 58; SLASEE4C Table 6-16, p. 60
+//!
 //! On the MSP430FR2433 and MSP430FR25x2 the analog inputs are enabled through SYSCFG2.ADCPCTLx instead of the
-//! pin's function select bits, which is what `to_adc_mode()` does.
+//! pin's function select bits, which is what `to_adc_mode()` does (SLASE59F Table 6-17 note 2, p. 55;
+//! SLASEE4C Table 6-15, p. 58; SLAU445I Table 1-31, p. 82).
 //!
 //! ADC channels 12 to 15 are not associated with external pins, so instead channels 12 and 13 can be read by passing a
 //! reference to [`InternalTempSensor`] or [`InternalVRef`] respectively. Channels 14 and 15 require no prior
 //! configuration, so the two functions below provide a reference that can be used to read from these channels.
+//! The ADC channel tables listed above give channel 12 as the temperature sensor, 13 as the internal
+//! reference, 14 as DVSS and 15 as DVCC.
 
 use crate::_pac;
 use crate::{
@@ -79,14 +97,17 @@ pub trait Channel<ADC> {
     /// Get the specific ID that identifies this channel, for example `0_u8` for the first ADC channel
     fn channel() -> u8;
 }
-/// Marker trait that marks a pin as being capable of being an ADC input via ADCPCTLx.
+/// Marker trait that marks a pin as being capable of being an ADC input via ADCPCTLx (SYSCFG2: SLAU445I
+/// Table 1-31, p. 82).
 // This trait is used to mark a pin as being capable of moving between PxSEL modes and ADCPCTLx mode.
 pub trait AdcPctlCapable {
-    /// The corresponding ADCPCTL bit that represents this pin.
+    /// The corresponding ADCPCTL bit that represents this pin: ADCPCTLx enables input Ax (SLAU445I
+    /// Table 1-31, p. 82).
     const ADCPCTLX: u8;
 }
 
-/// How many ADCCLK cycles the ADC's sample-and-hold stage will last for.
+/// How many ADCCLK cycles the ADC's sample-and-hold stage will last for (ADCSHTx: SLAU445I Table 21-3,
+/// p. 561).
 ///
 /// Default: 8 cycles
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -125,7 +146,8 @@ impl SampleTime {
     fn adcsht(self) -> u8 { self as u8 }
 }
 
-/// How much the ADC input clock will be divided by after being divided by the predivider
+/// How much the ADC input clock will be divided by after being divided by the predivider (ADCDIVx: SLAU445I
+/// Table 21-4, p. 563)
 ///
 /// Default: Divide by 1
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -154,6 +176,7 @@ impl ClockDivider {
     fn adcdiv(self) -> u8 { self as u8 }
 }
 
+// ADCSSELx (SLAU445I Table 21-4, p. 564)
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 enum ClockSource {
     /// Use MODCLK as the ADC input clock
@@ -170,7 +193,8 @@ impl ClockSource {
     fn adcssel(self) -> u8 { self as u8 }
 }
 
-/// How much the ADC input clock will be divided by prior to being divided by the ADC clock divider
+/// How much the ADC input clock will be divided by prior to being divided by the ADC clock divider (ADCPDIVx:
+/// SLAU445I Table 21-5, p. 565)
 ///
 /// Default: Divide by 1
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -189,7 +213,8 @@ impl Predivider {
     fn adcpdiv(self) -> u8 { self as u8 }
 }
 
-/// The output resolution of the ADC conversion. Also determines how many ADCCLK cycles the conversion step takes.
+/// The output resolution of the ADC conversion. Also determines how many ADCCLK cycles the conversion step takes
+/// (ADCRES: SLAU445I Table 21-5, p. 565).
 ///
 /// Default: 10-bit resolution
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -210,6 +235,7 @@ impl Resolution {
 }
 
 /// Selects the drive capability of the ADC reference buffer, which can increase the maximum sampling speed at the cost of increased power draw.
+/// (ADCSR: SLAU445I Table 21-5, p. 565, and SLAU445I 21.2.3.1, p. 542)
 ///
 /// Default: 200ksps
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -231,16 +257,20 @@ impl SamplingRate {
     }
 }
 
-/// How conversion results and window comparator thresholds are formatted (ADCDF).
+/// How conversion results and window comparator thresholds are formatted (ADCDF: SLAU445I Table 21-5,
+/// p. 565).
 ///
 /// Default: unsigned
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub enum DataFormat {
-    /// Unsigned and right-aligned: from 0 at VR- up to 255, 1023 or 4095 at VR+.
+    /// Unsigned and right-aligned: from 0 at VR- up to 255, 1023 or 4095 at VR+ (SLAU445I 21.2.1, p. 541, and
+    /// SLAU445I 21.3.4, p. 566).
     #[default]
     Unsigned,
     /// Two's complement and left-aligned, as an `i16` would read it: from -32768 at VR- up to just below 32768 at VR+.
-    /// The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit.
+    /// The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit (SLAU445I 21.3.5,
+    /// p. 566; ADCDF in SLAU445I Table 21-5, p. 565: "-VREF results in 8000h, and ... +VREF results in
+    /// 7FC0h").
     Signed,
 }
 
@@ -252,7 +282,10 @@ macro_rules! impl_adc_channel_pin {
 
             fn channel() -> Self::ID { $channel }
         }
-        // If the device doesn't have SAC, then ADC functionality is done via ADCPCTLx instead of Alternate1/2/3.
+        // On the MSP430FR2433 and MSP430FR25x2 ADC functionality is done via ADCPCTLx instead of
+        // Alternate1/2/3 (SLASE59F Table 6-17, p. 55; SLASEE4C Table 6-15, p. 58, and SLASEE4C Table 6-16,
+        // p. 60). The MSP430FR247x has no SAC either, but uses PxSELx = 11 (SLASEO7C Table 9-23, p. 65).
+        // ADCPCTLx enables input Ax (SLAU445I Table 1-31, p. 82).
         // Implement this for all modes
         #[cfg(feature = "adcpctl")]
         impl<MODE> AdcPctlCapable for Pin<$port, $pin, MODE> {
@@ -273,10 +306,15 @@ macro_rules! impl_adc_channel_extra {
     };
 }
 
+// Channel 12 is the temperature sensor, 13 the internal reference (SLASEC4D Table 6-21, p. 77; SLASEO7C
+// Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C Table 6-13, p. 55; ADCINCHx = 1100b for the
+// sensor: SLAU445I 21.2.7.8, p. 556)
 impl_adc_channel_extra!(InternalTempSensor<'_>, 12);
 impl_adc_channel_extra!(InternalVRef, 13);
 
-// The VREF+ output is measured through its pin's channel
+// The VREF+ output is measured through its pin's channel (SLASEC4D 6.10.1, p. 67: "ADC channel 7 can also be
+// selected to monitor this voltage"; SLASEO7C Table 9-19 note 1, p. 62; SLASE59F 6.10.1, p. 45; SLASEE4C
+// 6.10.1, p. 49)
 impl<PIN: Channel<Adc, ID = u8>> Channel<Adc> for VrefOutput<PIN> {
     type ID = u8;
 
@@ -287,14 +325,16 @@ impl<PIN: Channel<Adc, ID = u8>> Channel<Adc> for VrefOutput<PIN> {
 #[doc(hidden)]
 pub struct AdcVssChannel;
 impl_adc_channel_extra!(AdcVssChannel, 14);
-/// ADC channel 14, tied to VSS. Pass this function's output to `read_count()`.
+/// ADC channel 14, tied to VSS (DVSS: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F
+/// Table 6-15, p. 53; SLASEE4C Table 6-13, p. 56). Pass this function's output to `read_count()`.
 #[inline(always)]
 pub fn adc_ch14_vss() -> AdcVssChannel { AdcVssChannel }
 
 #[doc(hidden)]
 pub struct AdcVccChannel;
 impl_adc_channel_extra!(AdcVccChannel, 15);
-/// ADC channel 15, tied to VCC. Pass this function's output to `read_count()`.
+/// ADC channel 15, tied to VCC (DVCC: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F
+/// Table 6-15, p. 53; SLASEE4C Table 6-13, p. 56). Pass this function's output to `read_count()`.
 #[inline(always)]
 pub fn adc_ch15_vcc() -> AdcVccChannel { AdcVccChannel }
 
@@ -320,26 +360,32 @@ fn div_by_full_scale<const BITS: u32>(x: u32) -> u32 {
 
 /// Configuration object for an ADC.
 ///
-/// The default configuration is based on the default register values:
+/// The default configuration is based on the default register values (SLAU445I Table 21-3, p. 561 to
+/// p. 562; SLAU445I Table 21-4, p. 563 to p. 564; SLAU445I Table 21-5, p. 565):
 /// - Predivider = 1 and clock divider = 1
 /// - 10-bit resolution
-/// - 8 cycle sample time
+/// - 8 cycle sample time, the reset value of the 12-bit ADC (the 10-bit ADC of the MSP430FR2433 and
+///   MSP430FR25x2 resets to 4 cycles: SLAU445I Table 21-3 note 1, p. 561)
 /// - Max 200 ksps sample rate
 /// - Unsigned results
 #[derive(Clone, PartialEq, Eq)]
 pub struct AdcConfig<STATE> {
     state: STATE,
-    /// How much the input clock is divided by, after the predivider.
+    /// How much the input clock is divided by, after the predivider (ADCDIVx: SLAU445I Table 21-4, p. 563).
     pub clock_divider: ClockDivider,
-    /// How much the input clock is initially divided by, before the clock divider.
+    /// How much the input clock is initially divided by, before the clock divider (ADCPDIVx: SLAU445I
+    /// Table 21-5, p. 565).
     pub predivider: Predivider,
     /// How many bits the conversion result is. Also defines the number of ADCCLK cycles required to do the conversion step.
+    /// (ADCRES: SLAU445I Table 21-5, p. 565)
     pub resolution: Resolution,
-    /// Sets the maximum sampling rate of the ADC. Lower values use less power.
+    /// Sets the maximum sampling rate of the ADC. Lower values use less power. (ADCSR: SLAU445I Table 21-5,
+    /// p. 565)
     pub sampling_rate: SamplingRate,
-    /// Determines the number of ADCCLK cycles the sampling time takes.
+    /// Determines the number of ADCCLK cycles the sampling time takes (ADCSHTx: SLAU445I Table 21-3, p. 561).
     pub sample_time: SampleTime,
-    /// The format of conversion results and window comparator thresholds.
+    /// The format of conversion results and window comparator thresholds (ADCDF: SLAU445I Table 21-5,
+    /// p. 565).
     pub data_format: DataFormat,
 }
 
@@ -377,7 +423,7 @@ impl AdcConfig<NoClockSet> {
             data_format: DataFormat::Unsigned,
         }
     }
-    /// Configure the ADC to use SMCLK
+    /// Configure the ADC to use SMCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     pub fn use_smclk(self, _smclk: &Smclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::SmClk),
@@ -389,7 +435,7 @@ impl AdcConfig<NoClockSet> {
             data_format: self.data_format,
         }
     }
-    /// Configure the ADC to use ACLK
+    /// Configure the ADC to use ACLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::AClk),
@@ -401,7 +447,7 @@ impl AdcConfig<NoClockSet> {
             data_format: self.data_format,
         }
     }
-    /// Configure the ADC to use MODCLK
+    /// Configure the ADC to use MODCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     pub fn use_modclk(self) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::ModClk),
@@ -418,15 +464,18 @@ impl AdcConfig<ClockSet> {
     /// Applies this ADC configuration to hardware registers, and returns an ADC.
     pub fn configure(self, mut adc_reg: _pac::Adc) -> Adc {
         // Disable the ADC before we set the other bits. Some can only be set while the ADC is disabled.
+        // (SLAU445I 21.2.1, p. 541: "the ADC control bits can be modified only when ADCENC = 0")
         disable_adc_reg(&mut adc_reg);
 
         let adcsht = self.sample_time.adcsht();
         adc_reg.adcctl0().write(|w| unsafe { w.adcsht().bits(adcsht) });
-        // AVCC and AVSS as reference, as the returned `Adc` says, and channel 0
+        // AVCC and AVSS as reference, as the returned `Adc` says, and channel 0 (ADCSREFx = 000b,
+        // ADCINCHx = 0: SLAU445I Table 21-8, p. 567)
         adc_reg.adcmctl0().write(|w| unsafe { w.bits(0) });
 
         let adcssel = self.state.0.adcssel();
         let adcdiv = self.clock_divider.adcdiv();
+        // ADCSHP = 1: the sampling timer sets the sample time, pulse sample mode (SLAU445I 21.2.5.2, p. 544)
         adc_reg.adcctl1().write(|w| { unsafe { w
             .adcssel().bits(adcssel)
             .adcshp().set_bit()
@@ -448,19 +497,24 @@ impl AdcConfig<ClockSet> {
     }
 }
 
-/// Typestate for an ADC that measures against AVCC and AVSS, as after reset
+/// Typestate for an ADC that measures against AVCC and AVSS, as after reset (ADCSREFx: SLAU445I Table 21-8,
+/// p. 567)
 pub struct AvccReference;
 /// Typestate for an ADC with a reference selected by [`Adc::with_reference()`], which borrows the
 /// internal reference or the VeREF pins for `'a`
 pub struct SelectedReference<'a>(PhantomData<&'a ()>);
 
 /// Marker trait for the VeREF+ pin (P1.0) in its analog mode, which supplies an external positive reference
+/// (A0/Veref+: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C
+/// Table 6-13, p. 55)
 pub trait VeRefPlusPin {}
 /// Marker trait for the VeREF- pin (P1.2) in its analog mode, which supplies an external negative reference
+/// (A2/Veref-: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C
+/// Table 6-13, p. 55)
 pub trait VeRefMinusPin {}
 
 /// The positive reference of the ADC, VR+: an input at or above it converts to the full-scale count (ADCSREF,
-/// user's guide 21.2.3)
+/// SLAU445I 21.2.1, p. 541, SLAU445I 21.2.3, p. 542, and SLAU445I Table 21-8, p. 567)
 pub enum PositiveReference<'a> {
     /// AVCC, as after reset
     Avcc,
@@ -472,7 +526,8 @@ pub enum PositiveReference<'a> {
     External(&'a dyn VeRefPlusPin),
 }
 
-/// The negative reference of the ADC, VR-: an input at or below it converts to 0 (ADCSREF, user's guide 21.2.3)
+/// The negative reference of the ADC, VR-: an input at or below it converts to 0 (ADCSREF, SLAU445I 21.2.1,
+/// p. 541, SLAU445I 21.2.3, p. 542, and SLAU445I Table 21-8, p. 567)
 pub enum NegativeReference<'a> {
     /// AVSS, as after reset
     Avss,
@@ -480,52 +535,63 @@ pub enum NegativeReference<'a> {
     External(&'a dyn VeRefMinusPin),
 }
 
-/// How conversions repeat (ADCCONSEQ, user's guide 21.2.7)
+/// How conversions repeat (ADCCONSEQ, SLAU445I 21.2.7, p. 546, and SLAU445I Table 21-1, p. 546)
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ConversionMode {
-    /// Convert the channel once. With a hardware trigger, start again for the next conversion.
+    /// Convert the channel once. With a hardware trigger, start again for the next conversion (SLAU445I
+    /// 21.2.7.1, p. 547: "When any other trigger source is used, ADCENC must be toggled between each
+    /// conversion").
     #[default]
     Single,
-    /// Convert the channels from the selected one down to channel 0, once
+    /// Convert the channels from the selected one down to channel 0, once (SLAU445I 21.2.7.2, p. 549)
     Sequence,
-    /// Convert the channel once for each trigger, until stopped
+    /// Convert the channel once for each trigger, until stopped (SLAU445I 21.2.7.3, p. 551)
     RepeatSingle,
-    /// Convert the channels from the selected one down to channel 0 for each trigger, until stopped
+    /// Convert the channels from the selected one down to channel 0 for each trigger, until stopped (SLAU445I
+    /// 21.2.7.4, p. 553)
     RepeatSequence,
 }
 
 /// Marker trait for the timer whose capture/compare register 1 output starts conversions with
-/// [`TriggerSource::Timer`]: TB1 on the MSP430FR2x5x, TA1 on the other devices (data sheets: ADC Trigger Signal
-/// Connections)
+/// [`TriggerSource::Timer`]: TB1 on the MSP430FR2x5x, TA1 on the other devices (ADC Trigger Signal
+/// Connections: SLASEC4D Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62; SLASE59F Table 6-16, p. 53; SLASEE4C
+/// Table 6-14, p. 56)
 pub trait AdcTriggerTimer {}
 
-/// What starts conversions (ADCSHS, data sheets: ADC Trigger Signal Connections)
+/// What starts conversions (ADCSHS: SLAU445I Table 21-4, p. 563; ADC Trigger Signal Connections: SLASEC4D
+/// Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62; SLASE59F Table 6-16, p. 53; SLASEE4C Table 6-14, p. 56)
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TriggerSource {
-    /// Software, through [`Adc::start()`] (ADCSC)
+    /// Software, through [`Adc::start()`] (ADCSC: SLAU445I Table 21-3, p. 562)
     #[default]
     Software,
-    /// RTC counter overflows
+    /// RTC counter overflows (SLASEC4D 6.10.11, p. 76; SLASEO7C 9.10.11, p. 61; SLASE59F 6.10.11, p. 52;
+    /// SLASEE4C 6.10.11, p. 55: "The RTC overflow events trigger ... ADC conversion trigger")
     Rtc,
     /// The output of capture/compare register 1 of TB1 on the MSP430FR2x5x, or TA1 on the other devices. Set
     /// that timer up for PWM, with a pin or with
     /// [`PwmUninit::into_adc_trigger()`](crate::pwm::PwmUninit::into_adc_trigger).
+    /// (CCR1 "To ADC trigger": SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLASE59F Table 6-12,
+    /// p. 51; SLASEE4C Figure 6-2, p. 54)
     Timer,
-    /// The output of eCOMP0
+    /// The output of eCOMP0 (eCOMP0 COUT: SLASEC4D Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62)
     #[cfg(feature = "ecomp")]
     Comparator,
 }
 
-/// How a trigger controls the sampling (ADCSHP, ADCISSH, user's guide 21.2.5)
+/// How a trigger controls the sampling (ADCSHP, ADCISSH, SLAU445I 21.2.5, p. 542 to p. 543, and SLAU445I
+/// Table 21-4, p. 563)
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SampleMode {
-    /// A rising edge starts sampling for the configured sample time (pulse sample mode)
+    /// A rising edge starts sampling for the configured sample time (pulse sample mode, SLAU445I 21.2.5.2,
+    /// p. 544)
     #[default]
     RisingEdge,
     /// A falling edge starts sampling for the configured sample time (pulse sample mode, inverted trigger)
     FallingEdge,
     /// Sample while the trigger is high, and convert when it goes low (extended sample mode). The trigger must
-    /// stay high for at least 4 ADCCLK cycles. Hardware triggers only.
+    /// stay high for at least 4 ADCCLK cycles. Hardware triggers only. (SLAU445I 21.2.5.1, p. 543: "The SHI
+    /// signal requires at least 4 ADCCLK cycles")
     WhileHigh,
     /// Sample while the trigger is low, and convert when it goes high (extended sample mode, inverted trigger).
     /// Hardware triggers only.
@@ -543,17 +609,19 @@ pub struct ConversionConfig {
     pub sample_mode: SampleMode,
     /// In the sequence and repeat modes, convert back to back after the first trigger, as fast as possible,
     /// instead of waiting for a trigger for each conversion (ADCMSC). In the repeat modes the conversions
-    /// then continue until stopped.
+    /// then continue until stopped. (SLAU445I 21.2.7.5, p. 555)
     pub back_to_back: bool,
 }
 
 bitflags::bitflags! {
-    /// ADC interrupt sources, for [`Adc::enable_interrupts()`] and [`Adc::interrupt_flags()`] (ADCIE, ADCIFG)
+    /// ADC interrupt sources, for [`Adc::enable_interrupts()`] and [`Adc::interrupt_flags()`] (ADCIE, ADCIFG:
+    /// SLAU445I Table 21-13, p. 570, and SLAU445I Table 21-14, p. 571)
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     pub struct AdcInterruptFlags: u16 {
         /// ADCIFG0. A conversion result is ready. Reading it clears this flag.
         const ResultReady  = 1 << 0;
-        /// ADCINIFG. The result is inside the window: from the low threshold up to the high threshold.
+        /// ADCINIFG. The result is inside the window: from the low threshold up to the high threshold
+        /// (SLAU445I 21.2.7.7, p. 555: "between the low threshold ... and the high threshold").
         const InsideWindow = 1 << 1;
         /// ADCLOIFG. The result is below the low threshold of the window.
         const BelowWindow  = 1 << 2;
@@ -566,7 +634,8 @@ bitflags::bitflags! {
     }
 }
 
-/// The highest-priority pending ADC interrupt, as read from ADCIV by [`Adc::interrupt_source()`]
+/// The highest-priority pending ADC interrupt, as read from ADCIV by [`Adc::interrupt_source()`] (SLAU445I
+/// Table 21-15, p. 572)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AdcVector {
@@ -582,18 +651,22 @@ pub enum AdcVector {
     BelowWindow,
     /// The result is inside the window
     InsideWindow,
-    /// A conversion result is ready. This flag stays set until the result is read.
+    /// A conversion result is ready. This flag stays set until the result is read (SLAU445I 21.2.7.10.1,
+    /// p. 558: "Only the ADCIFG0 is not reset by this ADCIV read access").
     ResultReady,
 }
 
-// ADCCTL0, ADCCTL1 and ADCMCTL0 fields (user's guide 21.3)
+// ADCCTL0, ADCCTL1 and ADCMCTL0 fields (SLAU445I 21.3, p. 560 to p. 567)
+// ADCCTL0: SLAU445I Table 21-3, p. 561 to p. 562
 const ADCMSC: u16 = 1 << 7;
 const ADCENC: u16 = 1 << 1;
 const ADCSC: u16 = 1 << 0;
+// ADCCTL1: SLAU445I Table 21-4, p. 563 to p. 564
 const ADCSHS_MASK: u16 = 0b11 << 10;
 const ADCSHP: u16 = 1 << 9;
 const ADCISSH: u16 = 1 << 8;
 const ADCCONSEQ_MASK: u16 = 0b11 << 1;
+// ADCMCTL0: SLAU445I Table 21-8, p. 567
 const ADCSREF_MASK: u16 = 0b111 << 4;
 const ADCINCH_MASK: u16 = 0b1111;
 
@@ -608,25 +681,26 @@ pub struct Adc<REF = AvccReference> {
 }
 
 impl<REF> Adc<REF> {
-    /// Whether the ADC is currently sampling or converting.
+    /// Whether the ADC is currently sampling or converting (ADCBUSY: SLAU445I Table 21-4, p. 564).
     pub fn adc_is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
     }
 
-    /// Gets the latest ADC conversion result.
+    /// Gets the latest ADC conversion result (ADCMEM0: SLAU445I 21.3.4, p. 566).
     pub fn adc_get_result(&self) -> u16 { self.adc_reg.adcmem0().read().bits() }
 
-    /// Enables this ADC, ready to start conversions.
+    /// Enables this ADC, ready to start conversions (ADCON: SLAU445I Table 21-3, p. 561).
     pub fn enable(&mut self) {
         unsafe {
             self.adc_reg.adcctl0().set_bits(|w| w.adcon().set_bit());
         }
     }
 
-    /// Disables this ADC to save power.
+    /// Disables this ADC to save power (SLAU445I 21.2.1, p. 541: "The ADC can be turned off when not in
+    /// use to save power").
     pub fn disable(&mut self) { disable_adc_reg(&mut self.adc_reg); }
 
-    /// Selects which pin to sample.
+    /// Selects which pin to sample (ADCINCHx: SLAU445I Table 21-8, p. 567).
     fn set_pin<PIN>(&mut self, _pin: &PIN)
     where PIN: Channel<Adc, ID = u8> {
         self.adc_reg.adcmctl0().modify(|_, w|
@@ -634,7 +708,8 @@ impl<REF> Adc<REF> {
         );
     }
 
-    /// Starts an ADC conversion.
+    /// Starts an ADC conversion (SLAU445I Table 21-3, p. 562: "ADCSC and ADCENC may be set together with one
+    /// instruction").
     fn start_conversion(&mut self) {
         unsafe {
             self.adc_reg.adcctl0().set_bits(|w| w
@@ -661,7 +736,9 @@ impl<REF> Adc<REF> {
             }
         }
         self.disable();
-        // A single conversion started by software, as `start()` may have set otherwise
+        // A single conversion started by software, as `start()` may have set otherwise (ADCSHSx = 00,
+        // ADCISSH = 0, ADCCONSEQx = 00, ADCSHP = 1: SLAU445I Table 21-4, p. 563 to p. 564; ADCMSC = 0:
+        // SLAU445I Table 21-3, p. 561)
         self.adc_reg.adcctl1().modify(|r, w| unsafe {
             w.bits(r.bits() & !(ADCSHS_MASK | ADCISSH | ADCCONSEQ_MASK) | ADCSHP)
         });
@@ -677,12 +754,17 @@ impl<REF> Adc<REF> {
     /// Convert an ADC count to a voltage value in millivolts, rounded down.
     ///
     /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. The full-scale count
-    /// (255, 1023 or 4095) corresponds to the reference voltage (user's guide, ADC conversion
-    /// formula). With an external negative reference, this is the voltage above VR-. A count in the
-    /// signed [`DataFormat`] is converted too.
+    /// (255, 1023 or 4095) corresponds to the reference voltage, as in the data sheets' DVCC equation
+    /// (SLASEC4D 6.10.1, p. 67: DVCC = 4095 x reference voltage / ADC result; with 1023 in
+    /// SLASEO7C 9.10.1, p. 49, SLASE59F 6.10.1, p. 45, and SLASEE4C 6.10.1, p. 48) and in the ADCDF
+    /// description (SLAU445I Table 21-5, p. 565: "+VREF results in 03FFh"). The ADC conversion formula
+    /// of SLAU445I 21.2.1, p. 541, has 1024 or 4096 instead, a difference of at most 1 LSB. With an
+    /// external negative reference, this is the voltage above VR-. A count in the signed [`DataFormat`]
+    /// is converted too.
     pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
         let ctl2 = self.adc_reg.adcctl2().read();
+        // ADCRES (SLAU445I Table 21-5, p. 565)
         let bits = match ctl2.adcres().variant() {
             Adcres::Adcres0 => 8,
             Adcres::Adcres1 => 10,
@@ -690,7 +772,8 @@ impl<REF> Adc<REF> {
             Adcres::Adcres3 => 12, // Reserved, unreachable
         };
         let count = if ctl2.adcdf().bit_is_set() {
-            // Left-aligned two's complement, offset by half the range
+            // Left-aligned two's complement, offset by half the range (SLAU445I 21.3.5, p. 566, and ADCDF in
+            // SLAU445I Table 21-5, p. 565)
             (((count as i16) >> (16 - bits)) + (1 << (bits - 1))) as u16
         } else {
             count
@@ -717,16 +800,19 @@ impl<REF> Adc<REF> {
         self.read_count(pin).map(|count| self.count_to_mv(count, ref_voltage_mv))
     }
 
-    /// Select the reference voltages the ADC measures against (ADCSREF). An input at or below the
-    /// negative reference converts to 0, one at or above the positive reference to the full-scale count.
+    /// Select the reference voltages the ADC measures against (ADCSREF: SLAU445I Table 21-8, p. 567). An
+    /// input at or below the negative reference converts to 0, one at or above the positive reference to the
+    /// full-scale count (SLAU445I 21.2.1, p. 541).
     ///
     /// The internal reference must stay enabled, and the VeREF pins in their analog mode, while the ADC
-    /// uses them, so the returned ADC borrows them. Waits for a conversion in progress to finish.
+    /// uses them, so the returned ADC borrows them (SLAU445I 21.2.3.1, p. 542: "The on-chip reference from
+    /// the PMM module must be enabled by software"). Waits for a conversion in progress to finish.
     pub fn with_reference<'a>(
         mut self,
         positive: PositiveReference<'a>,
         negative: NegativeReference<'a>,
     ) -> Adc<SelectedReference<'a>> {
+        // ADCSREFx: bits 5-4 select VR+, bit 6 selects VEREF- as VR- (SLAU445I Table 21-8, p. 567)
         let vr_plus: u16 = match positive {
             PositiveReference::Avcc => 0b00,
             PositiveReference::Internal(_) => 0b01,
@@ -737,6 +823,8 @@ impl<REF> Adc<REF> {
             NegativeReference::Avss => 0,
             NegativeReference::External(_) => 1,
         };
+        // "It is not recommended to change this setting while a conversion is ongoing" (SLAU445I Table 21-8,
+        // p. 567)
         while self.adc_is_busy() {}
         self.disable();
         self.pending = None;
@@ -747,15 +835,19 @@ impl<REF> Adc<REF> {
     }
 
     /// Start conversions of `pin`'s channel, or in the sequence modes of the channels from it down to
-    /// channel 0, as `config` describes. Read the results with [`result()`](Adc::result()).
+    /// channel 0, as `config` describes (ADCINCHx: SLAU445I Table 21-8, p. 567). Read the results with
+    /// [`result()`](Adc::result()).
     ///
     /// A sequence converts every channel down to 0, so their pins should be in their analog mode too.
-    /// Conversions already running are stopped first, and their results discarded.
+    /// Conversions already running are stopped first, and their results discarded (SLAU445I 21.2.7.1, p. 547:
+    /// resetting ADCON within a conversion returns the ADC to the 'ADC off' state).
     pub fn start<PIN>(&mut self, _pin: &mut PIN, config: ConversionConfig)
     where PIN: Channel<Adc, ID = u8> {
         self.disable();
         self.pending = None;
 
+        // ADCSHSx (SLAU445I Table 21-4, p. 563), with the sources of the trigger tables cited at
+        // `TriggerSource`
         let shs: u16 = match config.trigger {
             TriggerSource::Software => 0b00,
             TriggerSource::Rtc => 0b01,
@@ -763,14 +855,16 @@ impl<REF> Adc<REF> {
             #[cfg(feature = "ecomp")]
             TriggerSource::Comparator => 0b11,
         };
+        // ADCSHP and ADCISSH (SLAU445I Table 21-4, p. 563)
         let sample = match (config.trigger, config.sample_mode) {
-            // The software trigger is a pulse
+            // The software trigger is a pulse (SLAU445I Table 21-3, p. 562: "ADCSC is reset automatically")
             (TriggerSource::Software, _) => ADCSHP,
             (_, SampleMode::RisingEdge) => ADCSHP,
             (_, SampleMode::FallingEdge) => ADCSHP | ADCISSH,
             (_, SampleMode::WhileHigh) => 0,
             (_, SampleMode::WhileLow) => ADCISSH,
         };
+        // ADCCONSEQx (SLAU445I Table 21-4, p. 564)
         let conseq: u16 = match config.mode {
             ConversionMode::Single => 0b00,
             ConversionMode::Sequence => 0b01,
@@ -785,10 +879,12 @@ impl<REF> Adc<REF> {
         self.adc_reg.adcmctl0().modify(|r, w| unsafe {
             w.bits(r.bits() & !ADCINCH_MASK | PIN::channel() as u16)
         });
-        // Discard results and flags of earlier conversions
+        // Discard results and flags of earlier conversions (ADCIFG: SLAU445I Table 21-14, p. 571)
         self.adc_reg.adcifg().write(|w| unsafe { w.bits(0) });
 
         self.enable();
+        // Hardware triggers start conversions once ADCENC is set (SLAU445I Figure 21-10, p. 547); ADCSC may
+        // be set with ADCENC (SLAU445I Table 21-3, p. 562)
         let start = match config.trigger {
             TriggerSource::Software => ADCENC | ADCSC,
             _ => ADCENC,
@@ -797,10 +893,10 @@ impl<REF> Adc<REF> {
     }
 
     /// The next result of the conversions started with [`start()`](Adc::start()), or `WouldBlock` if
-    /// none is ready (ADCIFG0). Reading a result clears the flag.
+    /// none is ready (ADCIFG0). Reading a result clears the flag (SLAU445I Table 21-14, p. 571).
     ///
     /// Results that aren't read before the next one arrives are lost, see
-    /// [`AdcInterruptFlags::Overflow`].
+    /// [`AdcInterruptFlags::Overflow`] (SLAU445I 21.2.7.10, p. 558).
     pub fn result(&mut self) -> nb::Result<u16, Infallible> {
         if self.adc_reg.adcifg().read().adcifg0().bit_is_clear() {
             return Err(nb::Error::WouldBlock);
@@ -809,11 +905,12 @@ impl<REF> Adc<REF> {
     }
 
     /// Stop the conversions started with [`start()`](Adc::start()), after the current conversion in the
-    /// single modes and after the current sequence in the sequence modes (user's guide 21.2.7.6).
+    /// single modes and after the current sequence in the sequence modes (SLAU445I 21.2.7.6, p. 555).
     pub fn stop(&mut self) {
         let single = self.adc_reg.adcctl1().read().bits() & ADCCONSEQ_MASK == 0;
         if single {
-            // Clearing ADCENC would cut a single conversion short
+            // Clearing ADCENC would cut a single conversion short (SLAU445I 21.2.7.6, p. 555: "poll the busy
+            // bit until reset before clearing ADCENC")
             while self.adc_is_busy() {}
         }
         self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCENC) });
@@ -821,38 +918,43 @@ impl<REF> Adc<REF> {
 
     /// Set the window comparator thresholds (ADCLO, ADCHI), in the configured [`DataFormat`]. Each result
     /// then sets one of the flags [`AdcInterruptFlags::BelowWindow`], [`InsideWindow`](AdcInterruptFlags::InsideWindow)
-    /// and [`AboveWindow`](AdcInterruptFlags::AboveWindow).
+    /// and [`AboveWindow`](AdcInterruptFlags::AboveWindow). (SLAU445I 21.2.7.7, p. 555: "The values in the
+    /// ADCHI and ADCLO registers must be in the correct data format"; registers: SLAU445I 21.3.7, p. 568, to
+    /// SLAU445I 21.3.10, p. 569)
     ///
     /// The ADC only sets these flags, so clear them with [`clear_interrupt_flags()`](Adc::clear_interrupt_flags())
-    /// once handled.
+    /// once handled (SLAU445I 21.2.7.7, p. 555: "The interrupt flags must be reset by software").
     pub fn set_window(&mut self, low: u16, high: u16) {
         self.adc_reg.adclo().write(|w| unsafe { w.bits(low) });
         self.adc_reg.adchi().write(|w| unsafe { w.bits(high) });
     }
 
-    /// Request the `ADC` interrupt for `flags`, besides those already enabled (ADCIE).
+    /// Request the `ADC` interrupt for `flags`, besides those already enabled (ADCIE: SLAU445I Table 21-13,
+    /// p. 570).
     pub fn enable_interrupts(&mut self, flags: AdcInterruptFlags) {
         self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() | flags.bits()) });
     }
 
-    /// Stop requesting the `ADC` interrupt for `flags` (ADCIE).
+    /// Stop requesting the `ADC` interrupt for `flags` (ADCIE: SLAU445I Table 21-13, p. 570).
     pub fn disable_interrupts(&mut self, flags: AdcInterruptFlags) {
         self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
     }
 
-    /// The interrupt flags that are set, whether or not their interrupt is enabled (ADCIFG).
+    /// The interrupt flags that are set, whether or not their interrupt is enabled (ADCIFG: SLAU445I
+    /// Table 21-14, p. 571).
     pub fn interrupt_flags(&self) -> AdcInterruptFlags {
         AdcInterruptFlags::from_bits_truncate(self.adc_reg.adcifg().read().bits())
     }
 
-    /// Clear `flags` (ADCIFG).
+    /// Clear `flags` (ADCIFG: SLAU445I Table 21-14, p. 571).
     pub fn clear_interrupt_flags(&mut self, flags: AdcInterruptFlags) {
         self.adc_reg.adcifg().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
     }
 
     /// The highest-priority pending interrupt among the enabled ones (ADCIV). Reading it clears its flag,
-    /// except [`AdcVector::ResultReady`], which reading the result clears.
+    /// except [`AdcVector::ResultReady`], which reading the result clears. (SLAU445I 21.2.7.10.1, p. 558)
     pub fn interrupt_source(&mut self) -> AdcVector {
+        // ADCIV values (SLAU445I Table 21-15, p. 572)
         match self.adc_reg.adciv().read().bits() {
             0x02 => AdcVector::Overflow,
             0x04 => AdcVector::TimeOverflow,
@@ -865,6 +967,7 @@ impl<REF> Adc<REF> {
     }
 }
 
+// Clears ADCON and ADCENC (SLAU445I Table 21-3, p. 561 to p. 562)
 fn disable_adc_reg(adc: &mut _pac::Adc) {
     unsafe {
         adc.adcctl0().clear_bits(|w| w

@@ -13,6 +13,7 @@ use msp430_hal::{
 use panic_msp430 as _;
 
 // Red onboard LED should blink at a steady period.
+// No board document covers this LED (on P1.0 here): there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog

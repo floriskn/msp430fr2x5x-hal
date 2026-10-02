@@ -21,40 +21,51 @@ pub mod gpio {
     use crate::hw_traits::gpio::gpio_impl;
     use crate::{adc, gpio::*};
 
-    // Define alternate pin transitions
-    // P1 alternate 1
+    // Define alternate pin transitions. Alternate1, 2 and 3 set the PxSEL1/PxSEL0 bit pair, which the pin
+    // function tables (SLASE59F Tables 6-17 to 6-20, p. 55 to p. 59) call PxSELx, to 01, 10 and 11. A
+    // function that needs a fixed PxDIR (a clock input or output) is only offered in that direction.
+    // P1 alternate 1, P1SELx = 01 with any P1DIR (SLASE59F Table 6-17, p. 55): P1.0 UCB0STE, P1.1 UCB0CLK,
+    // P1.2 UCB0SIMO/UCB0SDA, P1.3 UCB0SOMI/UCB0SCL, P1.4 UCA0TXD/UCA0SIMO, P1.5 UCA0RXD/UCA0SOMI,
+    // P1.6 UCA0CLK, P1.7 UCA0STE
     impl<PIN: PinNum, DIR> ToAlternate1 for Pin<P1, PIN, DIR> {}
-    // P1 alternate 2
-    impl<PULL> ToAlternate2 for Pin<P1, Pin0, Input<PULL>> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin1, DIR> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin2, DIR> {}
-    impl       ToAlternate2 for Pin<P1, Pin3, Output> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin4, DIR> {}
-    impl<DIR>  ToAlternate2 for Pin<P1, Pin5, DIR> {}
-    impl<PULL> ToAlternate2 for Pin<P1, Pin6, Input<PULL>> {}
-    impl       ToAlternate2 for Pin<P1, Pin7, Output> {}
+    // P1 alternate 2, P1SELx = 10 (SLASE59F Table 6-17, p. 55). On the timer pins P1DIR picks the capture
+    // input (0) or the compare output (1).
+    impl<PULL> ToAlternate2 for Pin<P1, Pin0, Input<PULL>> {} // TA0CLK: P1SELx = 10, P1DIR = 0
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin1, DIR> {}         // TA0.CCI1A in / TA0.1 out: P1SELx = 10
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin2, DIR> {}         // TA0.CCI2A in / TA0.2 out: P1SELx = 10
+    impl       ToAlternate2 for Pin<P1, Pin3, Output> {}      // MCLK: P1SELx = 10, P1DIR = 1
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin4, DIR> {}         // TA1.CCI2A in / TA1.2 out: P1SELx = 10
+    impl<DIR>  ToAlternate2 for Pin<P1, Pin5, DIR> {}         // TA1.CCI1A in / TA1.1 out: P1SELx = 10
+    impl<PULL> ToAlternate2 for Pin<P1, Pin6, Input<PULL>> {} // TA1CLK: P1SELx = 10, P1DIR = 0
+    impl       ToAlternate2 for Pin<P1, Pin7, Output> {}      // SMCLK: P1SELx = 10, P1DIR = 1
 
-    // P1 ADCPCTLx. 'x' determined by ADC channel impl in adc module.
+    // P1 ADCPCTLx. 'x' determined by ADC channel impl in adc module. ADCPCTLx = 1 in SYSCFG2 selects
+    // A0 to A7 on P1.0 to P1.7, whatever P1DIR and P1SELx are (SLASE59F Table 6-17, p. 55; SLAU445I
+    // 1.12.2.3, p. 51).
     impl<PIN: PinNum, DIR> ToAdcPctl for Pin<P1, PIN, DIR> where Self: adc::AdcPctlCapable {}
 
-    // P2 alternate 1
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin4, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin5, DIR> {}
-    impl<DIR>  ToAlternate1 for Pin<P2, Pin6, DIR> {}
-    // P2 alternate 2
-    impl       ToAlternate2 for Pin<P2, Pin2, Output> {} // ACLK
+    // P2 alternate 1, P2SELx = 01 with any P2DIR (SLASE59F Table 6-18, p. 56, for P2.0 to P2.2 and
+    // SLASE59F Table 6-19, p. 58, for P2.3 to P2.7). P2.3 and P2.7 are GPIO only.
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin0, DIR> {} // XOUT: P2SELx = 01
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin1, DIR> {} // XIN: P2SELx = 01
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin4, DIR> {} // UCA1CLK: P2SELx = 01
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin5, DIR> {} // UCA1RXD/UCA1SOMI: P2SELx = 01
+    impl<DIR>  ToAlternate1 for Pin<P2, Pin6, DIR> {} // UCA1TXD/UCA1SIMO: P2SELx = 01
+    // P2 alternate 2, P2SELx = 10 (SLASE59F Table 6-18, p. 56)
+    impl       ToAlternate2 for Pin<P2, Pin2, Output> {} // ACLK: P2SELx = 10, P2DIR = 1
 
-    // P3 alternate 1
-    impl<DIR>  ToAlternate1 for Pin<P3, Pin1, DIR> {}
+    // P3 alternate 1, P3SELx = 01 with any P3DIR (SLASE59F Table 6-20, p. 59). P3.0 and P3.2 are GPIO only.
+    impl<DIR>  ToAlternate1 for Pin<P3, Pin1, DIR> {} // UCA1STE: P3SELx = 01
 
-    // GPIO port impls, PAC register methods, and marking ports as interrupt-capable
+    // GPIO port impls, PAC register methods, and marking ports as interrupt-capable. Only P1 and P2 have
+    // interrupts (SLASE59F 6.10.3, p. 46; SLASE59F Tables 6-32 and 6-33, p. 64).
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
     gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2selc, p2sel0, p2sel1, [p2ies, p2ie, p2ifg, p2iv]);
     gpio_impl!(p3: P3 => p3in, p3out, p3dir, p3ren, p3selc, p3sel0, p3sel1);
 
-    // Pins per port (data sheet). The pins a port lacks are always the top ones.
+    // Pins per port (SLASE59F 6.10.3, p. 46: "P1 and P2 are full 8-bit ports; P3 has 3 bits implemented").
+    // The pins a port lacks are always the top ones. The DSBGA package also lacks P2.4 and P3.1 (SLASE59F
+    // Table 4-1, p. 11).
     impl_port_pins!(P1, 8);
     impl_port_pins!(P2, 8);
     impl_port_pins!(P3, 3);
@@ -64,36 +75,47 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
 
-    // The timer whose CCR1 output triggers conversions (data sheet: ADC trigger signal connections)
+    // The timer whose CCR1 output triggers conversions (SLASE59F Table 6-16, p. 53: ADCSHSx = 10 is
+    // "TA1.1B"; SLASE59F Table 6-12, p. 51: the TA1 CCR1 output goes "to ADC trigger")
     impl AdcTriggerTimer for crate::pac::Timer1A3 {}
 
-    // External reference inputs and the VREF+ output (data sheet: ADC channel connections, VREF+)
-    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, AdcMode<DIR>> {}
-    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, AdcMode<DIR>> {}
-    impl<DIR> VrefOutputPin for Pin<P1, Pin4, AdcMode<DIR>> {}
+    // External reference inputs and the VREF+ output, each selected with its ADCPCTLx bit (SLASE59F
+    // Table 6-15, p. 53; SLASE59F Table 6-17, p. 55). The 1.2-V reference goes out on P1.4 when
+    // EXTREFEN = 1 (SLASE59F 6.10.1, p. 45; SLAU445I 1.12.2.3, p. 51).
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, AdcMode<DIR>> {} // Veref+, with A0: ADCPCTL0 = 1
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, AdcMode<DIR>> {} // Veref-, with A2: ADCPCTL2 = 1
+    impl<DIR> VrefOutputPin for Pin<P1, Pin4, AdcMode<DIR>> {} // VREF+, with A4: ADCPCTL4 = 1
 
-    impl_adc_channel_pin!(P1, Pin0, AdcMode => 0);
-    impl_adc_channel_pin!(P1, Pin1, AdcMode => 1);
-    impl_adc_channel_pin!(P1, Pin2, AdcMode => 2);
-    impl_adc_channel_pin!(P1, Pin3, AdcMode => 3);
-    impl_adc_channel_pin!(P1, Pin4, AdcMode => 4);
-    impl_adc_channel_pin!(P1, Pin5, AdcMode => 5);
-    impl_adc_channel_pin!(P1, Pin6, AdcMode => 6);
-    impl_adc_channel_pin!(P1, Pin7, AdcMode => 7);
+    // Inputs A0 to A7 on P1.0 to P1.7 are ADCINCHx = 0 to 7 (SLASE59F Table 6-15, p. 53), each selected
+    // with ADCPCTLx = 1 (SLASE59F Table 6-17, p. 55). A8 and A9 have no pin ("NA" in SLASE59F Table 6-15,
+    // p. 53).
+    impl_adc_channel_pin!(P1, Pin0, AdcMode => 0); // A0/Veref+: ADCPCTL0 = 1
+    impl_adc_channel_pin!(P1, Pin1, AdcMode => 1); // A1: ADCPCTL1 = 1
+    impl_adc_channel_pin!(P1, Pin2, AdcMode => 2); // A2/Veref-: ADCPCTL2 = 1
+    impl_adc_channel_pin!(P1, Pin3, AdcMode => 3); // A3: ADCPCTL3 = 1
+    impl_adc_channel_pin!(P1, Pin4, AdcMode => 4); // A4/VREF+: ADCPCTL4 = 1
+    impl_adc_channel_pin!(P1, Pin5, AdcMode => 5); // A5: ADCPCTL5 = 1
+    impl_adc_channel_pin!(P1, Pin6, AdcMode => 6); // A6: ADCPCTL6 = 1
+    impl_adc_channel_pin!(P1, Pin7, AdcMode => 7); // A7: ADCPCTL7 = 1
 }
 
 /* Backup Memory */
-/// Size of the Backup Memory segment on this device, in bytes
+/// Size of the Backup Memory segment on this device, in bytes (SLASE59F 6.10.10, p. 52: "This device
+/// provides up to 32 bytes"; SLASE59F Table 6-24, p. 62: base 0660h, size 0020h)
 pub const BAK_MEM_SIZE: usize = 32;
 
 /* Capture */
 mod capture {
     use crate::{capture::{CapturePeriph, NoCapturePin}, gpio::*, pac::*};
 
+    // Capture input A (CCIxA) of each capture/compare register, on its pin in the timer function: PxSELx = 10
+    // with PxDIR = 0 (SLASE59F Table 6-11, p. 50, and SLASE59F Table 6-12, p. 51; SLASE59F Table 6-17,
+    // p. 55). Both signal connection tables leave the device input of CCI0A empty. Gpio3 to Gpio6 are
+    // unused: these timers have CCR0 to CCR2 only (SLASE59F 6.10.8, p. 50).
     impl CapturePeriph for Timer0A3 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P1, Pin1, Alternate2<Input<Floating>>>;
-        type Gpio2 = Pin<P1, Pin2, Alternate2<Input<Floating>>>;
+        type Gpio1 = Pin<P1, Pin1, Alternate2<Input<Floating>>>; // TA0.CCI1A on P1.1: P1SELx = 10, P1DIR = 0
+        type Gpio2 = Pin<P1, Pin2, Alternate2<Input<Floating>>>; // TA0.CCI2A on P1.2: P1SELx = 10, P1DIR = 0
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
@@ -102,8 +124,8 @@ mod capture {
 
     impl CapturePeriph for Timer1A3 {
         type Gpio0 = ();
-        type Gpio1 = Pin<P1, Pin5, Alternate2<Input<Floating>>>;
-        type Gpio2 = Pin<P1, Pin4, Alternate2<Input<Floating>>>;
+        type Gpio1 = Pin<P1, Pin5, Alternate2<Input<Floating>>>; // TA1.CCI1A on P1.5: P1SELx = 10, P1DIR = 0
+        type Gpio2 = Pin<P1, Pin4, Alternate2<Input<Floating>>>; // TA1.CCI2A on P1.4: P1SELx = 10, P1DIR = 0
         type Gpio3 = ();
         type Gpio4 = ();
         type Gpio5 = ();
@@ -111,7 +133,8 @@ mod capture {
     }
 
     // TA2 and TA3 have no pins. Input B of TA3's capture pins 0 and 1 are the CCR0 and CCR1 outputs of
-    // TA2 (data sheet, Tables 6-13 and 6-14), and both timers can capture from software.
+    // TA2 (SLASE59F Table 6-13, p. 51, and SLASE59F Table 6-14, p. 52, which call TA3 "Timer3_A3"), and both
+    // timers can capture from software (SLAU445I 13.2.4.1.1, p. 376).
     impl CapturePeriph for Timer2A2 {
         type Gpio0 = NoCapturePin;
         type Gpio1 = NoCapturePin;
@@ -134,7 +157,9 @@ mod capture {
 }
 
 /* Clocks */
-/// MODCLK frequency, typical (data sheet: 3.8 MHz to 5.8 MHz)
+/// MODCLK frequency, typical (SLASE59F Table 5-9, p. 26: fMODOSC 3.8 MHz to 5.8 MHz, 4.8 MHz typical.
+/// SLASE59F Table 6-7, p. 46, gives "5 MHz +-10%" instead, and SLASE59F Table 5-21, p. 35, 4.5 MHz to
+/// 5.5 MHz for the ADC.)
 pub const MODCLK_FREQ_HZ: u32 = 4_800_000;
 
 /* eUSCI */
@@ -144,6 +169,8 @@ mod eusci {
         pac::*,
     };
 
+    // eUSCI_A0 and eUSCI_A1 (UART or SPI) and eUSCI_B0 (SPI or I2C) (SLASE59F 6.10.7, p. 49; SLASE59F
+    // Table 6-24, p. 62)
     eusci_steal_impl!(UsciA0SpiMode);
     eusci_steal_impl!(UsciA0UartMode);
 
@@ -163,6 +190,7 @@ mod i2c {
         pac::*,
     };
 
+    // eUSCI_B0 registers (SLASE59F Table 6-42, p. 67)
     eusci_i2c_impl!(
         UsciB0I2cMode,
         ucb0ctlw0,
@@ -185,15 +213,18 @@ mod i2c {
         crate::pac::usci_b0_i2c_mode::ucb0ifg_i2c::R,
     );
 
-    /// I2C SCL pin for eUSCI B0 (P1.3)
+    // The pins in their eUSCI_B0 function, P1SELx = 01 (SLASE59F Table 6-10, p. 49; SLASE59F Table 6-17,
+    // p. 55)
+    /// I2C SCL pin for eUSCI B0 (P1.3, UCB0SCL, P1SELx = 01)
     pub struct UsciB0SCLPin;
     impl_i2c_pin!(UsciB0SCLPin, P1, Pin3);
 
-    /// I2C SDA pin for eUSCI B0 (P1.2)
+    /// I2C SDA pin for eUSCI B0 (P1.2, UCB0SDA, P1SELx = 01)
     pub struct UsciB0SDAPin;
     impl_i2c_pin!(UsciB0SDAPin, P1, Pin2);
 
-    /// UCLKI pin for eUSCI B0. Used as an external clock source. (P1.1)
+    /// UCLKI pin for eUSCI B0. Used as an external clock source. (P1.1, UCB0CLK, P1SELx = 01; UCSSELx =
+    /// 00b selects it: SLASE59F Table 6-7, p. 46)
     pub struct UsciB0UCLKIPin;
     impl_i2c_pin!(UsciB0UCLKIPin, P1, Pin1);
 
@@ -205,29 +236,34 @@ mod i2c {
 }
 
 /* Information Memory */
-/// Size of the Information Memory segment on this device, in bytes
+/// Size of the Information Memory segment on this device, in bytes (SLASE59F Table 6-23, p. 61: 512 bytes,
+/// 1800h to 19FFh)
 pub const INFO_MEM_SIZE: usize = 512;
 
 /* PWM */
 mod pwm {
     use crate::{gpio::*, pac::*, pwm::*};
 
+    // Each compare output on its pin in the timer function, P1SELx = 10 with P1DIR = 1 (SLASE59F
+    // Table 6-11, p. 50, and SLASE59F Table 6-12, p. 51; SLASE59F Table 6-17, p. 55). CCR0 has no pin
+    // (SLASE59F 6.10.8, p. 50).
     // TA0
     impl PwmPeriph<CCR1> for Timer0A3 {
-        type Gpio = Pin<P1, Pin1, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin1, Alternate2<Output>>; // TA0.1 on P1.1: P1SELx = 10, P1DIR = 1
     }
     impl PwmPeriph<CCR2> for Timer0A3 {
-        type Gpio = Pin<P1, Pin2, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin2, Alternate2<Output>>; // TA0.2 on P1.2: P1SELx = 10, P1DIR = 1
     }
 
     // TA1
     impl PwmPeriph<CCR1> for Timer1A3 {
-        type Gpio = Pin<P1, Pin5, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin5, Alternate2<Output>>; // TA1.1 on P1.5: P1SELx = 10, P1DIR = 1
     }
     impl PwmPeriph<CCR2> for Timer1A3 {
-        type Gpio = Pin<P1, Pin4, Alternate2<Output>>;
+        type Gpio = Pin<P1, Pin4, Alternate2<Output>>; // TA1.2 on P1.4: P1SELx = 10, P1DIR = 1
     }
 
+    // TA2 and TA3 are "only internally connected and do not support PWM output" (SLASE59F 6.10.8, p. 51)
     // TA2
     // None
 
@@ -239,6 +275,7 @@ mod pwm {
 mod serial {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, serial::*};
 
+    // eUSCI_A0 and eUSCI_A1 registers (SLASE59F Table 6-40, p. 66, and SLASE59F Table 6-41, p. 67)
     eusci_uart_impl!(
         UsciA0UartMode,
         uca0ctlw0,
@@ -279,27 +316,31 @@ mod serial {
         type TxPin = UsciA1TxPin;
         type RxPin = UsciA1RxPin;
     }
-    /// UCLK pin for E_USCI_A0 (P1.6)
+    // The pins in their eUSCI_A function, PxSELx = 01 (SLASE59F Table 6-10, p. 49; SLASE59F Table 6-17,
+    // p. 55, and SLASE59F Table 6-19, p. 58). UCLK is the external clock input that UCSSELx = 00b selects
+    // (SLASE59F Table 6-7, p. 46).
+    /// UCLK pin for E_USCI_A0 (P1.6, UCA0CLK, P1SELx = 01)
     pub struct UsciA0ClockPin;
     impl_serial_pin!(UsciA0ClockPin, P1, Pin6);
 
-    /// Tx pin for E_USCI_A0 (P1.4)
+    /// Tx pin for E_USCI_A0 (P1.4, UCA0TXD, P1SELx = 01)
     pub struct UsciA0TxPin;
     impl_serial_pin!(UsciA0TxPin, P1, Pin4);
 
-    /// Rx pin for E_USCI_A0 (P1.5)
+    /// Rx pin for E_USCI_A0 (P1.5, UCA0RXD, P1SELx = 01)
     pub struct UsciA0RxPin;
     impl_serial_pin!(UsciA0RxPin, P1, Pin5);
 
-    /// UCLK pin for E_USCI_A1 (P2.4)
+    /// UCLK pin for E_USCI_A1 (P2.4, UCA1CLK, P2SELx = 01; not in the DSBGA package: SLASE59F Table 4-1,
+    /// p. 11)
     pub struct UsciA1ClockPin;
     impl_serial_pin!(UsciA1ClockPin, P2, Pin4);
 
-    /// Tx pin for E_USCI_A1 (P2.6)
+    /// Tx pin for E_USCI_A1 (P2.6, UCA1TXD, P2SELx = 01)
     pub struct UsciA1TxPin;
     impl_serial_pin!(UsciA1TxPin, P2, Pin6);
 
-    /// Rx pin for E_USCI_A1 (P2.5)
+    /// Rx pin for E_USCI_A1 (P2.5, UCA1RXD, P2SELx = 01)
     pub struct UsciA1RxPin;
     impl_serial_pin!(UsciA1RxPin, P2, Pin5);
 }
@@ -308,6 +349,7 @@ mod serial {
 mod spi {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, spi::*};
 
+    // eUSCI registers (SLASE59F Table 6-40, p. 66, and SLASE59F Tables 6-41 and 6-42, p. 67)
     eusci_spi_impl!(
         UsciA0SpiMode,
         uca0ctlw0_spi,
@@ -366,50 +408,54 @@ mod spi {
         type STE = UsciB0STEPin;
     }
 
-    /// SPI MISO pin for eUSCI A0 (P1.5)
+    // The pins in their eUSCI function, PxSELx = 01 (SLASE59F Table 6-10, p. 49; SLASE59F Table 6-17,
+    // p. 55, SLASE59F Table 6-19, p. 58, and SLASE59F Table 6-20, p. 59)
+    /// SPI MISO pin for eUSCI A0 (P1.5, UCA0SOMI, P1SELx = 01)
     pub struct UsciA0MISOPin;
     impl_spi_pin!(UsciA0MISOPin, P1, Pin5);
 
-    /// SPI MOSI pin for eUSCI A0 (P1.4)
+    /// SPI MOSI pin for eUSCI A0 (P1.4, UCA0SIMO, P1SELx = 01)
     pub struct UsciA0MOSIPin;
     impl_spi_pin!(UsciA0MOSIPin, P1, Pin4);
 
-    /// SPI SCLK pin for eUSCI A0 (P1.6)
+    /// SPI SCLK pin for eUSCI A0 (P1.6, UCA0CLK, P1SELx = 01)
     pub struct UsciA0SCLKPin;
     impl_spi_pin!(UsciA0SCLKPin, P1, Pin6);
 
-    /// SPI STE pin for eUSCI A0 (P1.7)
+    /// SPI STE pin for eUSCI A0 (P1.7, UCA0STE, P1SELx = 01)
     pub struct UsciA0STEPin;
     impl_spi_pin!(UsciA0STEPin, P1, Pin7);
 
-    /// SPI MISO pin for eUSCI A1 (P2.5)
+    /// SPI MISO pin for eUSCI A1 (P2.5, UCA1SOMI, P2SELx = 01)
     pub struct UsciA1MISOPin;
     impl_spi_pin!(UsciA1MISOPin, P2, Pin5);
 
-    /// SPI MOSI pin for eUSCI A1 (P2.6)
+    /// SPI MOSI pin for eUSCI A1 (P2.6, UCA1SIMO, P2SELx = 01)
     pub struct UsciA1MOSIPin;
     impl_spi_pin!(UsciA1MOSIPin, P2, Pin6);
 
-    /// SPI SCLK pin for eUSCI A1 (P2.4)
+    /// SPI SCLK pin for eUSCI A1 (P2.4, UCA1CLK, P2SELx = 01; not in the DSBGA package: SLASE59F
+    /// Table 4-1, p. 11)
     pub struct UsciA1SCLKPin;
     impl_spi_pin!(UsciA1SCLKPin, P2, Pin4);
-    /// SPI STE pin for eUSCI A1 (not in the DSBGA package)
+    /// SPI STE pin for eUSCI A1 (P3.1, UCA1STE, P3SELx = 01; not in the DSBGA package: SLASE59F
+    /// Table 4-1, p. 11)
     pub struct UsciA1STEPin;
     impl_spi_pin!(UsciA1STEPin, P3, Pin1);
 
-    /// SPI MISO pin for eUSCI B0 (P1.3)
+    /// SPI MISO pin for eUSCI B0 (P1.3, UCB0SOMI, P1SELx = 01)
     pub struct UsciB0MISOPin;
     impl_spi_pin!(UsciB0MISOPin, P1, Pin3);
 
-    /// SPI MOSI pin for eUSCI B0 (P1.2)
+    /// SPI MOSI pin for eUSCI B0 (P1.2, UCB0SIMO, P1SELx = 01)
     pub struct UsciB0MOSIPin;
     impl_spi_pin!(UsciB0MOSIPin, P1, Pin2);
 
-    /// SPI SCLK pin for eUSCI B0 (P1.1)
+    /// SPI SCLK pin for eUSCI B0 (P1.1, UCB0CLK, P1SELx = 01)
     pub struct UsciB0SCLKPin;
     impl_spi_pin!(UsciB0SCLKPin, P1, Pin1);
 
-    /// SPI STE pin for eUSCI B0 (P1.0)
+    /// SPI STE pin for eUSCI B0 (P1.0, UCB0STE, P1SELx = 01)
     pub struct UsciB0STEPin;
     impl_spi_pin!(UsciB0STEPin, P1, Pin0);
 }
@@ -423,6 +469,8 @@ mod timer {
         timer::*,
     };
 
+    // TA0 and TA1 have CCR0 to CCR2, TA2 and TA3 CCR0 and CCR1 (SLASE59F 6.10.8, p. 50 to p. 51; register
+    // tables: SLASE59F Tables 6-35 to 6-38, p. 65)
     timer_a_impl!(
         Timer0A3,
         ta0,
@@ -489,18 +537,21 @@ mod timer {
         [CCR1, ta3cctl1, ta3ccr1]
     );
 
+    // The external clock inputs TAxCLK, P1SELx = 10 with P1DIR = 0 (SLASE59F Table 6-11, p. 50, and
+    // SLASE59F Table 6-12, p. 51; SLASE59F Table 6-17, p. 55)
     impl TimerPeriph for Timer0A3 {
-        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>;
+        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>; // TA0CLK on P1.0: P1SELx = 10, P1DIR = 0
     }
     impl CapCmpTimer3 for Timer0A3 {}
 
     impl TimerPeriph for Timer1A3 {
-        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
+        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>; // TA1CLK on P1.6: P1SELx = 10, P1DIR = 0
     }
     impl CapCmpTimer3 for Timer1A3 {}
 
-    // TA2 and TA3 aren't connected to any pins, so they have no clock pin and no PWM or capture
-    // (data sheet, Timer_A section)
+    // TA2 and TA3 aren't connected to any pins, so they have no clock pin, no PWM output and no capture
+    // pins (SLASE59F 6.10.8, p. 51: "only internally connected and do not support PWM output"; SLASE59F
+    // Table 6-13, p. 51, and SLASE59F Table 6-14, p. 52)
     impl TimerPeriph for Timer2A2 {
         type Tbxclk = NoTbxclkPin;
     }
@@ -511,8 +562,9 @@ mod timer {
     }
     impl CapCmpTimer2 for Timer3A2 {}
 
-    // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (data sheet,
-    // Tables 6-11 to 6-14)
+    // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (SLASE59F Tables
+    // 6-11 to 6-14, p. 50 to p. 52, list no INCLK input. SLAU445I Figure 1-8, p. 50, still draws INCLK on
+    // the TA0 and TA1 clock selects, TA0's "from CapTouchIO", which SLASE59F doesn't list.)
 }
 
 pub mod clock {
@@ -520,19 +572,23 @@ pub mod clock {
 
     // The XT1 pins are defined once, here. Everything else, from the `Xt1Config` constructors to
     // keeping the pins selected through LPM3.5, derives the port, pin and PxSEL bits from these
-    // types. Both pins are selected with P2SELx = 01.
-    /// XT1 input pin (XIN), in its XT1 function
+    // types. Both pins are selected with P2SELx = 01 (SLASE59F Table 6-18, p. 56). XT1 follows the
+    // PxSEL bit of XIN; in bypass mode XOUT's is don't care (SLAU445I 3.2.4, p. 103).
+    /// XT1 input pin (XIN, P2.1, P2SELx = 01), in its XT1 function
     pub type Xt1Xin<DIR> = Pin<P2, Pin1, Alternate1<DIR>>;
-    /// XT1 output pin (XOUT), in its XT1 function
+    /// XT1 output pin (XOUT, P2.0, P2SELx = 01), in its XT1 function
     pub type Xt1Xout<DIR> = Pin<P2, Pin0, Alternate1<DIR>>;
 
-    /// FLLREFDIV setting for an undivided FLL reference. The FR2433 PAC names the FLLREFDIV
-    /// variants by number rather than by divider.
+    /// FLLREFDIV setting for an undivided FLL reference: 000b (SLAU445I 3.3.4, Table 3-7, p. 116). The
+    /// FR2433 PAC names the FLLREFDIV variants by number rather than by divider, and describes them
+    /// (f(LFCLK)/2, /4, ...) differently from SLAU445I Table 3-7, p. 116. With a 32-kHz-only XT1, as here
+    /// (SLASE59F Table 5-4, p. 23), FLLREFDIV "should be written as zero" (SLAU445I Table 3-7, p. 116).
     pub(crate) const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::Fllrefdiv0;
 }
 
 /* LPM */
 pub(crate) mod lpm {
+    // All of the device's ports (SLASE59F 6.10.3, p. 46)
     crate::lpm::reset_all_pin_functions_impl!(P1, P2, P3);
 }
 
@@ -540,17 +596,22 @@ pub(crate) mod lpm {
 pub mod ir {
     use crate::{gpio::*, ir::*, pac::*, pin_mapping::*};
 
-    /// The eUSCI whose TXD pin carries the modulated signal
+    /// The eUSCI whose TXD pin carries the modulated signal (SLASE59F 6.10.8, p. 51: "the eUSCI_A pin
+    /// of UCA0TXD/UCA0SIMO")
     pub type IrUsci = UsciA0UartMode;
-    /// The pin mapping of that TXD pin
+    /// The pin mapping of that TXD pin. This device has no eUSCI pin remapping (no SYSCFG3 in the
+    /// SYS registers, SLASE59F Table 6-27, p. 63).
     pub type IrMapping = DefaultMapping;
 
-    // The CCR2 outputs of Timer0A3 and Timer1A3 feed the modulator (data sheet: timer signal connections)
+    // The CCR2 outputs of Timer0A3 and Timer1A3 feed the modulator (SLASE59F Table 6-11, p. 50, and
+    // SLASE59F Table 6-12, p. 51: "IR Input"). TA0's is the first PWM, the ASK carrier, and TA1's the
+    // second (SLAU445I 1.12.2.2, Figure 1-8, p. 50).
     impl IrInputTimer for Timer0A3 {}
     impl IrInputTimer for Timer1A3 {}
     impl IrFirstTimer for Timer0A3 {}
     impl IrSecondTimer for Timer1A3 {}
 
-    // eUSCI_A0's TXD pin (data sheet: Timer1_A3 signal connections)
+    // eUSCI_A0's TXD pin, P1.4 with P1SELx = 01 (SLASE59F 6.10.8, p. 51: "modulate the eUSCI_A pin of
+    // UCA0TXD/UCA0SIMO"; SLASE59F Table 6-17, p. 55; SLAU445I Figure 1-8, p. 50)
     impl<DIR> IrOutputPin for Pin<P1, Pin4, Alternate1<DIR>> {}
 }

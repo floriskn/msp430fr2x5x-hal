@@ -1,11 +1,14 @@
 //! A timer clocked from the VLO, the internal very-low-power oscillator.
 //!
 //! The red LED on P1.0 toggles every 10000 VLO cycles. The VLO runs at about 10 kHz but is only
-//! accurate to ±50 % (data sheet), so that is anywhere from 0.7 s to 2 s. With a scope on P1.0,
-//! the VLO frequency is 20000 divided by the period of the LED signal.
+//! accurate to ±50 % (data sheet: SLASEE4C Table 6-8, p. 49, "10 kHz ±50%"), so that is anywhere
+//! from 0.7 s to 2 s. With a scope on P1.0, the VLO frequency is 20000 divided by the period of the
+//! LED signal. No board document covers the LED: there is none for the MSP430FR25x2.
 //!
-//! The VLO needs no clock configuration: it starts when the timer requests it. On the
-//! MSP430FR25x2, only TA0 can be clocked from the VLO.
+//! The VLO needs no clock configuration: it starts when the timer requests it
+//! (SLAU445I 3.2.2, p. 102: VLOCLK is active when "At least one peripheral requests VLO as clock
+//! source"). On the MSP430FR25x2, only TA0 can be clocked from the VLO (SLASEE4C Table 6-8, p. 49:
+//! VLOCLK is TASSEL = 11b for TA0 and not available for TA1; SLASEE4C Figure 6-2, p. 54).
 #![no_main]
 #![no_std]
 
@@ -45,6 +48,7 @@ fn main() -> ! {
 
     let mut timer = TimerParts3::new(periph.ta0, TimerConfig::vloclk()).timer;
     // The timer counts from 0 up to and including the given value
+    // (Up mode, SLAU445I 13.2.3.1, p. 371: "The number of timer counts in the period is TAxCCR0 + 1")
     timer.start(VLO_CYCLES - 1);
 
     loop {

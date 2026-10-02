@@ -21,6 +21,7 @@ use panic_msp430 as _;
 static P2IV: Mutex<RefCell<Option< PxIV<P2> >>> = Mutex::new(RefCell::new(None));
 
 // P1.0 should toggle when P2.3 is pressed
+// (P1.0 drives LED1, which is green; P2.3 is button S2: SLAU802 Figure 19, p. 25)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
@@ -30,6 +31,7 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
+    // (SLAU445I 8.3.2, p. 317)
     let p1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -55,6 +57,7 @@ fn main() -> ! {
 
     loop {
         // Since no peripherals were configured to use SMCLK / ACLK we could just as well enter LPM3 / LPM4 here
+        // (port interrupts wake the device from LPM4 too: SLASEO7C Table 9-1, p. 45)
         enter_lpm0();
         green_led.toggle().ok();
 
@@ -65,6 +68,8 @@ fn main() -> ! {
 }
 
 // Interrupt handlers with the `wake_cpu` argument will set the MSP430 back to Active Mode after the interrupt completes.
+// (An interrupt returns to another operating mode if its handler changes the SR saved on the stack:
+// SLAU445I 1.4, p. 36)
 #[interrupt(wake_cpu)]
 fn PORT2() {
     with(|cs| {
@@ -75,7 +80,7 @@ fn PORT2() {
     });
 }
 
-/// Enable pulldowns on unused ports to massively reduce power usage.
+/// Enable pulldowns on unused ports to massively reduce power usage (SLAU445I 8.3.2, p. 317).
 fn init_unused_gpio(p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
     Batch::new(p3).pulldown_all().split(pmm);
     Batch::new(p4).pulldown_all().split(pmm);

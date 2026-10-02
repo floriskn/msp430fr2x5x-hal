@@ -1,7 +1,9 @@
 //! Infrared modulation
 //!
 //! The system module (SYS) combines two timer outputs and a data signal into a modulated signal on eUSCI_A0's
-//! TXD pin, to drive an infrared LED (SLAU445I 1.12, SYSCFG1; data sheets: timer signal connections):
+//! TXD pin, to drive an infrared LED (SLAU445I 1.12.2.2, p. 50 and SLAU445I 1.12.4.2, p. 53 to p. 54,
+//! "Infrared Modulation Function"; SYSCFG1: SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81; data
+//! sheets: timer signal connections, listed below the table):
 //!
 //! | Device       | First input | Second input | Output (UCA0TXD)         |
 //! |:------------:|:-----------:|:------------:|:------------------------:|
@@ -10,9 +12,21 @@
 //! | MSP430FR2433 | TA0 CCR2    | TA1 CCR2     | `P1.4`                   |
 //! | MSP430FR25x2 | TA0 CCR2    | TA1 CCR2     | `P2.0`, remapped mapping |
 //!
-//! Only that one TXD pin carries the modulated signal, so eUSCI_A0 has to use its pin mapping, [`IrMapping`]. On
-//! the MSP430FR247x the output doesn't follow eUSCI_A0 to its remapped pins (measured on an MSP430FR2476). The
-//! MSP430FR25x2 output is the one its data sheet shows, not tested on hardware.
+//! - MSP430FR2x5x: SLASEC4D Table 6-16, p. 73 ("IR carrier input"); SLASEC4D Table 6-17, p. 74 ("IR coding
+//!   input"); SLAU445I Figure 1-13, p. 54 (output on "P1.7/UCA0TXD/UCA0SIMO").
+//! - MSP430FR247x: SLASEO7C Table 9-12, p. 55 ("IR carrier input"); SLASEO7C Table 9-13, p. 56 ("IR coding
+//!   input"); SLASEO7C Figure 9-2, p. 57.
+//! - MSP430FR2433: SLASE59F Table 6-11, p. 50 and SLASE59F Table 6-12, p. 51 ("IR Input"); SLAU445I
+//!   Figure 1-8, p. 50 (carrier from TA0.2, envelope from TA1.2, output on "P1.4/UCA0TXD/UCA0SIMO").
+//! - MSP430FR25x2: SLASEE4C Figure 6-2, p. 54 ("Carrier" from Timer_A0 CCR2, "Coding" from Timer_A1 CCR2,
+//!   output on "P2.0/UCA0TXD/UCA0SIMO"); P2.0 is UCA0TXD with USCIARMP = 1 (SLASEE4C Table 6-11, p. 53).
+//!
+//! Only that one TXD pin carries the modulated signal (each of the figures above shows a single output pin),
+//! so eUSCI_A0 has to use its pin mapping, [`IrMapping`]. On the MSP430FR247x the output doesn't follow
+//! eUSCI_A0 to its remapped pins (measured on an MSP430FR2476). Its data sheet labels the output
+//! "P2.0/UCA0TXD/UCA0SIMO" (SLASEO7C Figure 9-2, p. 57), but P2.0 is XOUT on that device (SLASEO7C
+//! Table 9-24, p. 66). The MSP430FR25x2 output is the one its data sheet shows (SLASEE4C Figure 6-2, p. 54),
+//! not tested on hardware.
 //!
 //! Set both timers up for PWM and turn their CCR2 outputs into modulator inputs with
 //! [`PwmUninit::into_ir_input`](crate::pwm::PwmUninit::into_ir_input). The data comes from software
@@ -20,41 +34,50 @@
 //! modulator ([`IrModulator::with_uart_data`]).
 //!
 //! In ASK mode the first input is the carrier and the second the envelope; in FSK mode they are the two
-//! frequencies (user's guide). Measured on an MSP430FR2476:
+//! frequencies (SLAU445I 1.12.2.2, p. 50; SLAU445I 1.12.4.2, p. 54). Measured on an MSP430FR2476:
 //!
 //! - ASK: the output is the carrier while the envelope and the data differ (`carrier & (envelope ^ data)`). With
-//!   the envelope running at the bit rate, that sends the data Manchester coded, as RC-5 does.
+//!   the envelope running at the bit rate, that sends the data Manchester coded, as RC-5 does (SLAU445I
+//!   1.12.2.2, p. 50 names the "RC-5 data format" as an example).
 //! - FSK: the output is the second input while the data is 1, and the first input while it is 0.
 //!
-//! The output inverts with the `inverted` argument (IRPSEL).
+//! Both match the logic diagrams in SLAU445I Figure 1-8, p. 50 and SLAU445I Figure 1-13, p. 54.
+//!
+//! The output inverts with the `inverted` argument (IRPSEL, SLAU445I Table 1-25, p. 76 and SLAU445I
+//! Table 1-30, p. 81).
 
 use crate::{_pac, serial::{SerialUsci, Tx}};
 use core::marker::PhantomData;
 
 pub use crate::device_specific::ir::{IrMapping, IrUsci};
 
-/// Marker trait for the timers whose CCR2 output can feed the modulator
+/// Marker trait for the timers whose CCR2 output can feed the modulator (SLAU445I Figure 1-8, p. 50 and
+/// SLAU445I Figure 1-13, p. 54)
 pub trait IrInputTimer {}
-/// Marker trait for the timer whose CCR2 output is the first modulator input: TB0 on the MSP430FR2x5x, TA0 on the
-/// other devices
+/// Marker trait for the timer whose CCR2 output is the first modulator input: TB0 on the MSP430FR2x5x, TA0 on
+/// the other devices (SLASEC4D Table 6-16, p. 73; SLASEO7C Table 9-12, p. 55; SLAU445I Figure 1-8, p. 50;
+/// SLASEE4C Figure 6-2, p. 54)
 pub trait IrFirstTimer: IrInputTimer {}
-/// Marker trait for the timer whose CCR2 output is the second modulator input: TB1 on the MSP430FR2x5x, TA1 on the
-/// other devices
+/// Marker trait for the timer whose CCR2 output is the second modulator input: TB1 on the MSP430FR2x5x, TA1
+/// on the other devices (SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLAU445I Figure 1-8, p. 50;
+/// SLASEE4C Figure 6-2, p. 54)
 pub trait IrSecondTimer: IrInputTimer {}
 
 /// Marker trait for the pin that carries the modulated signal: eUSCI_A0's TXD pin in its eUSCI function, in
-/// the pin mapping [`IrMapping`]
+/// the pin mapping [`IrMapping`] (the modulator output takes the place of UCA0TXD, SLAU445I Figure 1-8, p. 50
+/// and SLAU445I Figure 1-13, p. 54)
 pub trait IrOutputPin {}
 
 /// A timer's CCR2 output feeding the modulator, see [`PwmUninit::into_ir_input`](crate::pwm::PwmUninit::into_ir_input)
 pub struct IrInput<T>(pub(crate) PhantomData<T>);
 
-/// How the modulator combines its inputs (IRMSEL)
+/// How the modulator combines its inputs (IRMSEL, SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81;
+/// the modes: SLAU445I 1.12.2.2, p. 50)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IrMode {
-    /// Amplitude-shift keying: the first input is the carrier, the second the envelope
+    /// Amplitude-shift keying: the first input is the carrier, the second the envelope (IRMSEL = 0)
     Ask,
-    /// Frequency-shift keying: the two inputs are the two frequencies
+    /// Frequency-shift keying: the two inputs are the two frequencies (IRMSEL = 1)
     Fsk,
 }
 
@@ -63,7 +86,8 @@ pub struct SoftwareData;
 /// Typestate for a modulator whose data comes from eUSCI_A0
 pub struct UartData;
 
-// SYSCFG1 bits (SLAU445I SYSCFG1). Other bits of SYSCFG1 belong to other functions on some devices.
+// SYSCFG1 bits (SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81). Other bits of SYSCFG1 belong to
+// other functions on some devices (SYNCSEL on CapTIvate devices, SLAU445I Table 1-30, p. 81).
 const IREN: u16 = 1 << 0;
 const IRPSEL: u16 = 1 << 1;
 const IRMSEL: u16 = 1 << 2;
@@ -78,6 +102,8 @@ pub struct IrModulator<DATA>(PhantomData<DATA>);
 
 #[inline(always)]
 fn enable(mode: IrMode, inverted: bool, software_data: bool) {
+    // IRMSEL 1 = FSK, IRPSEL 1 = inverted, IRDSSEL 1 = data from IRDATA, 0 = from eUSCI_A0
+    // (SLAU445I Table 1-25, p. 76; SLAU445I Table 1-30, p. 81; SLAU445I Figure 1-8, p. 50)
     let mut bits = IREN;
     if mode == IrMode::Fsk {
         bits |= IRMSEL;
@@ -94,9 +120,10 @@ fn enable(mode: IrMode, inverted: bool, software_data: bool) {
 }
 
 impl IrModulator<SoftwareData> {
-    /// Enable the modulator with its data set from software, see [`IrModulator::set_data`]. The output inverts
-    /// with `inverted` (IRPSEL). `pin` is eUSCI_A0's TXD pin, whose function the modulator takes over; this also
-    /// selects eUSCI_A0's pin mapping [`IrMapping`].
+    /// Enable the modulator with its data set from software, see [`IrModulator::set_data`] (IRDSSEL = 1,
+    /// SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81). The output inverts with `inverted`
+    /// (IRPSEL). `pin` is eUSCI_A0's TXD pin, whose function the modulator takes over (SLAU445I Figure 1-8,
+    /// p. 50); this also selects eUSCI_A0's pin mapping [`IrMapping`].
     #[inline]
     pub fn with_software_data<F, S, P>(
         _first: &IrInput<F>,
@@ -115,7 +142,7 @@ impl IrModulator<SoftwareData> {
         IrModulator(PhantomData)
     }
 
-    /// Set the data bit (IRDATA).
+    /// Set the data bit (IRDATA, SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81).
     #[inline]
     pub fn set_data(&mut self, high: bool) {
         let sys = sys();
@@ -128,8 +155,10 @@ impl IrModulator<SoftwareData> {
 }
 
 impl IrModulator<UartData> {
-    /// Enable the modulator with the characters eUSCI_A0's UART sends as data. The output inverts with
-    /// `inverted` (IRPSEL). The UART has to use the pin mapping [`IrMapping`], whose TXD pin carries the output.
+    /// Enable the modulator with the characters eUSCI_A0's UART sends as data (IRDSSEL = 0, SLAU445I
+    /// Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81; SLAU445I 1.12.2.2, p. 50: "In hardware data
+    /// generation, the data comes from eUSCI_A"). The output inverts with `inverted` (IRPSEL). The UART has
+    /// to use the pin mapping [`IrMapping`], whose TXD pin carries the output.
     #[inline]
     pub fn with_uart_data<F, S>(
         _first: &IrInput<F>,
@@ -148,7 +177,8 @@ impl IrModulator<UartData> {
 }
 
 impl<DATA> IrModulator<DATA> {
-    /// Disable the modulator, so the pin carries the eUSCI_A0 signal again (IREN).
+    /// Disable the modulator, so the pin carries the eUSCI_A0 signal again (IREN; SLAU445I 1.12.2.2, p. 50:
+    /// "If IREN is cleared, this function is bypassed"; SLAU445I Figure 1-8, p. 50).
     #[inline]
     pub fn disable(self) {
         unsafe { sys().syscfg1().clear_bits(|w| w.bits(!(IREN | IRDSSEL | IRDATA))) };

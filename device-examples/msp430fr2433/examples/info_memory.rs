@@ -9,6 +9,8 @@ use panic_msp430 as _;
 
 // Use the non-volatile information memory to toggle the red onboard LED.
 // Resetting or power cycling the board toggles the red LED.
+// (Information memory: 512 bytes of FRAM, 1800h to 19FFh, SLASE59F Table 6-23, p. 61. Red LED1 on P1.0:
+// SLAU739 Figure 18, p. 23.)
 
 #[entry]
 fn main() -> ! {
@@ -26,6 +28,7 @@ fn main() -> ! {
     }
 
     // Disable write protection and get the information memory as an array type
+    // (DFWP in SYSCFG0, set again by every PUC: SLAU445I 1.12.2.1, p. 50)
     // See also: .write() method, which keeps the write protection active except during write operations.
     let nv_mem = nv_mem.into_unprotected();
 

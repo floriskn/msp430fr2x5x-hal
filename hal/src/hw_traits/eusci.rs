@@ -41,15 +41,21 @@ macro_rules! reg_struct {
     };
 }
 
+/// UCSSELx: 00b UCLK (UCLKI in I2C mode), 01b device specific, 10b and 11b SMCLK (SLAU445I Table 22-8,
+/// p. 593 and SLAU445I Table 24-4, p. 649). In SPI mode 00b is reserved (SLAU445I Table 23-3, p. 613 and
+/// SLAU445I Table 23-12, p. 620).
 #[derive(Copy, Clone, Default)]
 pub enum Ucssel {
     Uclk = 0,
-    /// ACLK on the 2x5x subfamily, MODCLK on the 2433.
+    /// ACLK on the 2x5x subfamily, the MSP430FR247x and the MSP430FR25x2, MODCLK on the 2433 (SLASEC4D
+    /// Table 6-9, p. 68; SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49; SLASE59F Table 6-7, p. 46).
     DeviceSpecific = 1,
     #[default]
     Smclk = 2,
 }
 
+/// UCMODEx with UCSYNC = 1: 00b 3-pin SPI, 01b 4-pin SPI with UCxSTE active high, 10b 4-pin SPI with UCxSTE
+/// active low, 11b I2C (SLAU445I Table 23-3, p. 613 and SLAU445I Table 24-4, p. 649)
 #[derive(Copy, Clone, Default)]
 pub enum Ucmode {
     #[default]
@@ -61,7 +67,8 @@ pub enum Ucmode {
     I2CMode = 3,
 }
 
-/// Configure the automatic glitch filter on the SDA and SCL lines
+/// Configure the automatic glitch filter on the SDA and SCL lines (UCGLITx, SLAU445I 24.3.6, p. 642;
+/// SLAU445I Table 24-1, p. 642; SLAU445I Table 24-5, p. 652)
 #[derive(Copy, Clone, Default)]
 pub enum Ucglit {
     /// Pulses of maximum 50-ns length are filtered.
@@ -75,7 +82,7 @@ pub enum Ucglit {
     Max6_25ns = 3,
 }
 
-/// Clock low timeout select
+/// Clock low timeout select (UCCLTO, SLAU445I Table 24-5, p. 651)
 #[derive(Copy, Clone, Default)]
 pub enum Ucclto {
     /// Disable clock low time-out counter
@@ -90,7 +97,7 @@ pub enum Ucclto {
 }
 
 /// Automatic STOP condition generation. In slave mode, only settings 00b and 01b
-/// are available.
+/// are available (UCASTPx, SLAU445I Table 24-5, p. 651).
 #[derive(Copy, Clone, Default)]
 pub enum Ucastp {
     /// No automatic STOP generation. The STOP condition is generated after
@@ -106,6 +113,7 @@ pub enum Ucastp {
     Ucastp10b = 2,
 }
 
+/// UCAxCTLW0 in UART mode (SLAU445I Table 22-8, p. 593 to p. 594)
 pub struct UcaCtlw0 {
     pub ucpen: bool,
     pub ucpar: bool,
@@ -113,22 +121,24 @@ pub struct UcaCtlw0 {
     pub uc7bit: bool,
     pub ucspb: bool,
     /// UART mode: 0 UART, 1 idle-line multiprocessor, 2 address-bit multiprocessor, 3 automatic baud rate
+    /// (UCMODEx, SLAU445I Table 22-8, p. 593)
     pub ucmode: u8,
     pub ucssel: Ucssel,
     pub ucrxeie: bool,
     pub ucbrkie: bool,
 }
 
-// UCAxCTLW0 bits
+// UCAxCTLW0 bits (SLAU445I Figure 22-12, p. 593 and SLAU445I Table 22-8, p. 594)
 pub const UCDORM: u16 = 1 << 3;
 pub const UCTXADDR: u16 = 1 << 2;
 pub const UCTXBRK: u16 = 1 << 1;
-// UCAxIE and UCAxIFG bits
+// UCAxIE and UCAxIFG bits (SLAU445I Table 22-17, p. 600 and SLAU445I Table 22-18, p. 601)
 pub const UCTXCPTIFG: u16 = 1 << 3;
 pub const UCSTTIFG: u16 = 1 << 2;
-// UCAxSTATW bits
+// UCAxSTATW bits (SLAU445I Table 22-12, p. 596)
 pub const UCADDR_UCIDLE: u16 = 1 << 1;
 
+// UCBxCTLW0 in I2C mode (SLAU445I Table 24-4, p. 649 to p. 650)
 reg_struct! {
 pub struct UcbCtlw0, UcbCtlw0_rd, UcbCtlw0_wr {
     flags{
@@ -151,6 +161,7 @@ pub struct UcbCtlw0, UcbCtlw0_rd, UcbCtlw0_wr {
 }
 }
 
+// UCBxCTLW1 (SLAU445I Table 24-5, p. 651 to p. 652)
 reg_struct! {
 pub struct UcbCtlw1, UcbCtlw1_rd, UcbCtlw1_wr {
     flags{
@@ -167,6 +178,9 @@ pub struct UcbCtlw1, UcbCtlw1_rd, UcbCtlw1_wr {
 }
 
 // in order to avoid 4 separate structs, I manually implemented the macro for these registers
+// (UCBxI2COA0 to UCBxI2COA3: SLAU445I Table 24-11, p. 656; SLAU445I Table 24-12, p. 657; SLAU445I
+// Table 24-13, p. 657; SLAU445I Table 24-14, p. 658. UCGCEN is only in UCBxI2COA0, SLAU445I Table 24-11,
+// p. 656)
 #[derive(Debug, Default)]
 pub struct UcbI2coa {
     pub ucgcen: bool,
@@ -174,6 +188,7 @@ pub struct UcbI2coa {
     pub i2coa0: u16,
 }
 
+// UCAxCTLW0 and UCBxCTLW0 in SPI mode (SLAU445I Table 23-3, p. 613 and SLAU445I Table 23-12, p. 620)
 reg_struct! {
 pub struct UcxSpiCtw0, UcxSpiCtw0_rd, UcxSpiCtw0_wr{
     flags{
@@ -199,10 +214,10 @@ pub trait EUsciUart: Steal {
     fn ctl0_reset(&self);
     fn ctl0_clear_rst(&self);
 
-    // only call while in reset state
+    // only call while in reset state (UCAxBRW: "Modify only when UCSWRST = 1", SLAU445I Figure 22-14, p. 595)
     fn brw_settings(&self, ucbr: u16);
 
-    // only call while in reset state
+    // only call while in reset state (UCAxSTATW, SLAU445I Figure 22-16, p. 596)
     fn loopback(&self, loopback: bool);
 
     fn txifg_rd(&self) -> bool;
@@ -213,9 +228,10 @@ pub trait EUsciUart: Steal {
 
     fn iv_rd(&self) -> u16;
 
-    // only call while in reset state
+    // only call while in reset state (UCAxCTLW0, SLAU445I Figure 22-12, p. 593)
     fn ctl0_settings(&self, reg: UcaCtlw0);
 
+    // only call while in reset state (UCAxMCTLW, SLAU445I Figure 22-15, p. 595)
     fn mctlw_settings(&self, ucos16: bool, ucbrs: u8, ucbrf: u8);
 
     fn statw_rd(&self) -> <Self as EUsciUart>::Statw;
@@ -225,15 +241,17 @@ pub trait EUsciUart: Steal {
     fn rxie_set(&self);
     fn rxie_clear(&self);
 
-    /// Write UCAxCTLW1 (the deglitch time)
+    /// Write UCAxCTLW1 (the deglitch time, SLAU445I Table 22-9, p. 594)
     fn ctl1_wr(&self, val: u16);
     fn ctl0_rd(&self) -> u16;
     fn ctl0_set_bits(&self, mask: u16);
     fn ctl0_clr_bits(&self, mask: u16);
-    /// UCAxABCTL (automatic baud rate)
+    /// UCAxABCTL (automatic baud rate, SLAU445I Table 22-15, p. 598). Write it only while UCSWRST = 1
+    /// (SLAU445I Figure 22-19, p. 598).
     fn abctl_rd(&self) -> u16;
     fn abctl_wr(&self, val: u16);
-    /// Write UCAxIRCTL (IrDA)
+    /// Write UCAxIRCTL (IrDA, SLAU445I Table 22-16, p. 599), only while UCSWRST = 1 (SLAU445I Figure 22-20,
+    /// p. 599)
     fn irctl_wr(&self, val: u16);
     fn statw_bits(&self) -> u16;
     fn ie_set_bits(&self, mask: u16);
@@ -247,7 +265,8 @@ pub trait EUsciI2C: Steal {
     type IfgOut: I2CUcbIfgOut;
 
     fn transmit_ack(&self);
-    /// Write UCBxCTLW0 with UCTXACK clear, which continues without acknowledging the address
+    /// Write UCBxCTLW0 with UCTXACK clear, which continues without acknowledging the address (SLAU445I
+    /// Table 24-4, p. 649: "0b = Do not acknowledge the slave address")
     fn clear_txack(&self);
     fn clear_txifg0(&self);
     fn transmit_nack(&self);
@@ -277,37 +296,38 @@ pub trait EUsciI2C: Steal {
     fn ctw0_set_rst(&self);
     fn ctw0_clear_rst(&self);
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-17, p. 649)
     fn ctw0_wr(&self, reg: &UcbCtlw0);
 
     fn is_master(&self) -> bool;
     fn is_bus_busy(&self) -> bool;
     fn is_transmitter(&self) -> bool;
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-18, p. 651)
     fn ctw1_wr(&self, reg: &UcbCtlw1);
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-19, p. 653)
     fn brw_rd(&self) -> u16;
     fn brw_wr(&self, val: u16);
 
     fn byte_count(&self) -> u8;
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-21, p. 654)
     fn tbcnt_rd(&self) -> u16;
     fn tbcnt_wr(&self, val: u16);
 
     fn ucrxbuf_rd(&self) -> u8;
     fn uctxbuf_wr(&self, val: u8);
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-24, p. 656; SLAU445I Figure 24-25, p. 657;
+    // SLAU445I Figure 24-26, p. 657; SLAU445I Figure 24-27, p. 658)
     // the which parameter is used to select one of the 4 registers
     fn i2coa_rd(&self, which: u8) -> UcbI2coa;
     fn i2coa_wr(&self, which: u8, reg: &UcbI2coa);
 
     fn addrx_rd(&self) -> u16;
 
-    // Modify only when UCSWRST = 1
+    // Modify only when UCSWRST = 1 (SLAU445I Figure 24-29, p. 659)
     fn addmask_rd(&self) -> u16;
     fn addmask_wr(&self, val: u16);
 
@@ -366,6 +386,7 @@ pub trait EusciSPI: Steal {
     fn is_busy(&self) -> bool;
 }
 
+/// UCAxSTATW flags in UART mode (SLAU445I Table 22-12, p. 596)
 pub trait UartUcxStatw {
     fn ucfe(&self) -> bool;
     fn ucoe(&self) -> bool;
@@ -374,6 +395,7 @@ pub trait UartUcxStatw {
     fn ucbusy(&self) -> bool;
 }
 
+/// UCxSTATW flags in SPI mode (SLAU445I Table 23-5, p. 615 and SLAU445I Table 23-14, p. 622)
 pub trait SpiStatw {
     fn uclisten(&self) -> bool;
     fn ucfe(&self) -> bool;
@@ -381,6 +403,7 @@ pub trait SpiStatw {
     fn ucbusy(&self) -> bool;
 }
 
+/// UCBxIFG in I2C mode (SLAU445I Table 24-19, p. 662 to p. 663)
 pub trait I2CUcbIfgOut {
     /// Byte counter interrupt flag
     fn ucbcntifg(&self) -> bool;
@@ -474,7 +497,9 @@ macro_rules! eusci_spi_impl {
             }
 
             #[inline(always)]
-            // Set the SPI mode without disturbing the rest of the register.
+            // Set the SPI mode without disturbing the rest of the register. UCCKPH = 1: data captured on the
+            // first UCLK edge; UCCKPL = 1: inactive state high. Modify only when UCSWRST = 1 (SLAU445I
+            // Table 23-3, p. 613 and SLAU445I Table 23-12, p. 620).
             fn set_spi_mode(&self, mode: embedded_hal::spi::Mode) {
                 use embedded_hal::spi::{Phase, Polarity};
                 let ucckph = match mode.phase {
@@ -529,6 +554,7 @@ macro_rules! eusci_uart_impl {
         impl EUsciUart for $EUsci {
             type Statw = $Statw;
 
+            // UCSWRST stays set; the eUSCI_A is released afterwards (SLAU445I 22.3.1, p. 577)
             #[inline(always)]
             fn ctl0_settings(&self, reg: UcaCtlw0) {
                 self.$ucaxctlw0().write(|w| unsafe { w
@@ -573,6 +599,7 @@ macro_rules! eusci_uart_impl {
                 unsafe { self.$ucaxie().clear_bits(|w| w.ucrxie().clear_bit()) };
             }
 
+            // UCSWRST = 1 holds the eUSCI_A in reset for configuration (SLAU445I 22.3.1, p. 577)
             #[inline(always)]
             fn ctl0_reset(&self) { self.$ucaxctlw0().write(|w| w.ucswrst().set_bit()); }
 
@@ -620,8 +647,8 @@ macro_rules! eusci_uart_impl {
             #[inline(always)]
             fn ctl0_clr_bits(&self, mask: u16) { unsafe { self.$ucaxctlw0().clear_bits(|w| w.bits(!mask)) }; }
 
-            // UCAxABCTL and UCAxIRCTL are at offsets 10h and 12h from UCAxCTLW0 (user's guide, eUSCI_A
-            // UART registers). Not every PAC has them.
+            // UCAxABCTL and UCAxIRCTL are at offsets 10h and 12h from UCAxCTLW0 (SLAU445I Table 22-7,
+            // p. 592), 8 and 9 u16 words. Not every PAC has them.
             #[inline(always)]
             fn abctl_rd(&self) -> u16 {
                 unsafe { (self.$ucaxctlw0().as_ptr() as *const u16).add(8).read_volatile() }

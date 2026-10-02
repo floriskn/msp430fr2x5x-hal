@@ -8,7 +8,8 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-// Red onboard LED should blink at a steady period.
+// The onboard RGB LED2 should fade through the colours of the rainbow (red on P5.1, green on P5.0, blue
+// on P4.7, through jumper J8: SLAU802 Figure 19, p. 25).
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -34,6 +35,8 @@ fn main() -> ! {
     // PWM3 -> P5.1 (Red LED)
     // PWM2 -> P5.0 (Green LED)
     // PWM1 -> P4.7 (Blue LED)
+    // (LED2: SLAU802 Figure 19, p. 25. TB0.3, TB0.2 and TB0.1: SLASEO7C Table 9-15, p. 59, each with
+    // PxSEL = 10 and PxDIR = 1: SLASEO7C Table 9-27, p. 69 and SLASEO7C Table 9-26, p. 68.)
     let mut red = pwm.pwm3.init(p5.pin1.to_output().to_alternate2());
     let mut green = pwm.pwm2.init(p5.pin0.to_output().to_alternate2());
     let mut blue = pwm.pwm1.init(p4.pin7.to_output().to_alternate2());
@@ -53,6 +56,8 @@ fn main() -> ! {
       let green_duty = triangle(phase + max/3, max);
       let blue_duty = triangle(phase + 2*max/3, max);
 
+      // On the MSP430FR247x a new duty cycle takes effect at once in up mode, not when the timer
+      // counts to 0 (SLAZ726B TB25)
       red.set_duty_cycle(red_duty).unwrap();
       green.set_duty_cycle(green_duty).unwrap();
       blue.set_duty_cycle(blue_duty).unwrap();

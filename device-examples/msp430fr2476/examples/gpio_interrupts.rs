@@ -22,13 +22,16 @@ use panic_msp430 as _;
 static RED_LED: Mutex<RefCell<Option<Pin<P1, Pin0, Output>>>> = Mutex::new(RefCell::new(None));
 static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
-// Red LED should blink 2 seconds on, 2 seconds off
-// Both green and red LEDs should blink when P2.3 LED is pressed
+// LED1 (P1.0), which is green, should blink, toggling every 2^15 ACLK cycles: about 3.3 s at the VLO's
+// typical 10 kHz (WDTIS = 100b: SLAU445I 12.3.1, p. 366; SLASEO7C 8.12.3.5, p. 30)
+// LED1 and the blue part of LED2 (P4.7) should both toggle when button S2 (P2.3) is pressed
+// (SLAU802 Figure 19, p. 25)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
     let mut wdt = Wdt::constrain(periph.wdt_a).to_interval();
 
+    // REFO runs at 32.768 kHz (SLASEO7C 8.12.3.4, p. 30)
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_refoclk(MclkDiv::_1) // 32 kHz MCLK
         .smclk_on(SmclkDiv::_2) // 16 kHz SMCLK
@@ -45,10 +48,12 @@ fn main() -> ! {
         .split(&pmm);
 
     let red_led = p1.pin0.to_output();
-    // Onboard button with interrupt disabled
+    // Onboard button with interrupt disabled (S2: SLAU802 Figure 19, p. 25)
     let mut button = p2.pin3;
     // Some random pin with interrupt enabled. IFG will be set manually.
+    // (Software can set PxIFG to request the interrupt: SLAU445I 8.2.6, p. 315)
     let mut pin = p2.pin7.pulldown();
+    // P4.7 drives the blue part of LED2, not a green LED (SLAU802 Figure 19, p. 25)
     let mut green_led = p4.pin7.to_output();
     let p2iv = p2.pxiv;
 

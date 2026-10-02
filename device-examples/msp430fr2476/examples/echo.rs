@@ -15,7 +15,9 @@ use panic_msp430 as _;
 #[cfg(not(debug_assertions))]
 use panic_never as _;
 
-// Prints "HELLO" when started then echos on UART1
+// Prints "HELLO" when started then echos on the backchannel UART: eUSCI_A0 on P1.4 (TXD) and P1.5
+// (RXD) (SLAU802 2.2.4, p. 9; SLAU802 Figure 16, p. 22), the "MSP Application UART1" COM port on the
+// PC (SLAU802 2.2.4, p. 10). The RXD and TXD jumpers of J101 must be on (SLAU802 Table 2, p. 8).
 // Serial settings are listed in the code
 #[entry]
 fn main() -> ! {
@@ -32,10 +34,13 @@ fn main() -> ! {
         let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
         let p1 = Batch::new(periph.p1).split(&pmm);
 
+        // LED1 (SLAU802 Figure 19, p. 25)
         let mut led = p1.pin0.to_output();
 
         led.set_low().ok();
 
+        // P1.4 = UCA0TXD and P1.5 = UCA0RXD with P1SEL = 01 (SLASEO7C Table 9-23, p. 65), the default
+        // eUSCI_A0 mapping (SLASEO7C Table 9-11, p. 54)
         let (mut tx, mut rx) = SerialConfig::<_, _, DefaultMapping>::new(
             periph.e_usci_a0,
             BitOrder::LsbFirst,

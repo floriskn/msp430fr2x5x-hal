@@ -13,7 +13,7 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Red LED should blink 1 second on, 1 second off
+// LED1 (P1.0), which is green, should blink 1 second on, 1 second off (SLAU802 Figure 19, p. 25)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
@@ -35,7 +35,8 @@ fn main() -> ! {
 
     const DELAY: WdtClkPeriods = WdtClkPeriods::_8192k;
 
-    // blinks should be 1 second on, 1 second off
+    // blinks should be 1 second on, 1 second off: 2^23 SMCLK cycles (WDTIS = 010b: SLAU445I 12.3.1,
+    // p. 366) take 1.05 s at 8 MHz
     let mut wdt = wdt.to_interval();
     p1_0.set_high().ok();
     wdt.set_smclk(&smclk).set_interval_and_start(DELAY);
@@ -43,6 +44,8 @@ fn main() -> ! {
     block!(wdt.wait()).ok();
     p1_0.set_low().ok();
 
+    // In watchdog mode the end of the interval resets the device (a PUC: SLAU445I 12.2.2, p. 363),
+    // which starts the next blink
     let mut wdt = wdt.to_watchdog();
     wdt.set_interval_and_start(DELAY);
 

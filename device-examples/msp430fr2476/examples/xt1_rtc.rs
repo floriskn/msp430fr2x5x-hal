@@ -1,21 +1,25 @@
 //! RTC clocked from XT1, either directly (XT1CLK) or through ACLK.
 //!
-//! The RTC counts 16384 XT1 cycles per period and red LED1 toggles every period, so with a
+//! The RTC counts 16384 XT1 cycles per period and LED1 toggles every period, so with a
 //! 32.768 kHz signal LED1 blinks at 1 Hz (0.5 s on, 0.5 s off).
+//! (LED1 on P1.0 is green: SLAU802 Figure 19, p. 25)
 //!
 //! Wiring: function generator -> P2.1/XIN (J2 pin 18), ground -> J2 pin 20. Square wave,
 //! 32.768 kHz, 0 V to 3.3 V, 50 % duty, output load High-Z (see `xt1_bypass_aclk.rs`).
 //!
-//! Scope: P1.0/LED1 (J3 pin 27).
+//! Scope: P1.0/LED1 (J3 pin 27). (Header pins: SLAU802 Figure 10, p. 13.)
 //!
 //! What to try:
 //! 1. The LED1 period is 1.000 s at 32.768 kHz. At 16.384 kHz it should be 2 s.
 //! 2. Set `RTC_FROM_ACLK` to true and repeat. The result should be identical, but now the RTC
 //!    runs from ACLK (RTCSS plus the SYSCFG2.RTCCKSEL mux). If the mux were wrong the RTC would
-//!    count SMCLK (1 MHz) instead and LED1 would toggle every ~16 ms.
+//!    count SMCLK (1 MHz) instead and LED1 would toggle every ~16 ms. (RTCSS = 01 selects SMCLK
+//!    or ACLK, chosen in SYSCFG2, and RTCSS = 10 is XT1CLK: SLASEO7C 9.10.11, p. 61;
+//!    SLASEO7C Table 9-18, p. 61.)
 //! 3. Switch the generator off. Through ACLK the RTC keeps running on REFO (the fail-safe
 //!    covers ACLK). On XT1CLK it should stop, because the fail-safe does not cover the RTC's
-//!    direct XT1CLK input.
+//!    direct XT1CLK input. (SLAU445I 3.2.13, p. 109 to p. 110 describes the switch to REFO for
+//!    MCLK, SMCLK, ACLK and the FLL reference only.)
 #![no_main]
 #![no_std]
 
@@ -53,6 +57,7 @@ fn main() -> ! {
     let p2 = Batch::new(periph.p2).split(&pmm);
     let mut led = p1.pin0;
 
+    // P2.1 = XIN with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
     let xin = p2.pin1.to_alternate1();
 
     let (_smclk, aclk, mut xt1clk, _delay) = ClockConfig::new(periph.cs)
@@ -79,12 +84,14 @@ fn run<SRC: RtcClockSrc>(
 ) -> ! {
     rtc.set_clk_div(RtcDiv::_1);
     // A period lasts `count + 1` ticks
+    // (The counter resets to 0 after reaching the modulo value: SLAU445I 15.2.1, p. 417;
+    // SLAU445I Figure 15-2, p. 418)
     rtc.start(TICKS_PER_TOGGLE - 1);
     loop {
         block!(rtc.wait()).ok();
         led.toggle().ok();
         // Clearing the sticky fault flag lets ACLK move back from REFO to XT1 once the signal
-        // is healthy again
+        // is healthy again (SLAU445I 3.2.13, p. 109 to p. 110)
         xt1clk.clear_fault();
     }
 }

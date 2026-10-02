@@ -7,6 +7,7 @@ use msp430_hal::{gpio::Batch, pmm::Pmm, watchdog::Wdt};
 use panic_msp430 as _;
 
 // The green part of LED2 should go on when button S2 (P2.3) is pressed
+// (LED2's green part is P5.0; S2 pulls P2.3 low, against a 47 kΩ pullup: SLAU802 Figure 19, p. 25)
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();

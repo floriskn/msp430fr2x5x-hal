@@ -13,7 +13,8 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-// P6.4 LED should be bright, P6.3 LED should be dim
+// P1.5 LED should be bright, P1.4 LED should be dim (this device has no port 6: P1 and P2 only,
+// SLASEE4C 6.10.3, p. 51). No board document covers these LEDs: there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
@@ -31,6 +32,7 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     let pwm = PwmParts3::new(periph.ta0, TimerConfig::smclk(&smclk), 5000);
+    // TA0.1 on P1.4 and TA0.2 on P1.5: P1SELx = 10 with P1DIR = 1 (SLASEE4C Table 6-15, p. 58)
     let mut pwm4 = pwm.pwm1.init(p1.pin4.to_output().to_alternate2());
     let mut pwm5 = pwm.pwm2.init(p1.pin5.to_output().to_alternate2());
 

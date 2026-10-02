@@ -5,13 +5,17 @@
 //! To specify any pin on port Px, use the bounds `Pin<Px, PIN: PinNum>`.
 //!
 //! Note that interrupts are only supported by some hardware ports (e.g. Ports 1 to 4 on the MSP430FR2355), so interrupt-related
-//! methods are only available on those pins.
+//! methods are only available on those pins (SLAU445I 8.1, p. 312; SLASEC4D 1.1, p. 2: "32 interrupt
+//! pins (P1, P2, P3, and P4)").
 //!
 //! Pins can be converted to alternate functionalities 1 to 3, but the availability of these
 //! conversions on each pin is limited by the hardware capabilities in the [`datasheet`], so not
-//! every pin in every configuration can be converted to every alternate functionality.
+//! every pin in every configuration can be converted to every alternate functionality (SLAU445I 8.2.5,
+//! p. 314; the Port Px Pin Functions tables of each data sheet, such as SLASEC4D Tables 6-63 to 6-68,
+//! p. 96 to p. 106).
 //!
-//! For devices that expose ADC functionality through the ADCPCTLx bits, a special ADC mode is provided instead.
+//! For devices that expose ADC functionality through the ADCPCTLx bits, a special ADC mode is provided
+//! instead (SYSCFG2.ADCPCTLx, SLAU445I Table 1-31, p. 82).
 //!
 //! [`datasheet`]: http://www.ti.com/lit/ds/symlink/msp430fr2355.pdf
 
@@ -55,7 +59,8 @@ pub trait PinNum: sealed::SealedPinNum {
     #[doc(hidden)]
     const NUM: u8;
 
-    // Bitmask with all zeros except for the bit corresponding to the pin.
+    // Bitmask with all zeros except for the bit corresponding to the pin. Bit x of a port register
+    // belongs to pin Px.x (SLAU445I Table 8-13, p. 335: "P1SEL1.5 ... is selected for P1.5").
     #[doc(hidden)]
     const SET_MASK: u8 = 1 << Self::NUM;
     // Bitmask with all ones except for the bit corresponding to the pin.
@@ -74,11 +79,13 @@ pub trait IntrPortNum: IntrPeriph {}
 impl<PORT: IntrPeriph> IntrPortNum for PORT {}
 
 /// Typestate of a pin slot that has no pin on this device, such as P3.3 to P3.7 on the
-/// MSP430FR2433. Its [`Pin`] has no methods.
+/// MSP430FR2433 (SLASE59F 6.11.4, p. 59: "Port P3 (P3.0 to P3.2)"). Its [`Pin`] has no methods.
 pub struct Unavailable;
 
 /// The typestates each pin slot of a port starts in: `Input<Floating>` for the pins that exist,
-/// [`Unavailable`] for the ones the device doesn't have
+/// [`Unavailable`] for the ones the device doesn't have. After a reset every pin is an input with its
+/// module function disabled (SLAU445I 8.3.1, p. 316), PxDIR, PxREN, PxSEL0 and PxSEL1 resetting to 0
+/// (SLAU445I Table 8-11, p. 334; SLAU445I Tables 8-12 to 8-14, p. 335).
 #[doc(hidden)]
 pub trait PortPins {
     type Init0;
@@ -91,7 +98,10 @@ pub trait PortPins {
     type Init7;
 }
 
-// Implement PortPins for a port with `$count` pins. The pins a device lacks are always the top ones.
+// Implement PortPins for a port with `$count` pins. The pins a device lacks are always the top ones:
+// P5.5 to P5.7 and P6.7 on the MSP430FR2x5x (SLASEC4D Table 6-67, p. 104 and SLASEC4D Table 6-68, p. 106),
+// P3.3 to P3.7 on the MSP430FR2433 (SLASE59F Table 6-20, p. 59), P6.3 to P6.7 on the MSP430FR247x
+// (SLASEO7C Table 9-28, p. 70) and P2.7 on the MSP430FR25x2 (SLASEE4C Table 6-16, p. 60).
 macro_rules! impl_port_pins {
     (@impl $Px:ty, $i0:ty, $i1:ty, $i2:ty, $i3:ty, $i4:ty, $i5:ty, $i6:ty, $i7:ty) => {
         impl $crate::gpio::PortPins for $Px {
@@ -207,7 +217,8 @@ macro_rules! make_pin {
 impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     /// Configures pin as pulldown input.
     /// This method requires a `Pxout` token because configuring pull direction requires setting
-    /// the PxOUT register, which can race with setting an output pin on the same port.
+    /// the PxOUT register (SLAU445I 8.2.4, p. 313 and SLAU445I Table 8-1, p. 313), which can race with
+    /// setting an output pin on the same port.
     #[inline]
     pub fn pulldown(self) -> Pin<PORT, PIN, Input<Pulldown>> {
         let p = unsafe { PORT::steal() };
@@ -218,7 +229,8 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
 
     /// Configures pin as pullup input.
     /// This method requires a `Pxout` token because configuring pull direction requires setting
-    /// the PxOUT register, which can race with setting an output pin on the same port.
+    /// the PxOUT register (SLAU445I 8.2.4, p. 313 and SLAU445I Table 8-1, p. 313), which can race with
+    /// setting an output pin on the same port.
     #[inline]
     pub fn pullup(self) -> Pin<PORT, PIN, Input<Pullup>> {
         let p = unsafe { PORT::steal() };
@@ -227,7 +239,7 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         make_pin!()
     }
 
-    /// Configures pin as floating input
+    /// Configures pin as floating input (PxREN = 0, SLAU445I Table 8-1, p. 313)
     #[inline]
     pub fn floating(self) -> Pin<PORT, PIN, Input<Floating>> {
         let p = unsafe { PORT::steal() };
@@ -237,7 +249,8 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
 }
 
 impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
-    /// Set interrupt trigger to rising edge and clear interrupt flag.
+    /// Set interrupt trigger to rising edge and clear interrupt flag. PxIES = 0 selects the
+    /// low-to-high transition, and writing PxIES can set the flag (SLAU445I 8.2.6.2, p. 316).
     #[inline]
     pub fn select_rising_edge_trigger(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -246,7 +259,8 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Set interrupt trigger to falling edge and clear interrupt flag.
+    /// Set interrupt trigger to falling edge and clear interrupt flag. PxIES = 1 selects the
+    /// high-to-low transition, and writing PxIES can set the flag (SLAU445I 8.2.6.2, p. 316).
     #[inline]
     pub fn select_falling_edge_trigger(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -257,10 +271,11 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
 
     /// Enable interrupts on input pin.
     /// Note that changing other GPIO configurations while interrupts are enabled can cause
-    /// spurious interrupts.
+    /// spurious interrupts (SLAU445I 8.2.6, p. 315: "Writing to PxOUT, PxDIR, or PxREN can result
+    /// in setting the corresponding PxIFG flags").
     ///
-    /// The trigger edge (PxIES) is undefined after a reset, so select it first with
-    /// [`select_rising_edge_trigger`](Self::select_rising_edge_trigger) or
+    /// The trigger edge (PxIES) is undefined after a reset (SLAU445I Table 8-16, p. 336), so select
+    /// it first with [`select_rising_edge_trigger`](Self::select_rising_edge_trigger) or
     /// [`select_falling_edge_trigger`](Self::select_falling_edge_trigger).
     #[inline]
     pub fn enable_interrupts(&mut self) -> &mut Self {
@@ -277,7 +292,7 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Set interrupt flag high, triggering an ISR if interrupts are enabled.
+    /// Set interrupt flag high, triggering an ISR if interrupts are enabled (SLAU445I 8.2.6, p. 315).
     #[inline]
     pub fn set_ifg(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -312,10 +327,11 @@ pub struct PxIV<PORT: PortNum>(PhantomData<PORT>);
 impl<PORT: IntrPortNum> PxIV<PORT> {
     /// When called inside an ISR, returns the pin number of the highest priority interrupt flag
     /// that's currently enabled. Automatically clears the same flag. For a given port, the lowest
-    /// numbered pin has the highest interrupt priority.
+    /// numbered pin has the highest interrupt priority (SLAU445I 8.2.6, p. 315).
     #[inline]
     pub fn get_interrupt_vector(&mut self) -> GpioVector {
         let p = unsafe { PORT::steal() };
+        // PxIV values: SLAU445I Tables 8-5 to 8-8, p. 332 to p. 333
         match p.pxiv_rd() {
             0 => GpioVector::NoIsr,
             2 => GpioVector::Pin0Isr,
@@ -354,12 +370,12 @@ pub enum GpioVector {
 }
 
 impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
-    /// Configures pin as output.
+    /// Configures pin as output (PxDIR = 1, SLAU445I Table 8-1, p. 313).
     ///
-    /// The pin drives whatever its PxOUT bit holds, which is undefined after a reset, or the
-    /// pull-up/pull-down selection of an input with a pull resistor. Use
-    /// [`to_output_low`](Self::to_output_low) or [`to_output_high`](Self::to_output_high) to
-    /// start from a known level.
+    /// The pin drives whatever its PxOUT bit holds, which is undefined after a reset (SLAU445I
+    /// Table 8-10, p. 334), or the pull-up/pull-down selection of an input with a pull resistor
+    /// (SLAU445I 8.2.2, p. 313). Use [`to_output_low`](Self::to_output_low) or
+    /// [`to_output_high`](Self::to_output_high) to start from a known level.
     #[inline]
     pub fn to_output(self) -> Pin<PORT, PIN, Output> {
         let p = unsafe { PORT::steal() };
@@ -387,7 +403,7 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
 }
 
 impl<PORT: PortNum, PIN: PinNum> Pin<PORT, PIN, Output> {
-    /// Configures pin as floating input
+    /// Configures pin as floating input (PxDIR = 0, SLAU445I Table 8-1, p. 313)
     #[inline]
     pub fn to_input_floating(self) -> Pin<PORT, PIN, Input<Floating>> {
         let p = unsafe { PORT::steal() };
@@ -395,7 +411,7 @@ impl<PORT: PortNum, PIN: PinNum> Pin<PORT, PIN, Output> {
         make_pin!(Input<Floating>).floating()
     }
 
-    /// Configures pin as floating input
+    /// Configures pin as pullup input (PxDIR = 0, SLAU445I Table 8-1, p. 313)
     #[inline]
     pub fn to_input_pullup(self) -> Pin<PORT, PIN, Input<Pullup>> {
         let p = unsafe { PORT::steal() };
@@ -403,7 +419,7 @@ impl<PORT: PortNum, PIN: PinNum> Pin<PORT, PIN, Output> {
         make_pin!(Input<Floating>).pullup()
     }
 
-    /// Configures pin as floating input
+    /// Configures pin as pulldown input (PxDIR = 0, SLAU445I Table 8-1, p. 313)
     #[inline]
     pub fn to_input_pulldown(self) -> Pin<PORT, PIN, Input<Pulldown>> {
         let p = unsafe { PORT::steal() };
@@ -503,7 +519,8 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
     #[inline]
     fn flip_selc(&mut self) {
         let p = unsafe { PORT::steal() };
-        // Change both sel0 and sel1 bits at once
+        // Change both sel0 and sel1 bits at once: each bit set in PxSELC complements that bit of
+        // PxSEL0 and PxSEL1 (SLAU445I 8.2.5, p. 314 and SLAU445I Table 8-15, p. 336)
         p.pxselc_wr(0u8.set(PIN::NUM));
     }
 
@@ -532,7 +549,7 @@ pub struct Alternate2<DIR>(PhantomData<DIR>);
 pub struct Alternate3<DIR>(PhantomData<DIR>);
 
 // Only used as a bound inside the HAL, so keep it hidden
-/// Alternate function typestates, with the PxSEL bits that select them
+/// Alternate function typestates, with the PxSEL bits that select them (SLAU445I Table 8-3, p. 314)
 #[doc(hidden)]
 pub trait AlternateMode: sealed::SealedAlternateMode {
     /// PxSEL0 bit value that selects this function
@@ -559,14 +576,15 @@ impl<DIR> AlternateMode for Alternate3<DIR> {
 // Only used as a bound inside the HAL, so keep it hidden
 /// A pin whose type puts it in one of its three alternate functions: `Alternate1`, `Alternate2`
 /// or `Alternate3` (PxSEL1/PxSEL0 = 01, 10 or 11, TI's primary, secondary and tertiary module
-/// functions). For example, on the FR247x `Pin<P1, Pin1, Alternate2<Output>>` is P1.1 in
-/// alternate function 2, the TA0.1 timer output.
+/// functions, SLAU445I Table 8-3, p. 314). For example, on the FR247x `Pin<P1, Pin1, Alternate2<Output>>`
+/// is P1.1 in alternate function 2, the TA0.1 timer output (SLASEO7C Table 9-23, p. 65).
 ///
 /// The type alone gives the pin's port and the PxSEL bits of its alternate function, so code
 /// that only knows the type can find the pin. The methods switch the pin in hardware between
 /// that one alternate function and plain GPIO, without changing the pin's type. PWM uses them
 /// to disconnect its output while disabled, and LPMx.5 entry uses them to check whether XIN is
-/// still connected to XT1.
+/// still connected to XT1, which LPM3.5 with the crystal running needs (SLAU445I 1.4.3.1, step 2,
+/// p. 41).
 #[doc(hidden)]
 pub trait AlternatePin: ChangeSelectBits {
     /// The pin's port
@@ -588,7 +606,8 @@ pub trait AlternatePin: ChangeSelectBits {
     }
 
     /// Set the pin's PxSEL bits to the alternate function in its type: PxSEL0 for `Alternate1`,
-    /// PxSEL1 for `Alternate2`, both for `Alternate3`. Does nothing if they already are.
+    /// PxSEL1 for `Alternate2`, both for `Alternate3` (SLAU445I Table 8-3, p. 314). Does nothing if
+    /// they already are.
     #[inline]
     fn set_function_from_type(&mut self) {
         match (Self::SEL0, Self::SEL1) {
@@ -596,14 +615,15 @@ pub trait AlternatePin: ChangeSelectBits {
             (false, true) => self.set_sel1(),
             // Alternate function 3 needs both PxSEL bits set. Setting one bit at a time would
             // briefly select function 1 or 2 in between, so flip both in one write through
-            // PxSELC, as `to_alternate3()` does (SLAU445I 8.2.5). A flip toggles, so only flip
-            // while the pin is a GPIO.
+            // PxSELC, as `to_alternate3()` does (SLAU445I 8.2.5, p. 314). A flip toggles (SLAU445I
+            // Table 8-15, p. 336), so only flip while the pin is a GPIO.
             _ => if !Self::function_matches_type() { self.flip_selc() },
         }
     }
 
     /// Clear the pin's PxSEL bits, so it acts as a plain GPIO with its PxOUT and PxDIR
-    /// settings. The pin's type stays the same. Does nothing if the bits are already clear.
+    /// settings (SLAU445I Table 8-3, p. 314). The pin's type stays the same. Does nothing if the
+    /// bits are already clear.
     #[inline]
     fn set_function_gpio(&mut self) {
         match (Self::SEL0, Self::SEL1) {
@@ -636,7 +656,8 @@ pub trait ToAlternate2 {}
 pub trait ToAlternate3 {}
 
 #[cfg(feature = "adcpctl")]
-/// Marker trait for all Pins that have ADC functionality via ADCPCTLx
+/// Marker trait for all Pins that have ADC functionality via ADCPCTLx (bit x of SYSCFG2, SLAU445I
+/// Table 1-31, p. 82)
 pub trait ToAdcPctl: crate::adc::AdcPctlCapable {
     #[doc(hidden)]
     const SET_MASK: u16 = 1 << Self::ADCPCTLX;
@@ -644,6 +665,8 @@ pub trait ToAdcPctl: crate::adc::AdcPctlCapable {
     const CLR_MASK: u16 = !(1 << Self::ADCPCTLX);
 }
 
+// From GPIO, PxSEL1/PxSEL0 = 00 (SLAU445I Table 8-3, p. 314). Function 3 needs both bits changed, in
+// one write through PxSELC (SLAU445I 8.2.5, p. 314).
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where Self: ToAlternate1
 {
@@ -677,7 +700,7 @@ where Self: ToAlternate3
     }
 }
 
-// sel0 = 1, sel1 = 0
+// sel0 = 1, sel1 = 0: the primary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>> {
     /// Convert pin to GPIO function
     #[inline]
@@ -709,7 +732,7 @@ where Self: ToAlternate3
     }
 }
 
-// sel0 = 0, sel1 = 1
+// sel0 = 0, sel1 = 1: the secondary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>> {
     /// Convert pin to GPIO function
     #[inline]
@@ -741,7 +764,7 @@ where Self: ToAlternate3
     }
 }
 
-// sel0 = 1, sel1 = 1
+// sel0 = 1, sel1 = 1: the tertiary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>> {
     /// Convert pin to GPIO function
     #[inline]
@@ -797,6 +820,7 @@ where Self: ToAdcPctl
     }
 }
 
+// Inputs read PxIN, outputs drive PxOUT (SLAU445I 8.2.1, p. 313 and SLAU445I 8.2.2, p. 313)
 mod ehal1 {
     use super::*;
     use core::convert::Infallible;
@@ -852,6 +876,7 @@ mod ehal1 {
     }
 }
 
+// Inputs read PxIN, outputs drive PxOUT (SLAU445I 8.2.1, p. 313 and SLAU445I 8.2.2, p. 313)
 #[cfg(feature = "embedded-hal-02")]
 mod ehal02 {
     use super::*;

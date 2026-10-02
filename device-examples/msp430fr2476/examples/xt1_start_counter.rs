@@ -1,17 +1,22 @@
 //! XT1 start fault counter (ENSTFCNT1) in bypass mode.
 //!
 //! With the start counter enabled, `freeze()` should only return once XT1 has run cleanly for
-//! 1024 cycles (device data sheets, and measured on the FR2476). Red LED1 is switched on right
+//! 1024 cycles (device data sheets, and measured on the FR2476). LED1 is switched on right
 //! after `freeze()` returns.
+//! (SLASEO7C 8.12.3.1 note 9, p. 27: "start-up counter of 1024 clock cycles"; measured on an
+//! MSP430FR2476. SLAU445I 3.2.13, p. 110 gives 8192 for bypass mode, which the measurement
+//! contradicts. Start counter enable, ENSTFCNT1: SLAU445I Table 3-11, p. 121. LED1 on P1.0 is green:
+//! SLAU802 Figure 19, p. 25.)
 //!
 //! At 32.768 kHz those 1024 cycles take only 31 ms, too short to see, so this example runs the
 //! generator at 4.096 kHz, where they take 250 ms. Don't go below about 4 kHz: XT1 may count as
-//! faulty under 3.5 kHz.
+//! faulty under 3.5 kHz (SLASEO7C 8.12.3.1, p. 27: fFault,LFXT is at most 3500 Hz).
 //!
 //! Wiring: function generator -> P2.1/XIN (J2 pin 18), ground -> J2 pin 20. Square wave,
 //! 4.096 kHz, 0 V to 3.3 V, 50 % duty, output load High-Z (see `xt1_bypass_aclk.rs`).
 //!
 //! Scope: the generator signal on CH3 through a BNC T-piece, CH1 on P1.0/LED1 (J3 pin 27).
+//! (Header pins: SLAU802 Figure 10, p. 13.)
 //! Single-shot trigger on the CH1 rising edge at 100 ms/div, with the trigger point near the
 //! right of the screen.
 //!
@@ -57,6 +62,7 @@ fn main() -> ! {
     let mut led = p1.pin0;
     led.set_low().ok();
 
+    // ACLK on P2.2 with P2SEL = 10 and P2DIR = 1, XIN on P2.1 with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 

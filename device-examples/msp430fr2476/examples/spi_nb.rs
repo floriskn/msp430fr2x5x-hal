@@ -21,6 +21,10 @@ fn main() -> ! {
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
     let p5 = Batch::new(periph.p5).split(&pmm);
+    // eUSCI_A0 remapped (USCIA0RMP): P5.2 = UCA0SIMO, P5.1 = UCA0SOMI and P5.0 = UCA0CLK with
+    // P5SEL = 01 (SLASEO7C Table 9-11, p. 54; SLASEO7C Table 9-27, p. 69), on J4 pins 40, 39 and 38;
+    // CS is P1.3, J1 pin 9 (SLAU802 Figure 10, p. 13). P5.0 and P5.1 also drive the green and red
+    // parts of LED2 through J8 (SLAU802 Figure 19, p. 25).
     let mosi   = p5.pin2.to_alternate1();
     let miso   = p5.pin1.to_alternate1();
     let sck    = p5.pin0.to_alternate1();
@@ -48,6 +52,7 @@ fn main() -> ! {
         block!(spi.write(0b10101010)).unwrap();
 
         // Writing on MOSI also shifts in data on MISO - read from the hardware buffer with `.read()`.
+        // (Receive and transmit run concurrently: SLAU445I 23.3.3, p. 607)
         // Every successful `.write()` call should be followed by a `.read()`.
         // You should handle errors here rather than unwrapping
         let _ = block!(spi.read()).unwrap();

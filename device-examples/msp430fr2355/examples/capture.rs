@@ -19,6 +19,9 @@ use panic_msp430 as _;
 
 // Connect push button input to P1.6. When button is pressed, putty should print the # of cycles
 // since the last press. Sometimes we get 2 consecutive readings due to lack of debouncing.
+// P1.6 is pin 3 of the BoosterPack header (SLAU680 Figure 10, p. 15). The output goes to the
+// backchannel UART, "the UART on eUSCI_A1" (SLAU680 2.2.4, p. 11), whose TXD is P4.3 (SLAU680
+// Figure 18, p. 26).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();
@@ -48,10 +51,10 @@ fn main() -> ! {
         9600,
     )
     .use_smclk(&smclk)
-    .tx_only(p4.pin3.to_alternate1());
+    .tx_only(p4.pin3.to_alternate1()); // UCA1TXD, P4SELx = 01 (SLASEC4D Table 6-66, p. 102)
 
     let captures = CaptureParts3::config(periph.tb0, TimerConfig::aclk(&aclk))
-        .config_cap1_input_A(p1.pin6.to_alternate2())
+        .config_cap1_input_A(p1.pin6.to_alternate2()) // TB0.CCI1A, P1SELx = 10 (SLASEC4D Table 6-63, p. 96)
         .config_cap1_trigger(CapTrigger::FallingEdge)
         .commit();
     let mut capture = captures.cap1;

@@ -7,6 +7,8 @@ use msp430_hal::{gpio::Batch, pmm::Pmm, watchdog::Wdt};
 use panic_msp430 as _;
 
 // Green onboard LED should go on when P2.3 button is pressed
+// No board document covers the LED (on P1.6 here) or the button: there is none for the MSP430FR25x2.
+// P2.3 only exists on the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();

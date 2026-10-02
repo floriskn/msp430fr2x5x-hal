@@ -21,7 +21,8 @@ fn main() -> ! {
         0x9599, 0xc58c, 0xd1e2, 0xe144, 0xb691,
     ];
 
-    // Configure the hardware CRC module, pass in the data and retrieve the signature.
+    // Configure the hardware CRC module, pass in the data and retrieve the signature. The module uses the
+    // CRC-16-CCITT polynomial x^16 + x^12 + x^5 + 1 (SLASEE4C 6.10.6, p. 53).
     let mut crc_hw = Crc::new(periph.crc, 0xFFFF);
     crc_hw.add_words_lsb(&crc_input);
     let hw_sig = crc_hw.result();
@@ -30,6 +31,7 @@ fn main() -> ! {
     let sw_sig = calculate_software_sig(0xFFFF, &crc_input);
 
     // Turn on the LED if the signatures match
+    // No board document covers an LED on P1.0: there is none for the MSP430FR25x2.
     led.set_state((sw_sig == hw_sig).into()).ok();
 
     loop {

@@ -3,23 +3,27 @@
 //!
 //! Set `TARGET_HZ` to the MCLK frequency to test, from 1 MHz to 16 MHz. The FLL locks MCLK to the
 //! largest multiple of its 32.768 kHz reference that doesn't exceed it: 5 MHz becomes 152 x
-//! 32.768 kHz = 4.980736 MHz.
+//! 32.768 kHz = 4.980736 MHz. (MCLK runs from DCOCLKDIV, fDCOCLKDIV = (FLLN + 1) × (fFLLREFCLK ÷ n)
+//! with n = 1 by default: SLAU445I 3.2.5, p. 104. MCLK may be 16 MHz at most: SLASEO7C 8.3, p. 20.)
 //!
 //! ## Self-test
 //!
 //! The board measures MCLK against ACLK, which runs from the FLL reference, and times each delay
-//! in MCLK cycles. Green LED2 lights if every check passes, red LED1 if one fails. The details go
-//! to the backchannel UART at 9600 baud, 8N1:
-//! 1. Leave the RXD and TXD jumpers of J101 on.
+//! in MCLK cycles. Green LED2 lights if every check passes, LED1 (also green) if one fails
+//! (SLAU802 Figure 19, p. 25). The details go to the backchannel UART at 9600 baud, 8N1. That is
+//! eUSCI_A0, TXD on P1.4 (SLAU802 2.2.4, p. 9; SLAU802 Figure 16, p. 22):
+//! 1. Leave the RXD and TXD jumpers of J101 on (SLAU802 Table 2, p. 8).
 //! 2. Find the COM port of "MSP Application UART1" in the Windows Device Manager, and open it at
-//!    9600 baud in a serial terminal such as PuTTY (connection type Serial).
-//! 3. Press the reset button S3 to run the test again while the terminal is open.
+//!    9600 baud in a serial terminal such as PuTTY (connection type Serial) (SLAU802 2.2.4, p. 10).
+//! 3. Press the reset button S3 to run the test again while the terminal is open
+//!    (SLAU802 Figure 19, p. 25).
 //!
 //! ## Oscilloscope
 //!
-//! Use a 10X probe, with its ground clip on the top pin of J5.
+//! Use a 10X probe, with its ground clip on the top pin of J5, a GND pin (SLAU802 Figure 1, p. 1;
+//! SLAU802 Figure 18, p. 24). Header pins: SLAU802 Figure 10, p. 13.
 //! 1. P1.3/MCLK (J1 pin 9): open the counter (Analysis > Counter). It shows the MCLK the report
-//!    prints, within the ±3.5 % REFO is specified to (data sheet, REFO).
+//!    prints, within the ±3.5 % REFO is specified to (SLASEO7C 8.12.3.4, p. 30).
 //! 2. P1.6 (J1 pin 2): a square wave, high and low for `PULSE_US` each. Measure its +Width: it's
 //!    `PULSE_US` plus a few loop instructions, within REFO's ±3.5 % too.
 //!
@@ -29,7 +33,8 @@
 //! MCLK and the delays then have the generator's accuracy, so the scope readings match the report
 //! within 0.01 %. Set the generator up as for the XT1 tests: square wave, load HiZ, 0 V to 3.3 V,
 //! 32.768 kHz, checked on the scope before connecting it. Connect it to P2.1/XIN (J2 pin 18), its
-//! ground to J2 pin 20, and switch it on before resetting the board.
+//! ground to J2 pin 20, and switch it on before resetting the board. (XIN reaches J2 pin 18 through
+//! R1; R2 and R3, which would connect the crystal Y1, are not fitted: SLAU802 Figure 18, p. 24.)
 #![no_main]
 #![no_std]
 
@@ -58,7 +63,7 @@ const TARGET_HZ: u32 = 5_000_000;
 /// How long the square wave on P1.6 stays high, and then low, in microseconds
 const PULSE_US: u32 = 100;
 /// Lock the FLL to a 32.768 kHz function generator on XIN instead of REFO
-const FLL_REF_FROM_XT1: bool = false;
+const FLL_REF_FROM_XT1: bool = true;
 
 /// How many MCLK cycles a delay may take beyond the time requested: the function call, and the
 /// rounding of the loop count
@@ -80,6 +85,8 @@ fn main() -> ! {
     let p5 = Batch::new(periph.p5)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
+    // LED1 on P1.0 is green, whatever the variable name says; P5.0 is the green part of LED2
+    // (SLAU802 Figure 19, p. 25). P1.6 is J1 pin 2 (SLAU802 Figure 10, p. 13).
     let mut red_led1 = p1.pin0;
     let mut green_led2 = p5.pin0;
     let mut square_wave = p1.pin6;
@@ -87,9 +94,11 @@ fn main() -> ! {
     green_led2.set_low().ok();
     square_wave.set_low().ok();
 
+    // P1.3 = MCLK with P1SEL = 10 and P1DIR = 1 (SLASEO7C Table 9-23, p. 65)
     let _mclk_out = p1.pin3.to_output().to_alternate2();
 
     let (smclk, aclk, mut delay, xt1_ok) = if FLL_REF_FROM_XT1 {
+        // P2.1 = XIN with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
         let config = ClockConfig::new(periph.cs)
             .mclk_dcoclk_hz(TARGET_HZ, MclkDiv::_1)
             .smclk_on(SmclkDiv::_1)
@@ -116,6 +125,7 @@ fn main() -> ! {
     let aclk_hz = aclk.freq();
 
     // The UART runs from ACLK, so the report stays readable even if MCLK is wrong
+    // P1.4 = UCA0TXD with P1SEL = 01 (SLASEO7C Table 9-23, p. 65)
     let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
         periph.e_usci_a0,
         BitOrder::LsbFirst,
@@ -128,10 +138,11 @@ fn main() -> ! {
     .use_aclk(&aclk)
     .tx_only(p1.pin4.to_alternate1());
 
-    // TA0 counts ACLK, and toggles its CCR0 output every 32 cycles. TA1 counts SMCLK (= MCLK) and
-    // captures the rising edges of that output on CCR0 (input B, data sheet: Timer1_A3 signal
-    // connections), so two captures are 64 ACLK cycles apart. CCR1 captures from software, to
-    // time the delays.
+    // TA0 counts ACLK, and toggles its CCR0 output every 32 cycles (Toggle mode: "The output period is
+    // double the timer period", SLAU445I Table 13-2, p. 376). TA1 counts SMCLK (= MCLK) and
+    // captures the rising edges of that output on CCR0 (input B: SLASEO7C Table 9-13, p. 56, CCI0B =
+    // "Timer0_A3 CCR0B output (internal)"; SLASEO7C Table 9-12, p. 55), so two captures are 64 ACLK
+    // cycles apart. CCR1 captures from software, to time the delays.
     let _ta0 = PwmParts3::new(periph.ta0, TimerConfig::aclk(&aclk), 31);
     let captures = CaptureParts3::config(periph.ta1, TimerConfig::smclk(&smclk))
         .config_cap0_input_B()
@@ -162,8 +173,8 @@ fn main() -> ! {
     print_num(&mut tx, aclk_hz, 0);
     print(&mut tx, " Hz\r\n");
 
-    // The FLL keeps fine-tuning after it reports lock, for up to 200 ms (data sheet, FLL lock
-    // time)
+    // The FLL keeps fine-tuning after it reports lock (measured on an MSP430FR2476). Its lock time is
+    // typically 200 ms (SLASEO7C 8.12.3.2, p. 28: tFLL,lock at 16 MHz, a typical value, no maximum)
     delay.delay_ms(200);
     // MCLK cycles in 8 x 64 ACLK cycles. Each capture is read long before the next one arrives.
     let mut previous = read_capture(&mut aclk_edges);
@@ -174,7 +185,8 @@ fn main() -> ! {
         previous = now;
     }
     let expected = multiplier * 8 * 64;
-    // The FLL keeps MCLK within about 1 % of its target (data sheet, FLL lock frequency)
+    // The FLL keeps MCLK within about 1 % of its target (SLASEO7C 8.12.3.2, p. 28: fDCO,FLL is within
+    // ±1.0 % at 25°C with REFO as the reference, ±3.0 % from –40°C to 105°C)
     let ratio_ok = mclk_cycles.abs_diff(expected) * 100 <= expected;
     let locked = fll_locked();
     print(&mut tx, "MCLK / ACLK measured: ");
@@ -183,7 +195,10 @@ fn main() -> ! {
     print(&mut tx, pass_fail(ratio_ok && locked));
     pass &= ratio_ok && locked;
 
-    // How the DCO was set up, from the clock registers (the HAL has no API for these)
+    // How the DCO was set up, from the clock registers (the HAL has no API for these).
+    // CSCTL1: DCOFTRIMEN is bit 7 (clear: the factory trim), DCOFTRIM bits 6-4, DCORSEL bits 3-1
+    // (SLAU445I Table 3-5, p. 114). CSCTL0: the DCO tap is bits 8-0 (SLAU445I Table 3-4, p. 113). The
+    // software trim aims for a tap close to 256 (SLAU445I 3.2.11.2, p. 107).
     let cs = unsafe { &*msp430fr247x::Cs::ptr() };
     let csctl0 = cs.csctl0().read().bits();
     let csctl1 = cs.csctl1().read().bits();
@@ -277,8 +292,8 @@ fn ns_to_cycles(ns: u32, mclk_hz: u32) -> u32 {
     (ns as u64 * mclk_hz as u64).div_ceil(1_000_000_000) as u32
 }
 
-/// Whether the FLL reports the DCO as locked. The HAL has no API for this, so it goes through
-/// the PAC.
+/// Whether the FLL reports the DCO as locked (CSCTL7.FLLUNLOCK = 00b: SLAU445I Table 3-11, p. 121).
+/// The HAL has no API for this, so it goes through the PAC.
 fn fll_locked() -> bool {
     let cs = unsafe { &*msp430fr247x::Cs::ptr() };
     cs.csctl7().read().fllunlock().is_fllunlock_0()

@@ -13,6 +13,7 @@ use nb::block;
 use panic_msp430 as _;
 
 // If pin 1.1 is between 1V and 2V, the LED on pin 1.0 should light up.
+// No board document covers this LED: there is none for the MSP430FR25x2.
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -23,7 +24,8 @@ fn main() -> ! {
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
     let mut led = port1.pin0.to_output();
-    // Analog inputs are enabled through SYSCFG2.ADCPCTLx on this device
+    // Analog inputs are enabled through SYSCFG2.ADCPCTLx on this device. P1.1 is A1, enabled by
+    // ADCPCTL1 = 1 (SLASEE4C Table 6-15, p. 58; SLASEE4C Table 6-13, p. 55).
     let mut adc_pin = port1.pin1.to_adc_mode();
 
     // ADC setup
@@ -39,6 +41,8 @@ fn main() -> ! {
 
     loop {
         // Get ADC voltage, assuming the ADC reference voltage is 3300mV
+        // (the reference is AVCC, ADCSREFx = 000b: SLAU445I Table 21-8, p. 567; DVCC "supplies digital and
+        // analog modules": SLASEE4C 1.4, p. 4)
         // It's infallible besides nb::WouldBlock, so it's safe to unwrap after block!()
         // If you want a raw count use adc.read_count() instead.
         let reading_mv = block!(adc.read_voltage_mv(&mut adc_pin, 3300)).unwrap();
