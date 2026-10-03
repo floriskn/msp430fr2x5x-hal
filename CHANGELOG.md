@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the ADC window comparator, `Adc::set_window()`, and ADC interrupts: `Adc::enable_interrupts()`, `Adc::interrupt_flags()` and `Adc::interrupt_source()`.
 - Add signed ADC results, through `AdcConfig::data_format`.
 - Add `Pmm::enable_vref_output()`, which outputs the 1.2 V reference on the VREF+ pin. It starts the buffered bandgap (REFBGEN) and waits until it is ready (REFBGRDY).
-- Add the `tlv` module with the factory calibration data. `TempSensorCalibration` converts temperature sensor readings with it, and the temperature sensor examples now use it instead of typical values, some of which were wrong.
+- Add the `tlv` module with the device descriptors: the device ID, hardware and firmware revision, die record, ADC and reference calibration, and the DCO tap settings for 16 MHz (and 24 MHz on the MSP430FR2x5x). `tlv::crc_matches()` checks the descriptors against their CRC. `TempSensorCalibration` converts temperature sensor readings with the calibration, and the temperature sensor examples now use it instead of typical values, some of which were wrong.
 - Add eCOMP edge flags, `Comparator::rising_edge_flag()`, `falling_edge_flag()` and `clear_edge_flags()`, and `Comparator::interrupt_source()` for the interrupt handler.
 - Add center-aligned PWM, `PwmParts3::new_center_aligned()` and `PwmParts7::new_center_aligned()`, and `Pwm::set_polarity()` for active-low outputs.
 - Add `period_output` to `PwmParts3` and `PwmParts7`: the CCR0 output, a square wave at half the PWM frequency, on the timers that have a pin for it (TA2, TA3 and TB0 on the MSP430FR247x).

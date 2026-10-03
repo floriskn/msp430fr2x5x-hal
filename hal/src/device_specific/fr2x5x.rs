@@ -15,7 +15,7 @@ pub mod gpio {
     // Alternate1, 2 and 3 are PxSELx (PxSEL1/PxSEL0) = 01, 10 and 11, the primary, secondary and
     // tertiary module functions (SLAU445I 8.2.5, Table 8-3, p. 314). Each impl is a row of the port's
     // pin function table (SLASEC4D Tables 6-63 to 6-68, p. 96 to p. 106). PxSEL doesn't set the direction
-    // (SLAU445I 8.2.5, p. 314): "in" below is PxDIR = 0 and "out" is PxDIR = 1. A timer pin's direction
+    // (SLAU445I 8.2.5, p. 314): `in` below is PxDIR = 0 and `out` is PxDIR = 1. A timer pin's direction
     // picks the capture input (CCIxA, in) or the compare output (out).
     //
     // Some functions work in one direction only, and most of these list VSS (ground) for the other one:
