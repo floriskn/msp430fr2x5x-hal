@@ -161,9 +161,7 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     /// Set RTC clock frequency divider (RTCPS, SLAU445I Table 15-2, p. 420)
     #[inline]
     pub fn set_clk_div(&mut self, div: RtcDiv) {
-        self.periph.rtcctl().modify(|r, w| unsafe { w
-            .bits(r.bits()) }
-            .rtcps().variant(div));
+        self.periph.rtcctl().modify(|_, w| w.rtcps().variant(div));
     }
 
     /// Enable RTC timer interrupts (RTCIE: SLAU445I Table 15-2, p. 420). An overflow from before is
@@ -216,18 +214,12 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
         // shadow register (SLAU445I 15.2.3, p. 417). The reset resynchronizes the count with the new
         // clock (SLAU445I 15.2.2, p. 417, note "Clock Source Selection": "TI recommends a software reset
         // by asserting the RTCSR bit after the RTC clock source is switched").
-        self.periph.rtcctl().modify(|r, w| {
-            unsafe { w.bits(r.bits()) }
-            .rtcss().variant(SRC::CLK_SRC)
-        });
+        self.periph.rtcctl().modify(|_, w| w.rtcss().variant(SRC::CLK_SRC));
         #[cfg(feature = "erratum_rtc15")]
         if leaving_stopped_xt1 {
             pulse_xin();
         }
-        self.periph.rtcctl().modify(|r, w| {
-            unsafe { w.bits(r.bits()) }
-            .rtcsr().set_bit()
-        });
+        self.periph.rtcctl().modify(|_, w| w.rtcsr().set_bit());
         // Clear the interrupt flag from the last timer run, and any raised while switching clocks
         // (SLAU445I 15.2.2, p. 417: "An unexpected interrupt may happen during the clock source change";
         // reading RTCIV clears RTCIFG: SLAU445I 15.2.4, p. 418)

@@ -33,7 +33,6 @@ pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
 pub use crate::_pac::cs::csctl6::Xt1drive as Xt1Drive;
 pub use crate::device_specific::clock::{Xt1Xin, Xt1Xout};
 use crate::delay::{delay_cycles, SysDelay};
-use crate::device_specific::clock::FLLREFDIV_1;
 use crate::fram::{Fram, WaitStates};
 use crate::_pac::{
     self,
@@ -102,27 +101,15 @@ const DCO_RANGE_BOUNDARY_HZ: [u32; 7] = [
     1_414_214, 2_828_427, 5_656_854, 9_797_959, 13_856_406, 17_888_544, 21_908_902,
 ];
 
-// CSCTL0 and CSCTL1 fields used by the DCO software trim. They're accessed as raw bits because
-// the PACs name them differently. CSCTL0: SLAU445I Table 3-4, p. 113; CSCTL1: SLAU445I
-// Table 3-5, p. 114.
-/// CSCTL0 DCO tap bits (bits 8-0, SLAU445I Table 3-4, p. 113)
-const DCO_TAP_MASK: u16 = 0x1FF;
-/// The middle of the DCO tap range, where the trim routine aims the locked tap (SLAU445I 3.2.11.2,
-/// p. 107: "Ideally, the DCO taps are locked close to the midrange (that is, 256 taps)")
+/// The middle of the DCO tap range (CSCTL0.DCO, SLAU445I Table 3-4, p. 113), where the trim routine aims
+/// the locked tap (SLAU445I 3.2.11.2, p. 107: "Ideally, the DCO taps are locked close to the midrange
+/// (that is, 256 taps)")
 const DCO_TAP_MID: u16 = 256;
-/// CSCTL1 DCOFTRIMEN bit (bit 7, SLAU445I Table 3-5, p. 114)
-const DCOFTRIMEN: u16 = 1 << 7;
-/// CSCTL1 DCOFTRIM field position (bits 6-4, SLAU445I Table 3-5, p. 114)
-const DCOFTRIM_SHIFT: u16 = 4;
-/// CSCTL1 DCOFTRIM field (SLAU445I Table 3-5, p. 114)
-const DCOFTRIM_MASK: u16 = 0b111 << DCOFTRIM_SHIFT;
 /// Highest DCOFTRIM value (SLAU445I 3.2.11.2, p. 107: "DCOFTRIM values between 0 and 7")
-const DCOFTRIM_MAX: u16 = 7;
+const DCOFTRIM_MAX: u8 = 7;
 /// DCOFTRIM value the trim routine starts from, as in TI's reference routine. It is also the reset
 /// value of DCOFTRIM (SLAU445I Table 3-5, p. 114).
-const DCOFTRIM_START: u16 = 3;
-/// CSCTL1 DCORSEL field position (bits 3-1, SLAU445I Table 3-5, p. 114)
-const DCORSEL_SHIFT: u16 = 1;
+const DCOFTRIM_START: u8 = 3;
 
 #[derive(Clone, Copy)]
 enum MclkSel {
@@ -713,7 +700,7 @@ impl<MODE, RANGE: Xt1Range> Xt1Config<MODE, RANGE> {
         // A 32 kHz XT1 is used undivided (SLAU445I 3.2.6, p. 104). On devices whose XT1 only
         // supports 32 kHz, "FLLREFDIV always reads and should be written as zero" (SLAU445I
         // 3.3.4, Table 3-7, p. 116).
-        (self.frequency, FLLREFDIV_1)
+        (self.frequency, Fllrefdiv::_1)
     }
 
     /// Bring up the XT1 oscillator and wait until it has stabilized, giving up
@@ -858,9 +845,9 @@ fn xt1_hf_fll_ref_divider(freq: u32) -> (u32, Fllrefdiv) {
         // them /512 is the closest available.
         #[cfg(feature = "enhanced_cs")]
         let res = if freq <= 22_000_000 {
-            (freq / 640, Fllrefdiv::Fllrefdiv6)
+            (freq / 640, Fllrefdiv::_640)
         } else {
-            (freq / 768, Fllrefdiv::Fllrefdiv7)
+            (freq / 768, Fllrefdiv::_768)
         };
         #[cfg(not(feature = "enhanced_cs"))]
         let res = (freq / 512, Fllrefdiv::_512);
@@ -1300,7 +1287,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         // the hardware configuration consistent by construction.
         let (selref, ref_freq, ref_div) = match (self.fll_ref, self.xt1clk.fll_reference()) {
             (Selref::Xt1clk, Some((ref_freq, ref_div))) => (Selref::Xt1clk, ref_freq, ref_div),
-            _ => (Selref::Refoclk, REFOCLK_FREQ_HZ as u32, FLLREFDIV_1),
+            _ => (Selref::Refoclk, REFOCLK_FREQ_HZ as u32, Fllrefdiv::_1),
         };
 
         // FLLN is 10 bits wide (SLAU445I Table 3-6, p. 115), so the multiplier (FLLN + 1) only
@@ -1389,13 +1376,12 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
             //    DCO starts from its lowest tap, as the factory trim procedure requires (SLAU445I
             //    3.2.11.1, p. 106, steps 3 and 4: "Clear the CSCTL0 register", then set the DCO
             //    range). CSCTL1: SLAU445I Table 3-5, p. 114.
-            cs.csctl0().write(|w| unsafe { w.bits(0) });
+            cs.csctl0().write(|w| w.dco().set(0).mod_().set(0));
             if target.factory_trim {
                 cs.csctl1().write(|w| w.dcorsel().variant(target.range));
             } else {
-                let dcorsel = target.range as u16;
-                cs.csctl1().write(|w| unsafe {
-                    w.bits(DCOFTRIMEN | DCOFTRIM_START << DCOFTRIM_SHIFT | dcorsel << DCORSEL_SHIFT)
+                cs.csctl1().write(|w| {
+                    w.dcoftrimen().set_bit().dcoftrim().set(DCOFTRIM_START).dcorsel().variant(target.range)
                 });
             }
 
@@ -1449,7 +1435,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         let mut prev_tap: Option<u16> = None;
         loop {
             // 7. Set the DCO tap to the middle of its range (SLAU445I 3.2.11.2, p. 107, step 7)
-            cs.csctl0().write(|w| unsafe { w.bits(DCO_TAP_MID) });
+            cs.csctl0().write(|w| w.dco().set(DCO_TAP_MID));
             // 8. Clear DCOFFG, until it reads back clear as TI's routine does (SLAU445I 3.2.11.2,
             //    p. 107, step 8). Right after the FLL is enabled it takes several writes (measured
             //    on an MSP430FR2476), and a flag left set would end step 10 at once, recording a
@@ -1470,15 +1456,15 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
 
             // 11. Read the tap, and how far it is from the middle (SLAU445I 3.2.11.2, p. 107,
             //     step 11)
-            let csctl0 = cs.csctl0().read().bits();
-            let csctl1 = cs.csctl1().read().bits();
-            let tap = csctl0 & DCO_TAP_MASK;
+            let csctl0 = cs.csctl0().read();
+            let csctl1 = cs.csctl1().read();
+            let tap = csctl0.dco().bits();
             let delta = tap.abs_diff(DCO_TAP_MID);
             // 12. Record the registers if this tap is the closest to the middle so far (SLAU445I
             //     3.2.11.2, p. 107, step 12)
             if delta < best_delta {
-                best_csctl0 = csctl0;
-                best_csctl1 = csctl1;
+                best_csctl0 = csctl0.bits();
+                best_csctl1 = csctl1.bits();
                 best_delta = delta;
             }
 
@@ -1489,7 +1475,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
             //     trim runs out of range (SLAU445I 3.2.11.2, p. 107, step 14).
             let below_mid = tap < DCO_TAP_MID;
             let crossed = prev_tap.is_some_and(|prev| (prev < DCO_TAP_MID) != below_mid);
-            let trim = (csctl1 & DCOFTRIM_MASK) >> DCOFTRIM_SHIFT;
+            let trim = csctl1.dcoftrim().bits();
             let next_trim = if below_mid {
                 trim.checked_sub(1)
             } else {
@@ -1497,9 +1483,7 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
             };
             match next_trim {
                 Some(next_trim) if !crossed => {
-                    cs.csctl1().write(|w| unsafe {
-                        w.bits(csctl1 & !DCOFTRIM_MASK | next_trim << DCOFTRIM_SHIFT)
-                    });
+                    cs.csctl1().modify(|_, w| w.dcoftrim().set(next_trim));
                     prev_tap = Some(tap);
                 }
                 _ => break,

@@ -75,13 +75,10 @@ pub struct IrInput<T>(pub(crate) PhantomData<T>);
 
 /// How the modulator combines its inputs (IRMSEL, SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81;
 /// the modes: SLAU445I 1.12.2.2, p. 50)
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum IrMode {
-    /// Amplitude-shift keying: the first input is the carrier, the second the envelope (IRMSEL = 0)
-    Ask,
-    /// Frequency-shift keying: the two inputs are the two frequencies (IRMSEL = 1)
-    Fsk,
-}
+///
+/// - `Ask`: amplitude-shift keying, the first input is the carrier, the second the envelope (IRMSEL = 0)
+/// - `Fsk`: frequency-shift keying, the two inputs are the two frequencies (IRMSEL = 1)
+pub use crate::_pac::sys::syscfg1::Irmsel as IrMode;
 
 /// Typestate for a modulator whose data is set from software (IRDSSEL = 1, IRDATA; SLAU445I Table 1-30,
 /// p. 81)
@@ -90,14 +87,9 @@ pub struct SoftwareData;
 /// "From UCA0TXD/UCA0SIMO" in SLAU445I Figure 1-8, p. 50)
 pub struct UartData;
 
-// SYSCFG1 bits (SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81). Other bits of SYSCFG1 belong to
-// other functions on some devices (SYNCSEL on CapTIvate devices, SLAU445I Table 1-30, p. 81).
-const IREN: u16 = 1 << 0;
-const IRPSEL: u16 = 1 << 1;
-const IRMSEL: u16 = 1 << 2;
-const IRDSSEL: u16 = 1 << 3;
-const IRDATA: u16 = 1 << 4;
-
+// The IR bits of SYSCFG1 (SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81) are set and cleared
+// on their own: other bits of SYSCFG1 belong to other functions on some devices (SYNCSEL on CapTIvate
+// devices, SLAU445I Table 1-30, p. 81).
 #[inline(always)]
 fn sys() -> &'static _pac::sys::RegisterBlock { unsafe { &*_pac::Sys::ptr() } }
 
@@ -108,19 +100,17 @@ pub struct IrModulator<DATA>(PhantomData<DATA>);
 fn enable(mode: IrMode, inverted: bool, software_data: bool) {
     // IRMSEL 1 = FSK, IRPSEL 1 = inverted, IRDSSEL 1 = data from IRDATA, 0 = from eUSCI_A0
     // (SLAU445I Table 1-25, p. 76; SLAU445I Table 1-30, p. 81; SLAU445I Figure 1-8, p. 50)
-    let mut bits = IREN;
-    if mode == IrMode::Fsk {
-        bits |= IRMSEL;
-    }
-    if inverted {
-        bits |= IRPSEL;
-    }
-    if software_data {
-        bits |= IRDSSEL;
-    }
     let sys = sys();
-    unsafe { sys.syscfg1().clear_bits(|w| w.bits(!(IREN | IRPSEL | IRMSEL | IRDSSEL | IRDATA))) };
-    unsafe { sys.syscfg1().set_bits(|w| w.bits(bits)) };
+    unsafe {
+        sys.syscfg1().clear_bits(|w| {
+            w.iren().clear_bit().irpsel().clear_bit().irmsel().clear_bit().irdssel().clear_bit().irdata().clear_bit()
+        })
+    };
+    unsafe {
+        sys.syscfg1().set_bits(|w| {
+            w.iren().set_bit().irmsel().variant(mode).irpsel().bit(inverted).irdssel().bit(software_data)
+        })
+    };
 }
 
 impl IrModulator<SoftwareData> {
@@ -153,9 +143,9 @@ impl IrModulator<SoftwareData> {
     pub fn set_data(&mut self, high: bool) {
         let sys = sys();
         if high {
-            unsafe { sys.syscfg1().set_bits(|w| w.bits(IRDATA)) };
+            unsafe { sys.syscfg1().set_bits(|w| w.irdata().set_bit()) };
         } else {
-            unsafe { sys.syscfg1().clear_bits(|w| w.bits(!IRDATA)) };
+            unsafe { sys.syscfg1().clear_bits(|w| w.irdata().clear_bit()) };
         }
     }
 }
@@ -189,6 +179,6 @@ impl<DATA> IrModulator<DATA> {
     pub fn disable(self) {
         // Clears IREN, IRDSSEL and IRDATA; IRPSEL and IRMSEL stay, and don't matter while the modulator is
         // bypassed (SLAU445I Table 1-30, p. 81; SLAU445I Figure 1-8, p. 50)
-        unsafe { sys().syscfg1().clear_bits(|w| w.bits(!(IREN | IRDSSEL | IRDATA))) };
+        unsafe { sys().syscfg1().clear_bits(|w| w.iren().clear_bit().irdssel().clear_bit().irdata().clear_bit()) };
     }
 }

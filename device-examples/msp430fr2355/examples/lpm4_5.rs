@@ -62,7 +62,7 @@ fn main() -> ! {
 
         // And enter LPM4.5. Global interrupts are enabled before LPM4.5 is entered.
         // ("TI also recommends setting GIE = 1 before entry into LPMx.5": SLAU445I 8.3.3, p. 318)
-        enter_lpm4_5(wdt, periph.rtc, SvsState::Svshe0);
+        enter_lpm4_5(wdt, periph.rtc, SvsState::Disabled);
     }
 }
 

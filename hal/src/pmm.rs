@@ -215,7 +215,7 @@ impl Pmm {
     /// resets the device only once it reaches the brownout level (SLAU445I 2.2.4, p. 87 and SLAU445I
     /// 2.2.6, p. 88). For LPM3.5 and LPM4.5, `enter_lpm3_5()` and `enter_lpm4_5()` set this.
     pub fn set_svsh(&mut self, svs: SvsState) {
-        self.unlocked(|pmm| pmm.pmmctl0().modify(|_, w| w.pmmpw().password().svshe().bit(svs == SvsState::Enabled)));
+        self.unlocked(|pmm| pmm.pmmctl0().modify(|_, w| w.pmmpw().password().svshe().variant(svs)));
     }
 
     /// Run `f` with write access to the PMM registers, and lock them again afterwards.
@@ -232,8 +232,7 @@ impl Pmm {
             let ret = f(&self.0);
             // PMMCTL0_H is the byte at offset 01h (SLAU445I Table 2-1, p. 90), as in step 9d of
             // SLAU445I 1.4.3.1, p. 41: "MOV.B #000h, &PMMCTL0_H"
-            let pmmctl0_h = (self.0.pmmctl0().as_ptr() as *mut u8).wrapping_add(1);
-            unsafe { pmmctl0_h.write_volatile(0) };
+            self.0.pmmctl0_h().write(|w| w.pmmpw().lock());
             ret
         })
     }

@@ -12,38 +12,9 @@ use crate::_pac::{self, wdt_a::wdtctl::Wdtssel};
 use crate::clock::{Aclk, Smclk};
 use core::{convert::Infallible, marker::PhantomData};
 
-// WDTPW: every write to WDTCTL carries 05Ah in the upper byte, or the device resets with a PUC
-// (SLAU445I 12.2, p. 363; SLAU445I Table 12-2, p. 366)
-const PASSWORD: u8 = 0x5A;
-
-/// Watchdog interval (WDTIS), in cycles of the watchdog clock. The times are for a 32.768 kHz clock
-/// (SLAU445I Table 12-2, p. 366).
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WdtClkPeriods {
-    /// 2^31 cycles, 18 h 12 min 16 s
-    _2g = 0,
-    /// 2^27 cycles, 1 h 8 min 16 s
-    _128m = 1,
-    /// 2^23 cycles, 4 min 16 s
-    _8192k = 2,
-    /// 2^19 cycles, 16 s
-    _512k = 3,
-    /// 2^15 cycles, 1 s
-    _32k = 4,
-    /// 2^13 cycles, 250 ms
-    _8192 = 5,
-    /// 2^9 cycles, 15.625 ms
-    _512 = 6,
-    /// 2^6 cycles, 1.95 ms
-    _64 = 7,
-}
-
-#[allow(non_upper_case_globals)]
-impl WdtClkPeriods {
-    /// The same as [`WdtClkPeriods::_2g`], under the name the MSP430FR2433 PAC uses
-    pub const _2048m: WdtClkPeriods = WdtClkPeriods::_2g;
-}
+/// Watchdog interval (WDTIS), in cycles of the watchdog clock: `_2g` is 2^31 cycles (18 h 12 min 16 s at
+/// 32.768 kHz) down to `_64`, 2^6 cycles (1.95 ms) (SLAU445I Table 12-2, p. 366).
+pub use crate::_pac::wdt_a::wdtctl::Wdtis as WdtClkPeriods;
 
 mod sealed {
     use super::*;
@@ -68,11 +39,13 @@ impl Wdt<WatchdogMode> {
     pub fn constrain(wdt: _pac::WdtA) -> Self {
         // Disable first (WDTHOLD stops the watchdog timer; WDTSSEL selects VLOCLK: SLAU445I Table 12-2,
         // p. 366)
-        wdt.wdtctl().write(|w| {
-            unsafe { w.wdtpw().bits(PASSWORD) }
+        // Every write to WDTCTL carries the password, 05Ah, or the device resets with a PUC (WDTPW:
+        // SLAU445I 12.2, p. 363; SLAU445I Table 12-2, p. 366)
+        wdt.wdtctl().write(|w| w
+            .wdtpw().password()
             .wdthold().hold()
             .wdtssel().variant(Wdtssel::Vloclk)
-        });
+        );
         Wdt { _mode: PhantomData, periph: wdt }
     }
 }
@@ -106,7 +79,8 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
         // Write argument bits, password, and correct mode bit (WDTTMSEL) to the watchdog write proxy
         // (SLAU445I Table 12-2, p. 366). WDTCTL reads 069h in the upper byte, so the password is always
         // written over it (SLAU445I 12.2, p. 363).
-        unsafe { w.bits(bits).wdtpw().bits(PASSWORD) }
+        unsafe { w.bits(bits) }
+            .wdtpw().password()
             .wdttmsel().bit(MODE::mode_bit())
     }
 
@@ -147,15 +121,14 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
     /// watchdog timer interval should be changed together with WDTCNTCL = 1 in a single instruction")
     #[inline]
     pub fn set_interval_and_start(&mut self, periods: WdtClkPeriods) {
-        // Every WdtClkPeriods value is a valid WDTIS setting (SLAU445I Table 12-2, p. 366)
-        self.periph.wdtctl().modify(|r, w| unsafe {
+        self.periph.wdtctl().modify(|r, w| {
             Self::prewrite(w, r.bits())
                 .wdtcntcl()
                 .set_bit()
                 .wdthold()
                 .unhold()
                 .wdtis()
-                .bits(periods as u8)
+                .variant(periods)
         });
     }
 

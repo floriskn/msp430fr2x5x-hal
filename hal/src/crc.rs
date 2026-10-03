@@ -34,7 +34,7 @@ impl Crc {
     /// (SLAU445I 11.1, p. 353: Equation 12)
     #[inline(always)]
     pub fn new(crc: _pac::Crc, seed: u16) -> Self {
-        crc.crcinires().write(|w| unsafe { w.bits(seed) });
+        crc.crcinires().write(|w| w.crcinires().set(seed));
         Self(crc)
     }
 
@@ -42,11 +42,10 @@ impl Crc {
     /// each byte: SLAU445I 11.3.1, p. 354).
     #[inline(always)]
     pub fn add_byte_lsb(&mut self, byte: u8) {
-        // We must write *only* to the lower byte of CRCDIRB
-        // The lower byte of CRCDIRB is the 2 + base address of the CRC module
+        // A byte write to the lower byte of CRCDIRB adds one byte; a word write would add two
         // (CRCDIRB_L at offset 02h: SLAU445I Table 11-1, p. 357; byte writes to CRCDIRB_L as in SLAU445I
         // Example 11-2, p. 356)
-        unsafe { ((_pac::Crc::PTR as *mut u8).add(2)).write_volatile(byte) };
+        self.0.crcdirb_l().write(|w| w.crcdirb().set(byte));
     }
 
     /// Insert a slice of bytes into the CRC peripheral, assuming that bit 0 is the LSb of each byte. The byte at index 0 is included first.
@@ -66,7 +65,7 @@ impl Crc {
     pub fn add_word_lsb(&mut self, word: u16) {
         // (SLAU445I 11.3.1, p. 354: "it takes two clock cycles to process word data")
         msp430::asm::nop(); // u16 insertions take two cycles, delay to allow back-to-back u16 insertions to finish
-        self.0.crcdirb().write(|w| unsafe { w.bits(word) });
+        self.0.crcdirb().write(|w| w.crcdirb().set(word));
     }
 
     /// Insert a slice of u16's into the CRC peripheral, assuming that bit 0 and bit 8 are the LSbs of each byte.
@@ -86,10 +85,9 @@ impl Crc {
     /// If your data has bit 0 as the LSb (e.g. MSP430 memory locations, variables) use the `_lsb` method instead.
     #[inline(always)]
     pub fn add_byte_msb(&mut self, byte: u8) {
-        // We must write *only* to the lower byte of CRCDI
-        // The lower byte of CRCDI is the base address of the CRC module
-        // (CRCDI_L at offset 00h: SLAU445I Table 11-1, p. 357)
-        unsafe { (_pac::Crc::PTR as *mut u8).write_volatile(byte) };
+        // A byte write to the lower byte of CRCDI adds one byte; a word write would add two (CRCDI_L at
+        // offset 00h: SLAU445I Table 11-1, p. 357)
+        self.0.crcdi_l().write(|w| w.crcdi().set(byte));
     }
 
     /// Insert a slice of bytes into the CRC peripheral. The byte at index 0 is included first.
@@ -117,7 +115,7 @@ impl Crc {
     pub fn add_word_msb(&mut self, word: u16) {
         // (SLAU445I 11.3.1, p. 354: "it takes two clock cycles to process word data")
         msp430::asm::nop(); // u16 insertions take two cycles, delay to allow back-to-back u16 insertions to finish
-        self.0.crcdi().write(|w| unsafe { w.bits(word) });
+        self.0.crcdi().write(|w| w.crcdi().set(word));
     }
 
     /// Insert a slice of u16's into the CRC peripheral. The u16 at index 0 is included first. The lower byte of each u16 is included first.
@@ -157,6 +155,6 @@ impl Crc {
     /// (CRCINIRES: SLAU445I Table 11-4, p. 359: "Writing to this register initializes the CRC calculation").
     #[inline(always)]
     pub fn reset(&mut self, seed: u16) {
-        self.0.crcinires().write(|w| unsafe { w.bits(seed) });
+        self.0.crcinires().write(|w| w.crcinires().set(seed));
     }
 }

@@ -71,7 +71,7 @@ fn main() -> ! {
         // p. 42 initializes the RTC registers again after a wake-up, before LOCKLPM5 is cleared.)
         // SVSHE = 0 turns the high-side SVS off in LPM3.5 (SLAU445I Table 2-2, p. 91; SLAU445I 1.4.3.1
         // step 9c, p. 41).
-        unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Svshe0) };
+        unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Disabled) };
     }
     // Otherwise this is a fresh start. Configure the RTC.
     else {
@@ -92,7 +92,7 @@ fn main() -> ! {
         // Leaving LPMx.5 requires a full system reset, so this function will never return.
         // ("Any exit from LPMx.5 causes a BOR": SLAU445I 1.4.3.2, p. 42)
         // SVSHE = 0 turns the high-side SVS off in LPM3.5 (SLAU445I Table 2-2, p. 91)
-        enter_lpm3_5(wdt, rtc, SvsState::Svshe0);
+        enter_lpm3_5(wdt, rtc, SvsState::Disabled);
     }
 }
 

@@ -17,33 +17,15 @@
 //! - The reference and DCO calibration: [`reference_factor()`], [`dco_tap_16mhz()`] and, on the
 //!   MSP430FR2x5x, `dco_tap_24mhz()`.
 
+use crate::_pac;
 use crate::crc::Crc;
 use crate::pmm::ReferenceVoltage;
 
+// The device descriptors, from 1A00h (SLASEC4D Table 6-70, p. 107; SLASEO7C Table 9-30, p. 71; SLASE59F
+// Table 6-22, p. 60; SLASEE4C Table 6-18, p. 61). They're programmed in production and read-only, so
+// reading them can't disturb anything else.
 #[inline(always)]
-fn read(addr: usize) -> u16 { unsafe { core::ptr::read_volatile(addr as *const u16) } }
-
-#[inline(always)]
-fn read_u8(addr: usize) -> u8 { unsafe { core::ptr::read_volatile(addr as *const u8) } }
-
-// Information block and die record addresses, the same on all devices (SLASEC4D Table 6-70, p. 107;
-// SLASEO7C Table 9-30, p. 71; SLASE59F Table 6-22, p. 60; SLASEE4C Table 6-18, p. 61)
-const CRC_VALUE: usize = 0x1A02;
-const DEVICE_ID: usize = 0x1A04;
-const HARDWARE_REVISION: usize = 0x1A06;
-const FIRMWARE_REVISION: usize = 0x1A07;
-const LOT_WAFER_ID: usize = 0x1A0A;
-const DIE_X_POSITION: usize = 0x1A0E;
-const DIE_Y_POSITION: usize = 0x1A10;
-const TEST_RESULT: usize = 0x1A12;
-
-// The range the CRC covers: 1A04h to 1AF7h (SLASEC4D Table 6-70 note 1, p. 107; SLASEO7C Table 9-30
-// note 1, p. 72) or 1A04h to 1AF5h (SLASE59F Table 6-22 note 1, p. 60; SLASEE4C Table 6-18 note 1, p. 61)
-const CRC_START: usize = 0x1A04;
-#[cfg(any(feature = "2x5x", feature = "247x"))]
-const CRC_END: usize = 0x1AF7;
-#[cfg(not(any(feature = "2x5x", feature = "247x")))]
-const CRC_END: usize = 0x1AF5;
+fn tlv() -> &'static _pac::tlv::RegisterBlock { unsafe { &*_pac::Tlv::ptr() } }
 
 /// The device ID, which tells the devices apart (SLASEC4D Table 6-69, p. 107; SLASEO7C Table 9-29, p. 71;
 /// SLASE59F Table 6-21, p. 60; SLASEE4C Table 6-17, p. 61):
@@ -60,16 +42,16 @@ const CRC_END: usize = 0x1AF5;
 /// | MSP430FR2522 | 8310h |
 /// | MSP430FR2512 | 831Ch |
 #[inline]
-pub fn device_id() -> u16 { read(DEVICE_ID) }
+pub fn device_id() -> u16 { tlv().device_id().read().bits() }
 
 /// The hardware revision, set per unit (SLASEC4D 6.13.1, p. 109: "The hardware revision is also stored in
 /// the Device Descriptor structure"). The errata sheet describes the revision marking on the package.
 #[inline]
-pub fn hardware_revision() -> u8 { read_u8(HARDWARE_REVISION) }
+pub fn hardware_revision() -> u8 { tlv().hw_revision().read().bits() }
 
 /// The firmware revision, set per unit
 #[inline]
-pub fn firmware_revision() -> u8 { read_u8(FIRMWARE_REVISION) }
+pub fn firmware_revision() -> u8 { tlv().fw_revision().read().bits() }
 
 /// Whether the device descriptors match the CRC stored with them, so that the values in this module can
 /// be trusted. This restarts `crc`, so any signature it was computing is lost.
@@ -82,10 +64,10 @@ pub fn crc_matches(crc: &mut Crc) -> bool {
     // with the bytes in address order through CRCDIRB, reproduced the stored CRC on an MSP430FR2476. That
     // is the sequence that gives 029B1h for "123456789" in SLAU445I Example 11-2, p. 356.
     crc.reset(0xFFFF);
-    for addr in CRC_START..=CRC_END {
-        crc.add_byte_lsb(read_u8(addr));
+    for byte in tlv().crc_data_iter() {
+        crc.add_byte_lsb(byte.read().bits());
     }
-    crc.result() == read(CRC_VALUE)
+    crc.result() == tlv().crc_value().read().bits()
 }
 
 /// The die record: the die's lot wafer ID, its X and Y position, and its test result, each set per unit
@@ -107,19 +89,14 @@ pub struct DieRecord {
 /// Read the die record
 #[inline]
 pub fn die_record() -> DieRecord {
+    let tlv = tlv();
     DieRecord {
-        lot_wafer_id: read(LOT_WAFER_ID) as u32 | (read(LOT_WAFER_ID + 2) as u32) << 16,
-        x_position: read(DIE_X_POSITION),
-        y_position: read(DIE_Y_POSITION),
-        test_result: read(TEST_RESULT),
+        lot_wafer_id: tlv.lot_wafer_id().read().bits(),
+        x_position: tlv.die_x_position().read().bits(),
+        y_position: tlv.die_y_position().read().bits(),
+        test_result: tlv.test_result().read().bits(),
     }
 }
-
-// ADC calibration addresses, the same on all devices (SLASEC4D Table 6-70, p. 108; SLASEO7C Table 9-30,
-// p. 72; SLASE59F Table 6-22, p. 60; SLASEE4C Table 6-18, p. 61)
-const ADC_GAIN_FACTOR: usize = 0x1A16;
-const ADC_OFFSET: usize = 0x1A18;
-const TEMP_15V_30C: usize = 0x1A1A;
 
 /// The factory calibration of the internal temperature sensor: the ADC counts it gave at 30 °C and at
 /// a high temperature, 105 °C on the MSP430FR2x5x and MSP430FR247x and 85 °C on the MSP430FR2433 and
@@ -141,16 +118,18 @@ impl TempSensorCalibration {
     #[inline]
     pub fn new(vref: ReferenceVoltage) -> Self {
         // Pairs of counts at 30 °C and at the high temperature, one pair per reference level (1.5 V at
-        // 1A1Ah, 2.0 V at 1A1Eh and 2.5 V at 1A22h: SLASEC4D Table 6-70, p. 108; SLASEO7C Table 9-30, p. 72)
-        let addr = TEMP_15V_30C + 4 * vref as usize;
+        // 1A1Ah, 2.0 V at 1A1Eh and 2.5 V at 1A22h: SLASEC4D Table 6-70, p. 108; SLASEO7C Table 9-30, p. 72;
+        // only 1.5 V on the MSP430FR2433 and MSP430FR25x2: SLASE59F Table 6-22, p. 60; SLASEE4C Table 6-18,
+        // p. 61)
+        let calibration = tlv().adc_temp_cal(vref as usize);
         // The high calibration temperature: 105 °C (SLASEC4D Table 6-70 note 3, p. 108; SLASEO7C Table 9-30,
         // p. 72) or 85 °C (SLASE59F Table 6-22, p. 60; SLASEE4C Table 6-18, p. 61)
         #[cfg(feature = "enhanced_ref")]
         let high_celsius = 105;
         #[cfg(not(feature = "enhanced_ref"))]
         let high_celsius = 85;
-        let count_30c = read(addr);
-        let count_high = read(addr + 2);
+        let count_30c = calibration.temp_30c().read().bits();
+        let count_high = calibration.temp_high().read().bits();
         let span = count_high as i32 - count_30c as i32;
         // 75 or 55 °C over the counts between the two calibration points, in tenths of a degree (SLAU445I
         // 1.13.3.3, p. 60: Equations 9 and 10)
@@ -194,13 +173,13 @@ impl TempSensorCalibration {
 /// references on VeREF+ and VeREF- (SLASEO7C Table 9-30 note 3, p. 72; the other data sheets don't give
 /// these conditions), so other settings can need a different factor.
 #[inline]
-pub fn adc_gain_factor() -> u16 { read(ADC_GAIN_FACTOR) }
+pub fn adc_gain_factor() -> u16 { tlv().adc_gain_factor().read().bits() }
 
 /// The ADC offset correction, in counts: add it to results after the gain correction (SLAU445I 1.13.3.2,
 /// p. 60: Equations 4 and 7; it is "stored as a twos-complement number"). Measured as
 /// [`adc_gain_factor()`] was (SLASEO7C Table 9-30 note 4, p. 72).
 #[inline]
-pub fn adc_offset() -> i16 { read(ADC_OFFSET) as i16 }
+pub fn adc_offset() -> i16 { tlv().adc_offset().read().bits() as i16 }
 
 /// The correction factor of the internal reference at `vref`, in 1/32768ths: multiply results
 /// measured against it by the factor and divide by 32768 (SLAU445I 1.13.3, p. 59, in "1.5-V Reference
@@ -208,13 +187,9 @@ pub fn adc_offset() -> i16 { read(ADC_OFFSET) as i16 }
 #[inline]
 pub fn reference_factor(vref: ReferenceVoltage) -> u16 {
     // The 1.5 V, 2.0 V and 2.5 V factors at 1A28h, 1A2Ah and 1A2Ch (SLASEC4D Table 6-70, p. 108; SLASEO7C
-    // Table 9-30, p. 72)
-    #[cfg(feature = "enhanced_ref")]
-    const REF_15V_FACTOR: usize = 0x1A28;
-    // The 1.5 V factor only, at 1A20h (SLASE59F Table 6-22, p. 61; SLASEE4C Table 6-18, p. 62)
-    #[cfg(not(feature = "enhanced_ref"))]
-    const REF_15V_FACTOR: usize = 0x1A20;
-    read(REF_15V_FACTOR + 2 * vref as usize)
+    // Table 9-30, p. 72), or the 1.5 V factor only, at 1A20h (SLASE59F Table 6-22, p. 61; SLASEE4C
+    // Table 6-18, p. 62)
+    tlv().ref_factor(vref as usize).read().bits()
 }
 
 /// The DCO tap setting for 16 MHz at 30 °C, a value for CSCTL0 (SLASEC4D Table 6-70, p. 108; SLASEO7C
@@ -226,11 +201,7 @@ pub fn reference_factor(vref: ReferenceVoltage) -> u16 {
 pub fn dco_tap_16mhz() -> u16 {
     // At 1A2Eh after the three reference factors (SLASEC4D Table 6-70, p. 108; SLASEO7C Table 9-30, p. 72),
     // at 1A22h after the one (SLASE59F Table 6-22, p. 61; SLASEE4C Table 6-18, p. 62)
-    #[cfg(feature = "enhanced_ref")]
-    const DCO_TAP_16MHZ: usize = 0x1A2E;
-    #[cfg(not(feature = "enhanced_ref"))]
-    const DCO_TAP_16MHZ: usize = 0x1A22;
-    read(DCO_TAP_16MHZ)
+    tlv().dco_tap_16mhz().read().bits()
 }
 
 // The MSP430FR247x table lists this entry too (SLASEO7C Table 9-30, p. 72), but those devices run at up to
@@ -242,4 +213,4 @@ pub fn dco_tap_16mhz() -> u16 {
 /// [`dco_tap_16mhz()`].
 #[cfg(feature = "enhanced_cs")]
 #[inline]
-pub fn dco_tap_24mhz() -> u16 { read(0x1A30) }
+pub fn dco_tap_24mhz() -> u16 { tlv().dco_tap_24mhz().read().bits() }

@@ -1046,10 +1046,9 @@ where M: PinMap
         self.usci().transmit_stop();
         // For some reason the TXIFG flag needs to be cleared between transactions (the flags aren't cleared
         // automatically: SLAU445I 24.3.11, p. 645). Every flag is cleared except the receive flags
-        // UCRXIFG0 to UCRXIFG3 (bits 0, 8, 10 and 12 of UCBxIFG, SLAU445I Table 24-19, p. 662 to p. 663): a
-        // byte already in UCBxRXBUF, the last one of a master receive say, must stay readable.
-        const RX_FLAGS: u16 = 1 << 0 | 1 << 8 | 1 << 10 | 1 << 12;
-        self.usci().ifg_clr_bits(!RX_FLAGS);
+        // UCRXIFG0 to UCRXIFG3 (SLAU445I Table 24-19, p. 662 to p. 663): a byte already in UCBxRXBUF, the
+        // last one of a master receive say, must stay readable.
+        self.usci().ifg_clr_except_rx();
     }
 
     /// Checks whether a slave with the specified address is present on the I2C bus.

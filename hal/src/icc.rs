@@ -20,32 +20,11 @@
 
 use crate::_pac;
 
-/// The priority of an interrupt source (ILSRx, SLAU445I 5.2.2, p. 283). The ICC serves a higher priority
-/// first, and lets it interrupt the handler of a lower one (SLAU445I 5.2, p. 282).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum Priority {
-    /// Level 0, the highest (SLAU445I 5.2.2, p. 283)
-    Highest = 0,
-    /// Level 1
-    High = 1,
-    /// Level 2
-    Low = 2,
-    /// Level 3, the lowest, as after reset (SLAU445I 5.2.2, p. 283)
-    Lowest = 3,
-}
-
-impl Priority {
-    // A 2-bit level field, as ILSRx and ICMC are (SLAU445I Table 5-2, p. 293 and SLAU445I Table 5-4, p. 294)
-    #[inline(always)]
-    fn from_bits(bits: u16) -> Self {
-        match bits & 0b11 {
-            0 => Priority::Highest,
-            1 => Priority::High,
-            2 => Priority::Low,
-            _ => Priority::Lowest,
-        }
-    }
-}
+/// The priority of an interrupt source (ILSRx, SLAU445I 5.2.2, p. 283): `Highest` (level 0), `High`,
+/// `Low`, or `Lowest` (level 3, as after reset). The ICC serves a higher priority first, and lets it
+/// interrupt the handler of a lower one (SLAU445I 5.2, p. 282).
+pub use crate::_pac::icc::iccilsr::Ilsr as Priority;
+use crate::_pac::icc::iccsc::Icmc;
 
 /// The maskable interrupt sources the ICC manages, by their level setting fields ILSR0 to ILSR21 (SLASEC4D
 /// Table 6-13, p. 71 to p. 72)
@@ -99,10 +78,6 @@ pub enum IccSource {
     Timer0B0 = 21,
 }
 
-// ICCSC bits (SLAU445I Table 5-2, p. 293)
-const ICCEN: u16 = 1 << 7;
-const VSEFLG: u16 = 1 << 5;
-
 /// The Interrupt Compare Controller (SLAU445I chapter 5, p. 280; its registers: SLAU445I Table 5-1, p. 292)
 pub struct Icc(_pac::Icc);
 
@@ -112,30 +87,28 @@ impl Icc {
     #[inline]
     pub fn new(icc: _pac::Icc) -> Self { Icc(icc) }
 
+    // Eight 2-bit fields per register: source n is ILSRn, field n % 8 of ICCILSR(n / 8) (SLAU445I
+    // Table 5-1, p. 292 and SLAU445I Table 5-4, p. 294)
     #[inline(always)]
-    fn ilsr_ptr(&self, source: IccSource) -> (*mut u16, u16) {
-        // Eight 2-bit fields per register, ICCILSR0 at offset 4 (SLAU445I Table 5-1, p. 292 and
-        // SLAU445I Table 5-4, p. 294)
-        let index = source as u16;
-        let reg = unsafe { (self.0.iccsc().as_ptr() as *mut u16).add(2 + (index / 8) as usize) };
-        (reg, (index % 8) * 2)
+    fn ilsr_index(source: IccSource) -> (usize, u8) {
+        let index = source as u8;
+        ((index / 8) as usize, index % 8)
     }
 
     /// Set the priority of an interrupt source. Its priority can change at any time (SLAU445I 5.2.2, p. 283).
     #[inline]
     pub fn set_priority(&mut self, source: IccSource, priority: Priority) {
-        let (reg, shift) = self.ilsr_ptr(source);
-        critical_section::with(|_| unsafe {
-            let value = reg.read_volatile() & !(0b11 << shift) | (priority as u16) << shift;
-            reg.write_volatile(value);
+        let (reg, field) = Self::ilsr_index(source);
+        critical_section::with(|_| {
+            self.0.iccilsr(reg).modify(|_, w| w.ilsr(field).variant(priority));
         });
     }
 
     /// The priority of an interrupt source (its ILSRx field, SLAU445I Table 5-4, p. 294).
     #[inline]
     pub fn priority(&self, source: IccSource) -> Priority {
-        let (reg, shift) = self.ilsr_ptr(source);
-        Priority::from_bits(unsafe { reg.read_volatile() } >> shift)
+        let (reg, field) = Self::ilsr_index(source);
+        self.0.iccilsr(reg).read().ilsr(field).variant()
     }
 
     /// Serve interrupts by priority, with nesting (ICCEN, SLAU445I Table 5-2, p. 293).
@@ -146,7 +119,7 @@ impl Icc {
     /// enable or disable the ICC module only in the main loop of the software code", same note).
     #[inline]
     pub fn enable(&mut self) {
-        critical_section::with(|_| unsafe { self.0.iccsc().set_bits(|w| w.bits(ICCEN)) })
+        critical_section::with(|_| unsafe { self.0.iccsc().set_bits(|w| w.iccen().set_bit()) })
     }
 
     /// Serve interrupts in vector table order again (ICCEN, SLAU445I 5.2, p. 282). Like [`Icc::enable`], it
@@ -154,7 +127,7 @@ impl Icc {
     /// note "ICC Bypass", p. 291).
     #[inline]
     pub fn disable(&mut self) {
-        critical_section::with(|_| unsafe { self.0.iccsc().clear_bits(|w| w.bits(!ICCEN)) })
+        critical_section::with(|_| unsafe { self.0.iccsc().clear_bits(|w| w.iccen().clear_bit()) })
     }
 
     /// The priority of the interrupt being served (ICMC), or `None` if no interrupt is (VSEFLG). In a nested
@@ -162,17 +135,21 @@ impl Icc {
     /// p. 293).
     #[inline]
     pub fn current_priority(&self) -> Option<Priority> {
-        // ICMC is ICCSC bits 1-0 (SLAU445I Table 5-2, p. 293)
-        let sc = self.0.iccsc().read().bits();
-        if sc & VSEFLG != 0 {
-            None
-        } else {
-            Some(Priority::from_bits(sc))
+        // ICMC and VSEFLG in ICCSC (SLAU445I Table 5-2, p. 293)
+        let sc = self.0.iccsc().read();
+        if sc.vseflg().bit_is_set() {
+            return None;
         }
+        Some(match sc.icmc().variant() {
+            Icmc::Highest => Priority::Highest,
+            Icmc::High => Priority::High,
+            Icmc::Low => Priority::Low,
+            Icmc::Lowest => Priority::Lowest,
+        })
     }
 
     /// How many interrupt handlers are nested at the moment, 0 to 4 (MVSSP, ICCMVS bits 10-8, SLAU445I
     /// Table 5-3, p. 294).
     #[inline]
-    pub fn nesting_depth(&self) -> u8 { ((self.0.iccmvs().read().bits() >> 8) & 0b111) as u8 }
+    pub fn nesting_depth(&self) -> u8 { self.0.iccmvs().read().mvssp().bits() }
 }

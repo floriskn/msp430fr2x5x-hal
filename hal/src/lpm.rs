@@ -78,23 +78,10 @@ use crate::{
 };
 
 /// Whether the high-side supply voltage supervisor (SVSH) stays on in the low-power modes (SVSHE,
-/// SLAU445I Table 2-2, p. 91)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SvsState {
-    /// SVSH is off in LPM2, LPM3, LPM4, LPM3.5 and LPM4.5, which saves power. It stays on in active
-    /// mode, LPM0 and LPM1 (SLAU445I Table 2-2, p. 91; lower power: SLAU445I 2.2.4, p. 87).
-    Disabled = 0,
-    /// SVSH is always on (SLAU445I Table 2-2, p. 91)
-    Enabled = 1,
-}
-
-#[allow(non_upper_case_globals)]
-impl SvsState {
-    /// The same as [`SvsState::Disabled`], under the name most PACs use
-    pub const Svshe0: SvsState = SvsState::Disabled;
-    /// The same as [`SvsState::Enabled`], under the name most PACs use
-    pub const Svshe1: SvsState = SvsState::Enabled;
-}
+/// SLAU445I Table 2-2, p. 91). `Disabled` switches SVSH off in LPM2, LPM3, LPM4, LPM3.5 and LPM4.5,
+/// which saves power (SLAU445I 2.2.4, p. 87); it stays on in active mode, LPM0 and LPM1. `Enabled`
+/// keeps it on always.
+pub use crate::_pac::pmm::pmmctl0::Svshe as SvsState;
 
 // Status register (SLAU445I Figure 4-9, p. 130):
 // SCG1 SCG0 OSC_OFF CPU_OFF GIE N Z C
@@ -184,30 +171,35 @@ fn lpm3_4_with_workarounds(mask: u8) {
     #[cfg(feature = "erratum_pmm32")]
     {
         let frctl = _pac::Frctl::ptr() as *mut u16;
-        // GCCTL0: FRPWR is bit 2, FRLPMPWR bit 1 (SLAU445I Table 6-3, p. 307)
-        #[allow(unused_mut)]
-        let mut gcctl0_clear: u16 = 1 << 2 | 1 << 1;
-        // GC5: UBDRSTEN is bit 7, UBDIE bit 6, CBDIE bit 5 (SLAU445I Table 6-3, p. 307)
+        // GC5: switch the bit error handling off before the sleep (UBDRSTEN, UBDIE and CBDIE in GCCTL0,
+        // SLAU445I Table 6-3, p. 307)
         #[cfg(feature = "erratum_gc5")]
         let bit_error_handling = {
-            let gcctl0 = unsafe { _pac::Frctl::steal() }.gcctl0().read().bits();
-            let bits = gcctl0 & (1 << 7 | 1 << 6 | 1 << 5);
-            gcctl0_clear |= bits;
-            bits
+            let gcctl0 = unsafe { _pac::Frctl::steal() }.gcctl0().read();
+            let saved = (gcctl0.ubdrsten().bit(), gcctl0.ubdie().bit(), gcctl0.cbdie().bit());
+            if saved != (false, false, false) {
+                fram_unlocked(|fram| unsafe {
+                    fram.gcctl0().clear_bits(|w| w.ubdrsten().clear_bit().ubdie().clear_bit().cbdie().clear_bit())
+                });
+            }
+            saved
         };
 
-        unsafe { sleep_from_ram(mask as u16, frctl, gcctl0_clear) };
+        // FRPWR and FRLPMPWR, GCCTL0 bits 2 and 1 (SLAU445I Table 6-3, p. 307). They're cleared in the
+        // routine that runs from RAM, which can't call the PAC, so they're passed as a mask.
+        const GCCTL0_FRPWR_FRLPMPWR: u16 = 1 << 2 | 1 << 1;
+        unsafe { sleep_from_ram(mask as u16, frctl, GCCTL0_FRPWR_FRLPMPWR) };
 
         #[cfg(feature = "erratum_gc5")]
-        if bit_error_handling != 0 {
+        if bit_error_handling != (false, false, false) {
             // A FRAM read that the cache can't serve, the reset vector (SLAU445I 6.8, p. 303:
             // "Accesses to FRAM that can be served from cache do not change the power state")
             unsafe { core::ptr::read_volatile(0xFFFE as *const u16) };
+            let (ubdrsten, ubdie, cbdie) = bit_error_handling;
             fram_unlocked(|fram| {
-                // UBDIFG is bit 2, CBDIFG bit 1 of GCCTL1, cleared by writing 0 (SLAU445I Table 6-4,
-                // p. 308)
-                unsafe { fram.gcctl1().clear_bits(|w| w.bits(!(1 << 2 | 1 << 1))) };
-                unsafe { fram.gcctl0().set_bits(|w| w.bits(bit_error_handling)) };
+                // UBDIFG and CBDIFG are cleared by writing 0 (SLAU445I Table 6-4, p. 308)
+                unsafe { fram.gcctl1().clear_bits(|w| w.ubdifg().clear_bit().cbdifg().clear_bit()) };
+                unsafe { fram.gcctl0().set_bits(|w| w.ubdrsten().bit(ubdrsten).ubdie().bit(ubdie).cbdie().bit(cbdie)) };
             });
         }
     }
@@ -254,10 +246,9 @@ unsafe fn sleep_from_ram(sr_bits: u16, frctl: *mut u16, gcctl0_clear: u16) {
 fn fram_unlocked(f: impl FnOnce(&_pac::Frctl)) {
     let fram = unsafe { _pac::Frctl::steal() };
     critical_section::with(|_| {
-        fram.frctl0().modify(|_, w| unsafe { w.frctlpw().bits(0xA5) });
+        fram.frctl0().modify(|_, w| w.frctlpw().password());
         f(&fram);
-        let frctl0_h = (fram.frctl0().as_ptr() as *mut u8).wrapping_add(1);
-        unsafe { frctl0_h.write_volatile(0) };
+        fram.frctl0_h().write(|w| w.frctlpw().lock());
     });
 }
 
@@ -278,22 +269,21 @@ struct SavedDco {
 #[inline(always)]
 fn lower_dco() -> Option<SavedDco> {
     let cs = unsafe { _pac::Cs::steal() };
-    let csctl1 = cs.csctl1().read().bits();
-    if csctl1 >> 1 & 0b111 == 0 {
+    let csctl1 = cs.csctl1().read();
+    if csctl1.dcorsel().bits() == 0 {
         return None;
     }
     let saved = SavedDco {
         csctl0: cs.csctl0().read().bits(),
-        csctl1,
+        csctl1: csctl1.bits(),
         fll_was_on: !msp430::register::sr::read().scg0(),
     };
     // Switch the FLL off first, so it can't move the DCO tap while the range is low (SLAU445I 3.2.8,
     // p. 105: "The FLL is disabled when the status register bits SCG0 or SCG1 are set"). It stays off
     // in interrupt handlers: an interrupt "does not clear SCG0" (SLAU445I 3.2.10, p. 106).
     set_sr_bits::<SCG0>();
-    // DCOFTRIMEN = 1 (bit 7), DCOFTRIM = 000b, DCORSEL = 000b, DISMOD (bit 0) kept (CSCTL1, SLAU445I
-    // Table 3-5, p. 114)
-    cs.csctl1().write(|w| unsafe { w.bits(csctl1 & 1 | 1 << 7) });
+    // DCOFTRIMEN = 1, DCOFTRIM = 000b, DCORSEL = 000b, DISMOD kept (CSCTL1, SLAU445I Table 3-5, p. 114)
+    cs.csctl1().write(|w| w.dismod().bit(csctl1.dismod().bit()).dcoftrimen().set_bit());
     Some(saved)
 }
 
@@ -568,19 +558,17 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // Set PMMREGOFF
     // (SLAU445I 1.4.3.1, p. 41, steps 9a to 9c; PMMPW, SVSHE and PMMREGOFF: SLAU445I Table 2-2,
     // p. 91)
-    const PASSWORD: u8 = 0xA5;
-    regs.pmm.pmmctl0().write(|w| unsafe { w
-        .pmmpw().bits(PASSWORD)
-        .svshe().bit(svs == SvsState::Enabled)
+    regs.pmm.pmmctl0().write(|w| w
+        .pmmpw().password()
+        .svshe().variant(svs)
         .pmmregoff().set_bit()
-    });
+    );
 
     // Write incorrect password to PMM to lock
     // Only write to the upper byte of PMMCTL0
     // (SLAU445I 1.4.3.1, p. 41, step 9d; a word write with a wrong password causes a PUC:
     // SLAU445I 2.3, p. 90)
-    let pmmctl0_h = (regs.pmm.pmmctl0().as_ptr() as *mut u8).wrapping_add(1);
-    unsafe { pmmctl0_h.write_volatile(0) };
+    regs.pmm.pmmctl0_h().write(|w| w.pmmpw().lock());
 
     // Enter LPMx.5 with CPUOFF, OSCOFF, SCG0 and SCG1 (SLAU445I 1.4.3.1, p. 41, step 10). If
     // interrupts were enabled, GIE is set again in the same instruction, as SLAU445I 8.3.3, p. 318

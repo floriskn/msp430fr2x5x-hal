@@ -26,8 +26,6 @@
 use crate::_pac;
 use core::{convert::Infallible, marker::PhantomData};
 
-const SYSFLTE: u16 = 1 << 4; // SFRRPCR bit 4 (SLAU445I Table 1-11, p. 64). Missing from most PACs
-
 /// The system control functions of the special function registers (SFR, SLAU445I Table 1-8, p. 61)
 pub struct SysParts {
     /// The RST/NMI pin, in reset mode as after a brownout reset (SLAU445I 1.2.1, p. 32)
@@ -76,14 +74,9 @@ pub enum RstPull {
     None,
 }
 
-/// The edge of the RST/NMI pin that requests the NMI (SFRRPCR.SYSNMIIES, SLAU445I Table 1-11, p. 64)
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum NmiEdge {
-    /// Rising edge (SYSNMIIES = 0: SLAU445I Table 1-11, p. 64)
-    Rising,
-    /// Falling edge (SYSNMIIES = 1: SLAU445I Table 1-11, p. 64)
-    Falling,
-}
+/// The edge of the RST/NMI pin that requests the NMI, `Rising` (SYSNMIIES = 0) or `Falling` (SYSNMIIES =
+/// 1) (SFRRPCR.SYSNMIIES, SLAU445I Table 1-11, p. 64)
+pub use crate::_pac::sfr::sfrrpcr::Sysnmiies as NmiEdge;
 
 /// The RST/NMI pin (SFRRPCR, SLAU445I 1.7, p. 43). It is also the Spy-Bi-Wire data pin (SBWTDIO:
 /// SLASEC4D Table 4-1, p. 18; SLASE59F Table 4-1, p. 10; SLASEO7C Table 7-1, p. 11; SLASEE4C Table 4-1,
@@ -94,7 +87,7 @@ impl<MODE> RstNmiPin<MODE> {
     /// Select the resistor on the pin (SFRRPCR.SYSRSTRE and SYSRSTUP, SLAU445I Table 1-11, p. 64).
     #[inline]
     pub fn set_pull(&mut self, pull: RstPull) {
-        sfr().sfrrpcr().modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull)) });
+        sfr().sfrrpcr().modify(|_, w| with_pull(w, pull));
     }
 
     /// Use the pin as reset input, as after a brownout reset (SLAU445I 1.2.1, p. 32). A low level then
@@ -102,8 +95,8 @@ impl<MODE> RstNmiPin<MODE> {
     #[inline]
     pub fn into_reset(self, pull: RstPull) -> RstNmiPin<ResetMode> {
         disable_nmi_pin_interrupt();
-        // SYSNMI, bit 0, = 0 selects the reset function (SLAU445I Table 1-11, p. 64)
-        sfr().sfrrpcr().modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull) & !0b01) });
+        // SYSNMI = 0 selects the reset function (SLAU445I Table 1-11, p. 64)
+        sfr().sfrrpcr().modify(|_, w| with_pull(w, pull).sysnmi().reset());
         RstNmiPin(PhantomData)
     }
 
@@ -115,15 +108,11 @@ impl<MODE> RstNmiPin<MODE> {
         let enabled = nmi_pin_interrupt_enabled();
         disable_nmi_pin_interrupt();
         let rpcr = sfr().sfrrpcr();
-        let ies = match edge {
-            NmiEdge::Rising => 0,
-            NmiEdge::Falling => 0b10,
-        };
-        // Changing SYSNMIIES (bit 1) in NMI mode can set the flag, so set it before switching to NMI
-        // mode with SYSNMI (bit 0) (SLAU445I Table 1-11, p. 64: "Modify this bit when SYSNMI = 0 to avoid
-        // triggering an accidental NMI")
-        rpcr.modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull) & !0b10 | ies) });
-        rpcr.modify(|r, w| unsafe { w.bits(r.bits() | 0b01) });
+        // Changing SYSNMIIES in NMI mode can set the flag, so set it before switching to NMI mode with
+        // SYSNMI (SLAU445I Table 1-11, p. 64: "Modify this bit when SYSNMI = 0 to avoid triggering an
+        // accidental NMI")
+        rpcr.modify(|_, w| with_pull(w, pull).sysnmiies().variant(edge));
+        rpcr.modify(|_, w| w.sysnmi().nmi());
         clear_nmi_pin_flag();
         if enabled {
             enable_nmi_pin_interrupt();
@@ -139,9 +128,7 @@ impl RstNmiPin<ResetMode> {
     /// Table 5-2, p. 34; SLASE59F Table 5-3, p. 22; SLASEO7C 8.12.2.1, p. 26; SLASEE4C Table 5-3, p. 24).
     #[inline]
     pub fn set_filter(&mut self, enabled: bool) {
-        sfr().sfrrpcr().modify(|r, w| unsafe {
-            w.bits(if enabled { r.bits() | SYSFLTE } else { r.bits() & !SYSFLTE })
-        });
+        sfr().sfrrpcr().modify(|_, w| w.sysflte().bit(enabled));
     }
 }
 
@@ -152,13 +139,8 @@ impl RstNmiPin<NmiMode> {
     pub fn set_edge(&mut self, edge: NmiEdge) {
         let enabled = nmi_pin_interrupt_enabled();
         disable_nmi_pin_interrupt();
-        // SYSNMIIES is bit 1 (SLAU445I Table 1-11, p. 64)
-        sfr().sfrrpcr().modify(|r, w| unsafe {
-            w.bits(match edge {
-                NmiEdge::Rising => r.bits() & !0b10,
-                NmiEdge::Falling => r.bits() | 0b10,
-            })
-        });
+        // SYSNMIIES (SLAU445I Table 1-11, p. 64)
+        sfr().sfrrpcr().modify(|_, w| w.sysnmiies().variant(edge));
         clear_nmi_pin_flag();
         if enabled {
             enable_nmi_pin_interrupt();
@@ -175,14 +157,13 @@ impl RstNmiPin<NmiMode> {
     pub fn disable_interrupts(&mut self) { disable_nmi_pin_interrupt(); }
 }
 
+// SYSRSTRE and SYSRSTUP (SLAU445I Table 1-11, p. 64)
 #[inline(always)]
-fn with_pull(rpcr: u16, pull: RstPull) -> u16 {
-    // SYSRSTRE is bit 3, SYSRSTUP bit 2 (SLAU445I Table 1-11, p. 64)
-    let rpcr = rpcr & !0b1100;
+fn with_pull(w: &mut _pac::sfr::sfrrpcr::W, pull: RstPull) -> &mut _pac::sfr::sfrrpcr::W {
     match pull {
-        RstPull::Up => rpcr | 0b1100,
-        RstPull::Down => rpcr | 0b1000,
-        RstPull::None => rpcr,
+        RstPull::Up => w.sysrstre().enable().sysrstup().pullup(),
+        RstPull::Down => w.sysrstre().enable().sysrstup().pulldown(),
+        RstPull::None => w.sysrstre().disable().sysrstup().pulldown(),
     }
 }
 

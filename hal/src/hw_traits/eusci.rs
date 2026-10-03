@@ -136,17 +136,32 @@ pub struct UcaCtlw0 {
     pub ucbrkie: bool,
 }
 
-// UCAxCTLW0 bits (SLAU445I Figure 22-12, p. 593 and SLAU445I Table 22-8, p. 594)
-pub const UCDORM: u16 = 1 << 3;
-pub const UCTXADDR: u16 = 1 << 2;
-pub const UCTXBRK: u16 = 1 << 1;
-// UCAxIE and UCAxIFG bits (SLAU445I Table 22-17, p. 600 and SLAU445I Table 22-18, p. 601)
-pub const UCTXCPTIFG: u16 = 1 << 3;
-pub const UCSTTIFG: u16 = 1 << 2;
-pub const UCTXIFG: u16 = 1 << 1;
-pub const UCRXIFG: u16 = 1 << 0;
-// UCAxSTATW bits (SLAU445I Table 22-12, p. 596)
-pub const UCADDR_UCIDLE: u16 = 1 << 1;
+/// UCAxIRCTL (SLAU445I Table 22-16, p. 599). All zero, the default, keeps the IrDA encoder and decoder
+/// off (UCIREN = 0).
+#[derive(Default)]
+pub struct UcaIrctl {
+    pub uciren: bool,
+    pub ucirtxclk: bool,
+    /// Transmit pulse length, 0 to 63
+    pub ucirtxpl: u8,
+    pub ucirrxfe: bool,
+    pub ucirrxpl: bool,
+    /// Receive filter length, 0 to 63
+    pub ucirrxfl: u8,
+}
+
+/// The UCAxIFG flags whose interrupt is enabled in UCAxIE (SLAU445I Table 22-18, p. 601; SLAU445I
+/// Table 22-17, p. 600)
+pub struct UartPending {
+    /// UCRXIFG and UCRXIE
+    pub rx: bool,
+    /// UCTXIFG and UCTXIE
+    pub tx: bool,
+    /// UCSTTIFG and UCSTTIE
+    pub start_bit: bool,
+    /// UCTXCPTIFG and UCTXCPTIE
+    pub tx_complete: bool,
+}
 
 // UCBxCTLW0 in I2C mode (SLAU445I Table 24-4, p. 649 to p. 650)
 reg_struct! {
@@ -261,29 +276,44 @@ pub trait EUsciUart: Steal {
     fn rxie_set(&self);
     fn rxie_clear(&self);
 
-    /// Write UCAxCTLW1 (the deglitch time, SLAU445I Table 22-9, p. 594)
-    fn ctl1_wr(&self, val: u16);
-    // UCAxCTLW0 (SLAU445I Table 22-8, p. 593 to p. 594). ctl0_clr_bits clears the bits set in `mask`.
-    fn ctl0_rd(&self) -> u16;
-    fn ctl0_set_bits(&self, mask: u16);
-    fn ctl0_clr_bits(&self, mask: u16);
-    /// UCAxABCTL (automatic baud rate, SLAU445I Table 22-15, p. 598). Write it only while UCSWRST = 1
-    /// (SLAU445I Figure 22-19, p. 598).
-    fn abctl_rd(&self) -> u16;
-    fn abctl_wr(&self, val: u16);
+    /// UCGLITx in UCAxCTLW1, the deglitch time (SLAU445I Table 22-9, p. 594)
+    fn ctl1_settings(&self, ucglit: u8);
+
+    // UCMODEx = 11b, automatic baud-rate detection (SLAU445I Table 22-8, p. 593)
+    fn auto_baud_mode(&self) -> bool;
+
+    // Set UCTXADDR or UCTXBRK, which mark the next character written to UCAxTXBUF (SLAU445I Table 22-8,
+    // p. 594)
+    fn txaddr_set(&self);
+    fn txbrk_set(&self);
+
+    // UCDORM (SLAU445I Table 22-8, p. 594)
+    fn dormant(&self, dormant: bool);
+
+    /// UCABDEN and UCDELIMx in UCAxABCTL (automatic baud rate, SLAU445I Table 22-15, p. 598). Write it only
+    /// while UCSWRST = 1 (SLAU445I Figure 22-19, p. 598).
+    fn abctl_settings(&self, ucabden: bool, ucdelim: u8);
+
+    // UCBTOE and UCSTOE in UCAxABCTL (SLAU445I Table 22-15, p. 598)
+    fn btoe_rd(&self) -> bool;
+    fn stoe_rd(&self) -> bool;
+
     /// Write UCAxIRCTL (IrDA, SLAU445I Table 22-16, p. 599), only while UCSWRST = 1
     /// (SLAU445I Figure 22-20, p. 599)
-    fn irctl_wr(&self, val: u16);
-    // UCAxSTATW (SLAU445I Table 22-12, p. 596)
-    fn statw_bits(&self) -> u16;
-    // UCAxIE (SLAU445I Table 22-17, p. 600) and UCAxIFG (SLAU445I Table 22-18, p. 601). The _clr_bits
-    // methods clear the bits set in `mask`.
-    fn ie_bits(&self) -> u16;
-    fn ie_set_bits(&self, mask: u16);
-    fn ie_clr_bits(&self, mask: u16);
-    fn ifg_bits(&self) -> u16;
-    fn ifg_set_bits(&self, mask: u16);
-    fn ifg_clr_bits(&self, mask: u16);
+    fn irctl_settings(&self, reg: UcaIrctl);
+
+    // UCSTTIE and UCTXCPTIE in UCAxIE (SLAU445I Table 22-17, p. 600)
+    fn sttie_set(&self);
+    fn sttie_clear(&self);
+    fn txcptie_set(&self);
+    fn txcptie_clear(&self);
+
+    // UCSTTIFG and UCTXCPTIFG in UCAxIFG (SLAU445I Table 22-18, p. 601)
+    fn sttifg_clear(&self);
+    fn txcptifg_clear(&self);
+
+    // UCAxIFG and UCAxIE, each read once (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
+    fn pending_rd(&self) -> UartPending;
 }
 
 pub trait EUsciI2C: Steal {
@@ -378,19 +408,19 @@ pub trait EUsciI2C: Steal {
     fn i2csa_rd(&self) -> u16;
     fn i2csa_wr(&self, val: u16);
 
-    // UCBxIE (SLAU445I Table 24-18, p. 660). Unlike the UART ie_clr_bits, ie_clr keeps only the bits set in
-    // `mask` (the PAC's clear_bits ANDs the register with it); I2cRoleCommon::clear_interrupts inverts first.
+    // UCBxIE (SLAU445I Table 24-18, p. 660). ie_clr keeps only the bits set in `mask` (the PAC's clear_bits
+    // ANDs the register with it); I2cRoleCommon::clear_interrupts inverts first.
     fn ie_wr(&self, reg: u16);
     fn ie_set(&self, mask: u16);
     fn ie_clr(&self, mask: u16);
 
     // UCBxIFG (SLAU445I Table 24-19, p. 662 to p. 663). ifg_rst writes the PAC's reset value, 0, which
-    // clears every flag; SLAU445I Table 24-3, p. 648 gives 2A02h as the reset value. ifg_clr_bits clears
-    // the bits set in `mask`.
+    // clears every flag; SLAU445I Table 24-3, p. 648 gives 2A02h as the reset value. ifg_clr_except_rx
+    // clears every flag except UCRXIFG0 to UCRXIFG3.
     fn ifg_rd(&self) -> Self::IfgOut;
     fn ifg_wr(&self, reg: u16);
     fn ifg_rst(&self);
-    fn ifg_clr_bits(&self, mask: u16);
+    fn ifg_clr_except_rx(&self);
 
     // UCBxIV (SLAU445I Table 24-20, p. 664)
     fn iv_rd(&self) -> u16;
@@ -457,6 +487,7 @@ pub trait UartUcxStatw {
     fn ucpe(&self) -> bool;
     fn ucbrk(&self) -> bool;
     fn ucbusy(&self) -> bool;
+    fn ucaddr_ucidle(&self) -> bool;
 }
 
 /// UCxSTATW flags in SPI mode (SLAU445I Table 23-5, p. 615 and SLAU445I Table 23-14, p. 622)
@@ -627,8 +658,8 @@ pub(crate) use eusci_spi_impl;
 
 macro_rules! eusci_uart_impl {
     ($EUsci:ident, $ucaxctlw0:ident, $ucaxctlw1:ident, $ucaxbrw:ident,
-     $ucaxmctlw:ident, $ucaxstatw:ident, $ucaxrxbuf:ident, $ucaxtxbuf:ident, $ucaxie:ident,
-     $ucaxifg:ident, $ucaxiv:ident, $Statw:ty) => {
+     $ucaxmctlw:ident, $ucaxstatw:ident, $ucaxrxbuf:ident, $ucaxtxbuf:ident, $ucaxabctl:ident,
+     $ucaxirctl:ident, $ucaxie:ident, $ucaxifg:ident, $ucaxiv:ident, $Statw:ty) => {
         impl EUsciUart for $EUsci {
             type Statw = $Statw;
 
@@ -636,18 +667,18 @@ macro_rules! eusci_uart_impl {
             // (UCAxCTLW0 fields: SLAU445I Table 22-8, p. 593 to p. 594)
             #[inline(always)]
             fn ctl0_settings(&self, reg: UcaCtlw0) {
-                self.$ucaxctlw0().write(|w| unsafe { w
+                self.$ucaxctlw0().write(|w| w
                     .ucpen().bit(reg.ucpen)
                     .ucpar().bit(reg.ucpar)
                     .ucmsb().bit(reg.ucmsb)
                     .uc7bit().bit(reg.uc7bit)
                     .ucspb().bit(reg.ucspb)
-                    .ucmode().bits(reg.ucmode)
-                    .ucssel().bits(reg.ucssel as u8)
+                    .ucmode().set(reg.ucmode)
+                    .ucssel().set(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
                     .ucbrkie().bit(reg.ucbrkie)
                     .ucswrst().set_bit()
-                });
+                );
             }
 
             // UCAxMCTLW: UCOS16, UCBRSx and UCBRFx (SLAU445I Table 22-11, p. 595)
@@ -725,63 +756,91 @@ macro_rules! eusci_uart_impl {
             #[inline(always)]
             fn iv_rd(&self) -> u16 { self.$ucaxiv().read().bits() }
 
-            // UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
+            // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
             #[inline(always)]
-            fn ctl1_wr(&self, val: u16) { self.$ucaxctlw1().write(|w| unsafe { w.bits(val) }); }
+            fn ctl1_settings(&self, ucglit: u8) { self.$ucaxctlw1().write(|w| w.ucglit().set(ucglit)); }
 
-            // UCAxCTLW0 (SLAU445I Table 22-8, p. 593 to p. 594). The PAC's clear_bits ANDs the register with
-            // the value, so ctl0_clr_bits passes the inverted mask.
+            // UCMODEx in UCAxCTLW0 (SLAU445I Table 22-8, p. 593)
             #[inline(always)]
-            fn ctl0_rd(&self) -> u16 { self.$ucaxctlw0().read().bits() }
+            fn auto_baud_mode(&self) -> bool { self.$ucaxctlw0().read().ucmode().is_ucmode_3() }
+
+            // UCTXADDR, UCTXBRK and UCDORM in UCAxCTLW0 (SLAU445I Table 22-8, p. 594)
+            #[inline(always)]
+            fn txaddr_set(&self) { unsafe { self.$ucaxctlw0().set_bits(|w| w.uctxaddr().set_bit()) }; }
 
             #[inline(always)]
-            fn ctl0_set_bits(&self, mask: u16) { unsafe { self.$ucaxctlw0().set_bits(|w| w.bits(mask)) }; }
+            fn txbrk_set(&self) { unsafe { self.$ucaxctlw0().set_bits(|w| w.uctxbrk().set_bit()) }; }
 
             #[inline(always)]
-            fn ctl0_clr_bits(&self, mask: u16) { unsafe { self.$ucaxctlw0().clear_bits(|w| w.bits(!mask)) }; }
+            fn dormant(&self, dormant: bool) {
+                if dormant {
+                    unsafe { self.$ucaxctlw0().set_bits(|w| w.ucdorm().set_bit()) };
+                } else {
+                    unsafe { self.$ucaxctlw0().clear_bits(|w| w.ucdorm().clear_bit()) };
+                }
+            }
 
-            // UCAxABCTL and UCAxIRCTL are at offsets 10h and 12h from UCAxCTLW0
-            // (SLAU445I Table 22-7, p. 592), 8 and 9 u16 words. Not every PAC has them.
-            // (UCAxABCTL: SLAU445I Table 22-15, p. 598; UCAxIRCTL: SLAU445I Table 22-16, p. 599)
+            // UCAxABCTL (SLAU445I Table 22-15, p. 598)
             #[inline(always)]
-            fn abctl_rd(&self) -> u16 {
-                unsafe { (self.$ucaxctlw0().as_ptr() as *const u16).add(8).read_volatile() }
+            fn abctl_settings(&self, ucabden: bool, ucdelim: u8) {
+                self.$ucaxabctl().write(|w| w.ucabden().bit(ucabden).ucdelim().set(ucdelim));
             }
 
             #[inline(always)]
-            fn abctl_wr(&self, val: u16) {
-                unsafe { (self.$ucaxctlw0().as_ptr() as *mut u16).add(8).write_volatile(val) }
+            fn btoe_rd(&self) -> bool { self.$ucaxabctl().read().ucbtoe().bit() }
+
+            #[inline(always)]
+            fn stoe_rd(&self) -> bool { self.$ucaxabctl().read().ucstoe().bit() }
+
+            // UCAxIRCTL (SLAU445I Table 22-16, p. 599)
+            #[inline(always)]
+            fn irctl_settings(&self, reg: UcaIrctl) {
+                self.$ucaxirctl().write(|w| unsafe { w
+                    .uciren().bit(reg.uciren)
+                    .ucirtxclk().bit(reg.ucirtxclk)
+                    .ucirtxpl().bits(reg.ucirtxpl)
+                    .ucirrxfe().bit(reg.ucirrxfe)
+                    .ucirrxpl().bit(reg.ucirrxpl)
+                    .ucirrxfl().bits(reg.ucirrxfl)
+                });
             }
 
-            // UCAxIRCTL, offset 12h (SLAU445I Table 22-7, p. 592; SLAU445I Table 22-16, p. 599)
+            // UCSTTIE and UCTXCPTIE in UCAxIE (SLAU445I Table 22-17, p. 600)
             #[inline(always)]
-            fn irctl_wr(&self, val: u16) {
-                unsafe { (self.$ucaxctlw0().as_ptr() as *mut u16).add(9).write_volatile(val) }
+            fn sttie_set(&self) { unsafe { self.$ucaxie().set_bits(|w| w.ucsttie().set_bit()) }; }
+
+            #[inline(always)]
+            fn sttie_clear(&self) { unsafe { self.$ucaxie().clear_bits(|w| w.ucsttie().clear_bit()) }; }
+
+            #[inline(always)]
+            fn txcptie_set(&self) { unsafe { self.$ucaxie().set_bits(|w| w.uctxcptie().set_bit()) }; }
+
+            #[inline(always)]
+            fn txcptie_clear(&self) {
+                unsafe { self.$ucaxie().clear_bits(|w| w.uctxcptie().clear_bit()) };
             }
 
-            // UCAxSTATW (SLAU445I Table 22-12, p. 596)
+            // UCSTTIFG and UCTXCPTIFG in UCAxIFG (SLAU445I Table 22-18, p. 601)
             #[inline(always)]
-            fn statw_bits(&self) -> u16 { u16::from(self.$ucaxstatw().read().bits()) }
-
-            // UCAxIE (SLAU445I Table 22-17, p. 600), mask inverted for clear_bits as above
-            #[inline(always)]
-            fn ie_bits(&self) -> u16 { self.$ucaxie().read().bits() }
+            fn sttifg_clear(&self) { unsafe { self.$ucaxifg().clear_bits(|w| w.ucsttifg().clear_bit()) }; }
 
             #[inline(always)]
-            fn ie_set_bits(&self, mask: u16) { unsafe { self.$ucaxie().set_bits(|w| w.bits(mask)) }; }
+            fn txcptifg_clear(&self) {
+                unsafe { self.$ucaxifg().clear_bits(|w| w.uctxcptifg().clear_bit()) };
+            }
 
+            // UCAxIFG and UCAxIE (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
             #[inline(always)]
-            fn ie_clr_bits(&self, mask: u16) { unsafe { self.$ucaxie().clear_bits(|w| w.bits(!mask)) }; }
-
-            // UCAxIFG (SLAU445I Table 22-18, p. 601), mask inverted for clear_bits as above
-            #[inline(always)]
-            fn ifg_bits(&self) -> u16 { self.$ucaxifg().read().bits() }
-
-            #[inline(always)]
-            fn ifg_set_bits(&self, mask: u16) { unsafe { self.$ucaxifg().set_bits(|w| w.bits(mask)) }; }
-
-            #[inline(always)]
-            fn ifg_clr_bits(&self, mask: u16) { unsafe { self.$ucaxifg().clear_bits(|w| w.bits(!mask)) }; }
+            fn pending_rd(&self) -> UartPending {
+                let ifg = self.$ucaxifg().read();
+                let ie = self.$ucaxie().read();
+                UartPending {
+                    rx: ifg.ucrxifg().bit() && ie.ucrxie().bit(),
+                    tx: ifg.uctxifg().bit() && ie.uctxie().bit(),
+                    start_bit: ifg.ucsttifg().bit() && ie.ucsttie().bit(),
+                    tx_complete: ifg.uctxcptifg().bit() && ie.uctxcptie().bit(),
+                }
+            }
         }
 
         // UCAxSTATW flags (SLAU445I Table 22-12, p. 596)
@@ -800,6 +859,9 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn ucbusy(&self) -> bool { self.ucbusy().bit() }
+
+            #[inline(always)]
+            fn ucaddr_ucidle(&self) -> bool { self.ucaddr_ucidle().bit() }
         }
     };
 }
@@ -1084,10 +1146,18 @@ macro_rules! eusci_i2c_impl {
             #[inline(always)]
             fn ifg_rst(&self) { self.$ucbxifg().reset(); }
 
-            // UCBxIFG (SLAU445I Table 24-19, p. 662 to p. 663), mask inverted for clear_bits as in the UART
-            // ifg_clr_bits
+            // Every UCBxIFG flag but UCRXIFG0 to UCRXIFG3 (SLAU445I Table 24-19, p. 662 to p. 663). The PAC's
+            // clear_bits ANDs the register with the value, so that has only the receive flags set.
             #[inline(always)]
-            fn ifg_clr_bits(&self, mask: u16) { unsafe { self.$ucbxifg().clear_bits(|w| w.bits(!mask)) }; }
+            fn ifg_clr_except_rx(&self) {
+                unsafe {
+                    self.$ucbxifg().clear_bits(|w| w.bits(0)
+                        .ucrxifg0().set_bit()
+                        .ucrxifg1().set_bit()
+                        .ucrxifg2().set_bit()
+                        .ucrxifg3().set_bit())
+                };
+            }
 
             // UCBxIV (SLAU445I Table 24-20, p. 664)
             #[inline(always)]

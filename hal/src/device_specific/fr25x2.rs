@@ -305,6 +305,8 @@ mod serial {
         uca0statw,
         uca0rxbuf,
         uca0txbuf,
+        uca0abctl,
+        uca0irctl,
         uca0ie,
         uca0ifg,
         uca0iv,
@@ -622,7 +624,7 @@ mod timer {
 }
 
 pub mod clock {
-    use crate::{_pac::cs::csctl3::Fllrefdiv, gpio::*};
+    use crate::gpio::*;
 
     // The XT1 pins are defined once, here. Everything else, from the `Xt1Config` constructors to
     // keeping the pins selected through LPM3.5, derives the port, pin and PxSEL bits from these
@@ -631,10 +633,6 @@ pub mod clock {
     pub type Xt1Xin<DIR> = Pin<P2, Pin1, Alternate2<DIR>>;
     /// XT1 output pin (XOUT), in its XT1 function: P2.0 with P2SELx = 10 (SLASEE4C Table 6-16, p. 60)
     pub type Xt1Xout<DIR> = Pin<P2, Pin0, Alternate2<DIR>>;
-
-    /// FLLREFDIV setting for an undivided FLL reference (SLAU445I Table 3-7, p. 116: FLLREFDIV = 000b,
-    /// fFLLREFCLK / 1)
-    pub(crate) const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::_1;
 }
 
 /* LPM */

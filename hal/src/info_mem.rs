@@ -19,9 +19,6 @@ pub use crate::device_specific::INFO_MEM_SIZE;
 /// Start address of the information memory (SLAU445I 1.9.1, p. 44; SLASEC4D Table 6-4, p. 65; SLASE59F
 /// Table 6-23, p. 61; SLASEO7C Table 9-31, p. 73; SLASEE4C Table 6-19, p. 62)
 const INFO_MEM_START_ADDR: *mut u8 = 0x1800 as *mut u8;
-// FRWPPW: "Write with 0A5h to unlock the FRAM protection registers" (SLAU445I Table 1-24, p. 75; SLAU445I
-// Table 1-29, p. 80)
-const SYSCFG0_PASSWORD: u8 = 0xA5;
 
 /// A struct that manages writing and reading from information memory.
 pub struct InfoMemory {
@@ -63,8 +60,8 @@ impl InfoMemory {
     #[inline(always)]
     fn disable_write_protect() {
         let sys = unsafe { _pac::Sys::steal() };
-        sys.syscfg0().modify(|_, w| unsafe { w
-            .frwppw().bits(SYSCFG0_PASSWORD)
+        sys.syscfg0().modify(|_, w| { w
+            .frwppw().password()
             .dfwp().clear_bit()
         });
     }
@@ -73,8 +70,8 @@ impl InfoMemory {
     #[inline(always)]
     fn enable_write_protect() {
         let sys = unsafe { _pac::Sys::steal() };
-        sys.syscfg0().modify(|_, w| unsafe { w
-            .frwppw().bits(SYSCFG0_PASSWORD)
+        sys.syscfg0().modify(|_, w| { w
+            .frwppw().password()
             .dfwp().set_bit()
         });
     }

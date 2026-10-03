@@ -126,9 +126,31 @@ pub trait HighImpedancePin<T> {}
 /// (SLASEC4D Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61)
 pub trait HighImpedanceTimer: TimerB {
     #[doc(hidden)]
-    /// The TBxTRGSEL bit in SYSCFG2 (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
-    const TRGSEL: u16;
+    /// Set (`true`, the TBxTRG pin) or clear (`false`, the comparator) this timer's TBxTRGSEL bit in
+    /// SYSCFG2 (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
+    fn set_trgsel(external: bool);
 }
+
+/// Implement [`HighImpedanceTimer`] for the Timer_B `$timer`, whose trigger select bit is the SYSCFG2 field
+/// `$trgsel` (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
+#[cfg(feature = "timer_b")]
+macro_rules! high_impedance_timer_impl {
+    ($timer:ty, $trgsel:ident) => {
+        impl $crate::timer::HighImpedanceTimer for $timer {
+            #[inline(always)]
+            fn set_trgsel(external: bool) {
+                let sys = unsafe { &*$crate::_pac::Sys::ptr() };
+                if external {
+                    unsafe { sys.syscfg2().set_bits(|w| w.$trgsel().set_bit()) };
+                } else {
+                    unsafe { sys.syscfg2().clear_bits(|w| w.$trgsel().clear_bit()) };
+                }
+            }
+        }
+    };
+}
+#[cfg(feature = "timer_b")]
+pub(crate) use high_impedance_timer_impl;
 
 // Traits effectively sealed by TimerBase
 /// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
@@ -195,9 +217,9 @@ where
     div: TimerDiv,
     ex_div: TimerExDiv,
     cntl: u8,
-    /// SYSCFG2 bit to change, and whether to set it (TBxTRGSEL: SLAU445I Table 1-26, p. 77; SLAU445I
+    /// The timer's TBxTRGSEL setter, and whether to select the pin (SLAU445I Table 1-26, p. 77; SLAU445I
     /// Table 1-31, p. 82)
-    trgsel: Option<(u16, bool)>,
+    trgsel: Option<(fn(bool), bool)>,
     _pin_map: PhantomData<M>,
 }
 
@@ -254,13 +276,8 @@ where
         timer.set_cntl(self.cntl);
         // TBxTRGSEL: 0 = internal source (eCOMP), 1 = external source (TBxTRG pin) (SLAU445I Table 1-26,
         // p. 77; SLAU445I Table 1-31, p. 82)
-        if let Some((bit, set)) = self.trgsel {
-            let sys = unsafe { &*crate::_pac::Sys::ptr() };
-            if set {
-                unsafe { sys.syscfg2().set_bits(|w| w.bits(bit)) };
-            } else {
-                unsafe { sys.syscfg2().clear_bits(|w| w.bits(!bit)) };
-            }
+        if let Some((set_trgsel, external)) = self.trgsel {
+            set_trgsel(external);
         }
     }
 }
@@ -289,7 +306,7 @@ where
         // without putting it in its trigger function disables the trigger: only the selected TBOUTH pin
         // function triggers (SLAU445I 14.2.5, p. 401).
         let external = !matches!(trigger, HighImpedanceTrigger::Comparator);
-        TimerConfig { trgsel: Some((T::TRGSEL, external)), ..self }
+        TimerConfig { trgsel: Some((T::set_trgsel, external)), ..self }
     }
 }
 

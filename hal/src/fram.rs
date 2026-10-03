@@ -27,31 +27,8 @@ impl Fram {
     pub fn new(fram: _pac::Frctl) -> Self { Fram { fram } }
 }
 
-/// FRCTLPW password (SLAU445I Table 6-2, p. 306)
-const PASSWORD: u8 = 0xA5;
-/// FRWPPW password (SLAU445I Table 1-24, p. 75; SLAU445I Table 1-29, p. 80)
-#[cfg(feature = "frwpoa")]
-const SYSCFG0_PASSWORD: u8 = 0xA5;
-
-/// FRAM wait states (NWAITS, SLAU445I Table 6-2, p. 306)
-pub enum WaitStates {
-    /// No wait
-    Wait0,
-    /// Wait 1 cycle
-    Wait1,
-    /// Wait 2 cycles
-    Wait2,
-    /// Wait 3 cycles
-    Wait3,
-    /// Wait 4 cycles
-    Wait4,
-    /// Wait 5 cycles
-    Wait5,
-    /// Wait 6 cycles
-    Wait6,
-    /// Wait 7 cycles
-    Wait7,
-}
+/// FRAM wait states, `Wait0` to `Wait7` (NWAITS, SLAU445I Table 6-2, p. 306)
+pub use crate::_pac::frctl::frctl0::Nwaits as WaitStates;
 
 /// What the FRAM controller does when it detects a bit error it can't correct (GCCTL0.UBDRSTEN, UBDIE,
 /// SLAU445I Table 6-3, p. 307)
@@ -80,10 +57,9 @@ impl Fram {
     #[inline]
     fn unlocked<R>(&mut self, f: impl FnOnce(&_pac::Frctl) -> R) -> R {
         critical_section::with(|_| {
-            self.fram.frctl0().modify(|_, w| unsafe { w.frctlpw().bits(PASSWORD) });
+            self.fram.frctl0().modify(|_, w| w.frctlpw().password());
             let ret = f(&self.fram);
-            let frctl0_h = (self.fram.frctl0().as_ptr() as *mut u8).wrapping_add(1);
-            unsafe { frctl0_h.write_volatile(0) };
+            self.fram.frctl0_h().write(|w| w.frctlpw().lock());
             ret
         })
     }
@@ -96,9 +72,9 @@ impl Fram {
     /// p. 27; SLASE59F 5.3, p. 16; SLASEO7C 8.3, p. 20; SLASEE4C 5.3, p. 17).
     #[inline]
     pub unsafe fn set_wait_states(&mut self, wait: WaitStates) {
-        self.unlocked(|fram| fram.frctl0().write(|w| unsafe { w
-            .frctlpw().bits(PASSWORD)
-            .nwaits().bits(wait as u8) }));
+        self.unlocked(|fram| fram.frctl0().write(|w| w
+            .frctlpw().password()
+            .nwaits().variant(wait)));
     }
 
     /// Select what happens when the FRAM detects a bit error it can't correct (UBDRSTEN, UBDIE:
@@ -159,7 +135,7 @@ impl Fram {
             // SLAU445I Table 1-29, p. 80: "written with the FRAM protection bits in a word in a
             // single operation")
             sys.syscfg0().modify(|_, w| unsafe { w
-                .frwppw().bits(SYSCFG0_PASSWORD)
+                .frwppw().password()
                 .frwpoa().bits(kib)
             })
         });

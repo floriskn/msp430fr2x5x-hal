@@ -68,7 +68,7 @@ fn main() -> ! {
         // (SLAU445I 1.4.3.3, p. 42, step 1, re-initializes "the registers of the modules connected to the
         // RTC LDO" after each wake-up from LPM3.5; this example relies on the RTC settings from the first
         // run instead.)
-        unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Svshe0) };
+        unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Disabled) };
     }
     // Otherwise this is a fresh start. Configure the RTC.
     else {
@@ -83,7 +83,7 @@ fn main() -> ! {
         // ("TI also recommends setting GIE = 1 before entry into LPMx.5": SLAU445I 8.3.3, p. 318)
         // Leaving LPMx.5 requires a full system reset, so this function will never return.
         // ("Any exit from LPMx.5 causes a BOR": SLAU445I 1.4.3.2, p. 42)
-        enter_lpm3_5(wdt, rtc, SvsState::Svshe0);
+        enter_lpm3_5(wdt, rtc, SvsState::Disabled);
     }
 }
 

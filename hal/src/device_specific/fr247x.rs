@@ -700,6 +700,8 @@ mod serial {
         uca0statw,
         uca0rxbuf,
         uca0txbuf,
+        uca0abctl,
+        uca0irctl,
         uca0ie,
         uca0ifg,
         uca0iv,
@@ -716,6 +718,8 @@ mod serial {
         uca1statw,
         uca1rxbuf,
         uca1txbuf,
+        uca1abctl,
+        uca1irctl,
         uca1ie,
         uca1ifg,
         uca1iv,
@@ -1368,13 +1372,13 @@ mod timer {
     // selects the eCOMP0 output, 1 selects P3.5). TB0TRGSEL is SYSCFG2 bit 15, "1b = External source
     // selected" (SLAU445I Table 1-31, p. 82). The multiplexer in SLASEO7C Figure 9-3, p. 60 shows the
     // inputs the other way round; the code follows SLASEO7C Table 9-17, p. 61.
-    impl HighImpedanceTimer for Tb0 { const TRGSEL: u16 = 1 << 15; }
+    high_impedance_timer_impl!(Tb0, tb0trgsel);
     // P3.5 TB0TRG, P3SELx = 10, P3DIR.5 = 0 (SLASEO7C Table 9-25, p. 67)
     impl<PULL> HighImpedancePin<Tb0> for Pin<P3, Pin5, Alternate2<Input<PULL>>> {}
 }
 
 pub mod clock {
-    use crate::{_pac::cs::csctl3::Fllrefdiv, gpio::*};
+    use crate::gpio::*;
 
     // The XT1 pins are defined once, here. Everything else, from the `Xt1Config` constructors to
     // keeping the pins selected through LPM3.5, derives the port, pin and PxSEL bits from these
@@ -1383,12 +1387,6 @@ pub mod clock {
     pub type Xt1Xin<DIR> = Pin<P2, Pin1, Alternate1<DIR>>;
     /// XT1 output pin (XOUT), in its XT1 function
     pub type Xt1Xout<DIR> = Pin<P2, Pin0, Alternate1<DIR>>;
-
-    /// FLLREFDIV setting for an undivided FLL reference (000b, fFLLREFCLK / 1:
-    /// SLAU445I Table 3-7, p. 116). XT1 only takes a 32 kHz crystal on this device
-    /// (SLASEO7C 10.1.2, p. 83), and then FLLREFDIV is "always read and written as 000b"
-    /// (SLAU445I Figure 3-11 note 1, p. 116).
-    pub(crate) const FLLREFDIV_1: Fllrefdiv = Fllrefdiv::_1;
 }
 
 /* LPM */

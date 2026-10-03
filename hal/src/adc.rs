@@ -259,21 +259,15 @@ impl SamplingRate {
 }
 
 /// How conversion results and window comparator thresholds are formatted (ADCDF: SLAU445I Table 21-5,
-/// p. 565).
+/// p. 565). [`AdcConfig`] defaults to `Unsigned`.
 ///
-/// Default: unsigned
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
-pub enum DataFormat {
-    /// Unsigned and right-aligned: from 0 at VR- up to 255, 1023 or 4095 at VR+ (SLAU445I 21.2.1, p. 541, and
-    /// SLAU445I 21.3.4, p. 566).
-    #[default]
-    Unsigned,
-    /// Two's complement and left-aligned, as an `i16` would read it: from -32768 at VR- up to just below 32768 at VR+.
-    /// The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit (SLAU445I 21.3.5,
-    /// p. 566; ADCDF in SLAU445I Table 21-5, p. 565: "-VREF results in 8000h, and ... +VREF results in
-    /// 7FC0h").
-    Signed,
-}
+/// - `Unsigned`: right-aligned, from 0 at VR- up to 255, 1023 or 4095 at VR+ (SLAU445I 21.2.1, p. 541, and
+///   SLAU445I 21.3.4, p. 566).
+/// - `Signed`: two's complement and left-aligned, as an `i16` would read it: from -32768 at VR- up to just
+///   below 32768 at VR+. The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit
+///   (SLAU445I 21.3.5, p. 566; ADCDF in SLAU445I Table 21-5, p. 565: "-VREF results in 8000h, and ... +VREF
+///   results in 7FC0h").
+pub use crate::_pac::adc::adcctl2::Adcdf as DataFormat;
 
 // Pins corresponding to an ADC channel. Pin types can have `::channel()` called on them to get their ADC channel index.
 macro_rules! impl_adc_channel_pin {
@@ -400,7 +394,7 @@ impl Default for AdcConfig<NoClockSet> {
             resolution: Default::default(),
             sampling_rate: Default::default(),
             sample_time: Default::default(),
-            data_format: Default::default(),
+            data_format: DataFormat::Unsigned,
         }
     }
 }
@@ -492,11 +486,10 @@ impl AdcConfig<ClockSet> {
         let adcpdiv = self.predivider.adcpdiv();
         let adcres = self.resolution.adcres();
         let adcsr = self.sampling_rate.adcsr();
-        let adcdf = self.data_format == DataFormat::Signed;
         adc_reg.adcctl2().write(|w| { unsafe { w
             .adcpdiv().bits(adcpdiv)
             .adcres().bits(adcres)
-            .adcdf().bit(adcdf)
+            .adcdf().variant(self.data_format)
             .adcsr().bit(adcsr)
         }});
 
@@ -542,22 +535,18 @@ pub enum NegativeReference<'a> {
     External(&'a dyn VeRefMinusPin),
 }
 
-/// How conversions repeat (ADCCONSEQ, SLAU445I 21.2.7, p. 546, and SLAU445I Table 21-1, p. 546)
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ConversionMode {
-    /// Convert the channel once. With a hardware trigger, start again for the next conversion (SLAU445I
-    /// 21.2.7.1, p. 547: "When any other trigger source is used, ADCENC must be toggled between each
-    /// conversion").
-    #[default]
-    Single,
-    /// Convert the channels from the selected one down to channel 0, once (SLAU445I 21.2.7.2, p. 549)
-    Sequence,
-    /// Convert the channel once for each trigger, until stopped (SLAU445I 21.2.7.3, p. 551)
-    RepeatSingle,
-    /// Convert the channels from the selected one down to channel 0 for each trigger, until stopped (SLAU445I
-    /// 21.2.7.4, p. 553)
-    RepeatSequence,
-}
+/// How conversions repeat (ADCCONSEQ, SLAU445I 21.2.7, p. 546, and SLAU445I Table 21-1, p. 546).
+/// [`ConversionConfig`] defaults to `Single`.
+///
+/// - `Single`: convert the channel once. With a hardware trigger, start again for the next conversion
+///   (SLAU445I 21.2.7.1, p. 547: "When any other trigger source is used, ADCENC must be toggled between
+///   each conversion").
+/// - `Sequence`: convert the channels from the selected one down to channel 0, once (SLAU445I 21.2.7.2,
+///   p. 549).
+/// - `RepeatSingle`: convert the channel once for each trigger, until stopped (SLAU445I 21.2.7.3, p. 551).
+/// - `RepeatSequence`: convert the channels from the selected one down to channel 0 for each trigger,
+///   until stopped (SLAU445I 21.2.7.4, p. 553).
+pub use crate::_pac::adc::adcctl1::Adcconseq as ConversionMode;
 
 /// Marker trait for the timer whose capture/compare register 1 output starts conversions with
 /// [`TriggerSource::Timer`]: TB1 on the MSP430FR2x5x, TA1 on the other devices (ADC Trigger Signal
@@ -606,7 +595,7 @@ pub enum SampleMode {
 }
 
 /// Settings for [`Adc::start()`]. The default converts once, started by software.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ConversionConfig {
     /// How conversions repeat
     pub mode: ConversionMode,
@@ -618,6 +607,17 @@ pub struct ConversionConfig {
     /// instead of waiting for a trigger for each conversion (ADCMSC). In the repeat modes the conversions
     /// then continue until stopped. (SLAU445I 21.2.7.5, p. 555)
     pub back_to_back: bool,
+}
+
+impl Default for ConversionConfig {
+    fn default() -> Self {
+        ConversionConfig {
+            mode: ConversionMode::Single,
+            trigger: TriggerSource::default(),
+            sample_mode: SampleMode::default(),
+            back_to_back: false,
+        }
+    }
 }
 
 bitflags::bitflags! {
@@ -662,20 +662,6 @@ pub enum AdcVector {
     /// p. 558: "Only the ADCIFG0 is not reset by this ADCIV read access").
     ResultReady,
 }
-
-// ADCCTL0, ADCCTL1 and ADCMCTL0 fields (SLAU445I 21.3, p. 560 to p. 567)
-// ADCCTL0: SLAU445I Table 21-3, p. 561 to p. 562
-const ADCMSC: u16 = 1 << 7;
-const ADCENC: u16 = 1 << 1;
-const ADCSC: u16 = 1 << 0;
-// ADCCTL1: SLAU445I Table 21-4, p. 563 to p. 564
-const ADCSHS_MASK: u16 = 0b11 << 10;
-const ADCSHP: u16 = 1 << 9;
-const ADCISSH: u16 = 1 << 8;
-const ADCCONSEQ_MASK: u16 = 0b11 << 1;
-// ADCMCTL0: SLAU445I Table 21-8, p. 567
-const ADCSREF_MASK: u16 = 0b111 << 4;
-const ADCINCH_MASK: u16 = 0b1111;
 
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
 ///
@@ -746,10 +732,8 @@ impl<REF> Adc<REF> {
         // A single conversion started by software, as `start()` may have set otherwise (ADCSHSx = 00,
         // ADCISSH = 0, ADCCONSEQx = 00, ADCSHP = 1: SLAU445I Table 21-4, p. 563 to p. 564; ADCMSC = 0:
         // SLAU445I Table 21-3, p. 561)
-        self.adc_reg.adcctl1().modify(|r, w| unsafe {
-            w.bits(r.bits() & !(ADCSHS_MASK | ADCISSH | ADCCONSEQ_MASK) | ADCSHP)
-        });
-        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCMSC) });
+        self.adc_reg.adcctl1().modify(|_, w| w.adcshs().set(0).adcissh().clear_bit().adcconseq().set(0).adcshp().set_bit());
+        self.adc_reg.adcctl0().modify(|_, w| w.adcmsc().clear_bit());
         self.set_pin(pin);
         self.enable();
 
@@ -819,14 +803,15 @@ impl<REF> Adc<REF> {
         positive: PositiveReference<'a>,
         negative: NegativeReference<'a>,
     ) -> Adc<SelectedReference<'a>> {
-        // ADCSREFx: bits 5-4 select VR+, bit 6 selects VEREF- as VR- (SLAU445I Table 21-8, p. 567)
-        let vr_plus: u16 = match positive {
+        // ADCSREFx: bits 1-0 of the field select VR+, bit 2 selects VEREF- as VR- (SLAU445I Table 21-8,
+        // p. 567)
+        let vr_plus: u8 = match positive {
             PositiveReference::Avcc => 0b00,
             PositiveReference::Internal(_) => 0b01,
             PositiveReference::ExternalBuffered(_) => 0b10,
             PositiveReference::External(_) => 0b11,
         };
-        let vr_minus: u16 = match negative {
+        let vr_minus: u8 = match negative {
             NegativeReference::Avss => 0,
             NegativeReference::External(_) => 1,
         };
@@ -835,9 +820,7 @@ impl<REF> Adc<REF> {
         while self.adc_is_busy() {}
         self.disable();
         self.pending = None;
-        self.adc_reg.adcmctl0().modify(|r, w| unsafe {
-            w.bits(r.bits() & !ADCSREF_MASK | (vr_minus << 6 | vr_plus << 4))
-        });
+        self.adc_reg.adcmctl0().modify(|_, w| w.adcsref().set(vr_minus << 2 | vr_plus));
         Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData }
     }
 
@@ -855,7 +838,7 @@ impl<REF> Adc<REF> {
 
         // ADCSHSx (SLAU445I Table 21-4, p. 563), with the sources of the trigger tables cited at
         // `TriggerSource`
-        let shs: u16 = match config.trigger {
+        let shs: u8 = match config.trigger {
             TriggerSource::Software => 0b00,
             TriggerSource::Rtc => 0b01,
             TriggerSource::Timer => 0b10,
@@ -863,40 +846,26 @@ impl<REF> Adc<REF> {
             TriggerSource::Comparator => 0b11,
         };
         // ADCSHP and ADCISSH (SLAU445I Table 21-4, p. 563)
-        let sample = match (config.trigger, config.sample_mode) {
+        let (shp, issh) = match (config.trigger, config.sample_mode) {
             // The software trigger is a pulse (SLAU445I Table 21-3, p. 562: "ADCSC is reset automatically")
-            (TriggerSource::Software, _) => ADCSHP,
-            (_, SampleMode::RisingEdge) => ADCSHP,
-            (_, SampleMode::FallingEdge) => ADCSHP | ADCISSH,
-            (_, SampleMode::WhileHigh) => 0,
-            (_, SampleMode::WhileLow) => ADCISSH,
+            (TriggerSource::Software, _) => (true, false),
+            (_, SampleMode::RisingEdge) => (true, false),
+            (_, SampleMode::FallingEdge) => (true, true),
+            (_, SampleMode::WhileHigh) => (false, false),
+            (_, SampleMode::WhileLow) => (false, true),
         };
-        // ADCCONSEQx (SLAU445I Table 21-4, p. 564)
-        let conseq: u16 = match config.mode {
-            ConversionMode::Single => 0b00,
-            ConversionMode::Sequence => 0b01,
-            ConversionMode::RepeatSingle => 0b10,
-            ConversionMode::RepeatSequence => 0b11,
-        };
-        self.adc_reg.adcctl1().modify(|r, w| unsafe {
-            w.bits(r.bits() & !(ADCSHS_MASK | ADCSHP | ADCISSH | ADCCONSEQ_MASK) | shs << 10 | sample | conseq << 1)
-        });
-        let msc = if config.back_to_back { ADCMSC } else { 0 };
-        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCMSC | msc) });
-        self.adc_reg.adcmctl0().modify(|r, w| unsafe {
-            w.bits(r.bits() & !ADCINCH_MASK | PIN::channel() as u16)
-        });
+        // With ADCCONSEQx (SLAU445I Table 21-4, p. 564)
+        self.adc_reg.adcctl1().modify(|_, w| w.adcshs().set(shs).adcshp().bit(shp).adcissh().bit(issh).adcconseq().variant(config.mode));
+        self.adc_reg.adcctl0().modify(|_, w| w.adcmsc().bit(config.back_to_back));
+        self.adc_reg.adcmctl0().modify(|_, w| w.adcinch().set(PIN::channel()));
         // Discard results and flags of earlier conversions (ADCIFG: SLAU445I Table 21-14, p. 571)
         self.adc_reg.adcifg().write(|w| unsafe { w.bits(0) });
 
         self.enable();
         // Hardware triggers start conversions once ADCENC is set (SLAU445I Figure 21-10, p. 547); ADCSC may
         // be set with ADCENC (SLAU445I Table 21-3, p. 562)
-        let start = match config.trigger {
-            TriggerSource::Software => ADCENC | ADCSC,
-            _ => ADCENC,
-        };
-        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() | start) });
+        let software = matches!(config.trigger, TriggerSource::Software);
+        self.adc_reg.adcctl0().modify(|_, w| w.adcenc().set_bit().adcsc().bit(software));
     }
 
     /// The next result of the conversions started with [`start()`](Adc::start()), or `WouldBlock` if
@@ -914,13 +883,13 @@ impl<REF> Adc<REF> {
     /// Stop the conversions started with [`start()`](Adc::start()), after the current conversion in the
     /// single modes and after the current sequence in the sequence modes (SLAU445I 21.2.7.6, p. 555).
     pub fn stop(&mut self) {
-        let single = self.adc_reg.adcctl1().read().bits() & ADCCONSEQ_MASK == 0;
+        let single = self.adc_reg.adcctl1().read().adcconseq().bits() == 0;
         if single {
             // Clearing ADCENC would cut a single conversion short (SLAU445I 21.2.7.6, p. 555: "poll the busy
             // bit until reset before clearing ADCENC")
             while self.adc_is_busy() {}
         }
-        self.adc_reg.adcctl0().modify(|r, w| unsafe { w.bits(r.bits() & !ADCENC) });
+        self.adc_reg.adcctl0().modify(|_, w| w.adcenc().clear_bit());
     }
 
     /// Set the window comparator thresholds (ADCLO, ADCHI), in the configured [`DataFormat`]. Each result

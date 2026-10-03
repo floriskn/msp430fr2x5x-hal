@@ -59,10 +59,7 @@
 #[cfg(feature = "eusci_aclk")]
 use crate::clock::Aclk;
 use crate::clock::{Clock, Smclk};
-use crate::hw_traits::eusci::{
-    EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel, UCADDR_UCIDLE, UCDORM, UCRXIFG, UCSTTIFG, UCTXADDR,
-    UCTXBRK, UCTXCPTIFG, UCTXIFG,
-};
+use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, UcaIrctl, Ucssel};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
 use core::fmt::Display;
@@ -286,19 +283,17 @@ impl IrdaConfig {
         IrdaConfig { tx_pulse: 5, pulse_clock: IrdaClock::BitClk16, rx_filter: None, rx_inverted: false }
     }
 
-    // UCAxIRCTL: UCIRRXFLx bits 15-10, UCIRRXPL 9, UCIRRXFE 8, UCIRTXPLx 7-2, UCIRTXCLK 1, UCIREN 0
-    // (SLAU445I Table 22-16, p. 599)
+    // UCAxIRCTL with the encoder and decoder on (SLAU445I Table 22-16, p. 599)
     #[inline(always)]
-    fn irctl(&self) -> u16 {
-        let filter = match self.rx_filter {
-            Some(len) => (len.min(63) as u16) << 10 | 1 << 8,
-            None => 0,
-        };
-        filter
-            | (self.rx_inverted as u16) << 9
-            | (self.tx_pulse.min(63) as u16) << 2
-            | ((self.pulse_clock == IrdaClock::BitClk16) as u16) << 1
-            | 1
+    fn irctl(&self) -> UcaIrctl {
+        UcaIrctl {
+            uciren: true,
+            ucirtxclk: self.pulse_clock == IrdaClock::BitClk16,
+            ucirtxpl: self.tx_pulse.min(63),
+            ucirrxfe: self.rx_filter.is_some(),
+            ucirrxpl: self.rx_inverted,
+            ucirrxfl: self.rx_filter.map_or(0, |len| len.min(63)),
+        }
     }
 }
 
@@ -332,16 +327,16 @@ pub enum UartVector {
 // p. 590). UCSTTIFG and UCTXCPTIFG have no such access, so they're cleared here, as a UCAxIV read would.
 #[inline(always)]
 fn uart_vector<USCI: EUsciUart>(usci: &USCI) -> UartVector {
-    let pending = usci.ifg_bits() & usci.ie_bits();
-    if pending & UCRXIFG != 0 {
+    let pending = usci.pending_rd();
+    if pending.rx {
         UartVector::RxBufFull
-    } else if pending & UCTXIFG != 0 {
+    } else if pending.tx {
         UartVector::TxBufEmpty
-    } else if pending & UCSTTIFG != 0 {
-        usci.ifg_clr_bits(UCSTTIFG);
+    } else if pending.start_bit {
+        usci.sttifg_clear();
         UartVector::StartBit
-    } else if pending & UCTXCPTIFG != 0 {
-        usci.ifg_clr_bits(UCTXCPTIFG);
+    } else if pending.tx_complete {
+        usci.txcptifg_clear();
         UartVector::TxComplete
     } else {
         UartVector::None
@@ -718,15 +713,15 @@ where
         usci.mctlw_settings(baud_config.ucos16, baud_config.brs, baud_config.brf);
         // UCLISTEN in UCAxSTATW (SLAU445I Table 22-12, p. 596)
         usci.loopback(self.loopback.to_bool());
-        // UCGLITx is bits 1-0 of UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
-        usci.ctl1_wr(self.deglitch as u16);
-        // UCDELIMx is bits 5-4, UCABDEN bit 0 (SLAU445I Table 22-15, p. 598)
-        usci.abctl_wr(match self.mode {
-            UartMode::AutoBaud { delimiter } => (delimiter as u16) << 4 | 1,
-            _ => 0,
-        });
-        // UCAxIRCTL; 0 keeps the IrDA encoder and decoder off (UCIREN = 0, SLAU445I Table 22-16, p. 599)
-        usci.irctl_wr(self.irda.map_or(0, |irda| irda.irctl()));
+        // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
+        usci.ctl1_settings(self.deglitch as u8);
+        // UCABDEN and UCDELIMx in UCAxABCTL (SLAU445I Table 22-15, p. 598)
+        match self.mode {
+            UartMode::AutoBaud { delimiter } => usci.abctl_settings(true, delimiter as u8),
+            _ => usci.abctl_settings(false, 0),
+        }
+        // UCAxIRCTL; all zero keeps the IrDA encoder and decoder off (UCIREN = 0, SLAU445I Table 22-16, p. 599)
+        usci.irctl_settings(self.irda.map_or(UcaIrctl::default(), |irda| irda.irctl()));
         // UCAxCTLW0, with UCSWRST still set (SLAU445I Table 22-8, p. 593 to p. 594)
         usci.ctl0_settings(UcaCtlw0 {
             ucpen: self.parity.ucpen(),
@@ -807,17 +802,14 @@ where
     #[inline(always)]
     pub fn enable_tx_complete_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
-        // UCTXCPTIE is bit 3 of UCAxIE, the position of UCTXCPTIFG in UCAxIFG (SLAU445I Table 22-17, p. 600;
-        // SLAU445I Table 22-18, p. 601)
-        usci.ie_set_bits(UCTXCPTIFG);
+        usci.txcptie_set();
     }
 
     /// Disable interrupts when a character has been sent completely (UCTXCPTIE, SLAU445I Table 22-17, p. 600)
     #[inline(always)]
     pub fn disable_tx_complete_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
-        // UCTXCPTIE, bit 3 of UCAxIE (SLAU445I Table 22-17, p. 600)
-        usci.ie_clr_bits(UCTXCPTIFG);
+        usci.txcptie_clear();
     }
 
     /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
@@ -842,7 +834,7 @@ where
         }
         // "Set UCTXADDR, then write the address character to UCAxTXBUF. UCAxTXBUF must be ready for new data
         // (UCTXIFG = 1)." (SLAU445I 22.3.3.1.1, p. 578)
-        usci.ctl0_set_bits(UCTXADDR);
+        usci.txaddr_set();
         usci.tx_wr(address);
         Ok(())
     }
@@ -859,8 +851,8 @@ where
         // UCMODEx (bits 10-9) = 11b: automatic baud-rate mode, which needs 055h instead of 0h in UCAxTXBUF
         // (SLAU445I Table 22-8, p. 593 to p. 594). Set UCTXBRK, then write UCAxTXBUF, which must be ready for
         // new data, UCTXIFG = 1 (SLAU445I 22.3.3.2.1, p. 579 and SLAU445I 22.3.4.1, p. 581).
-        let auto_baud = usci.ctl0_rd() >> 9 & 0b11 == 0b11;
-        usci.ctl0_set_bits(UCTXBRK);
+        let auto_baud = usci.auto_baud_mode();
+        usci.txbrk_set();
         usci.tx_wr(if auto_baud { 0x55 } else { 0x00 });
         Ok(())
     }
@@ -936,18 +928,16 @@ where
     #[inline(always)]
     pub fn enable_start_bit_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
-        // Clear an old UCSTTIFG (bit 2 of UCAxIFG), then set UCSTTIE (bit 2 of UCAxIE) (SLAU445I Table 22-18,
-        // p. 601; SLAU445I Table 22-17, p. 600)
-        usci.ifg_clr_bits(UCSTTIFG);
-        usci.ie_set_bits(UCSTTIFG);
+        // Clear an old UCSTTIFG, then set UCSTTIE (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
+        usci.sttifg_clear();
+        usci.sttie_set();
     }
 
     /// Disable interrupts when a start bit is received (UCSTTIE, SLAU445I Table 22-17, p. 600)
     #[inline(always)]
     pub fn disable_start_bit_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
-        // UCSTTIE, bit 2 of UCAxIE (SLAU445I Table 22-17, p. 600)
-        usci.ie_clr_bits(UCSTTIFG);
+        usci.sttie_clear();
     }
 
     /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
@@ -969,11 +959,7 @@ where
     #[inline(always)]
     pub fn set_dormant(&mut self, dormant: bool) {
         let usci = unsafe { USCI::steal() };
-        if dormant {
-            usci.ctl0_set_bits(UCDORM);
-        } else {
-            usci.ctl0_clr_bits(UCDORM);
-        }
+        usci.dormant(dormant);
     }
 
     /// Like reading a character, but also returns whether it's an address character, in the multiprocessor
@@ -982,7 +968,7 @@ where
     pub fn read_with_address_flag(&mut self) -> nb::Result<(u8, bool), RecvError> {
         let usci = unsafe { USCI::steal() };
         // The flag is cleared when the character is read, so read it first (SLAU445I Table 22-13, p. 597)
-        let address = usci.statw_bits() & UCADDR_UCIDLE != 0;
+        let address = usci.statw_rd().ucaddr_ucidle();
         self.recv().map(|data| (data, address))
     }
 
@@ -993,9 +979,7 @@ where
     #[inline]
     pub fn auto_baud_errors(&self) -> (bool, bool) {
         let usci = unsafe { USCI::steal() };
-        // UCBTOE is bit 2, UCSTOE bit 3 (SLAU445I Table 22-15, p. 598)
-        let abctl = usci.abctl_rd();
-        (abctl & 1 << 2 != 0, abctl & 1 << 3 != 0)
+        (usci.btoe_rd(), usci.stoe_rd())
     }
 
     /// Reads raw value from Rx buffer with no checks for validity

@@ -68,7 +68,7 @@ fn main() -> ! {
         // The RTC is stopped (RTCSS = 00b: SLAU445I Table 15-2, p. 420), so the device enters LPM4.5
         // rather than LPM3.5 (SLAU445I 1.4.3.1, p. 41), and SVSHE = 0 turns the high-side SVS off in
         // LPM4.5 (SLAU445I Table 2-2, p. 91).
-        enter_lpm4_5(wdt, periph.rtc, SvsState::Svshe0);
+        enter_lpm4_5(wdt, periph.rtc, SvsState::Disabled);
     }
 }
 
