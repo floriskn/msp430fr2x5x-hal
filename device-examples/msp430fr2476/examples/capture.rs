@@ -29,6 +29,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -38,6 +39,11 @@ fn main() -> ! {
         .split(&pmm);
     let p2 = Batch::new(periph.p2).split(&pmm);
 
+    // MCLK = SMCLK = DCOCLKDIV in the 1 MHz range, and ACLK from the VLO (SELMS, SELA: SLAU445I
+    // Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118). SLASEO7C 9.10.2, p. 49 lists the VLO
+    // as an ACLK source of this device; SLAU445I Table 3-1, p. 98 and the footnote of SLAU445I
+    // Table 3-8, p. 117 give ACLK = VLO for the enhanced clock system only. The HAL follows the data
+    // sheet.
     let (smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
@@ -45,6 +51,8 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     // eUSCI_A1 TXD is P2.6 with P2SEL = 01 (SLASEO7C Table 9-24, p. 66; SLASEO7C Table 9-11, p. 54)
+    // (LSB first, 8 data bits, one stop bit, no parity: UCMSB, UC7BIT, UCSPB, UCPEN in SLAU445I
+    // Table 22-8, p. 593; SMCLK is UCSSEL = 10b: SLASEO7C Table 9-8, p. 50)
     let mut tx = SerialConfig::new(
         periph.e_usci_a1,
         BitOrder::LsbFirst,
@@ -58,7 +66,10 @@ fn main() -> ! {
     .tx_only(p2.pin6.to_alternate1());
 
     // TA0 counts ACLK, here from the VLO. Its CCR1 input A (CCI1A) is P1.1 with P1SEL = 10 and P1DIR = 0
-    // (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-23, p. 65).
+    // (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-23, p. 65). ACLK is TASSEL = 01b (SLASEO7C
+    // Table 9-8, p. 50). A capture on the falling edge (CM = 10b, CCIS = 00b: SLAU445I Table 13-6,
+    // p. 386) copies TA0R into TA0CCR1 and sets CCIFG (SLAU445I 13.2.4.1, p. 374); a second capture
+    // before the first is read sets COV (SLAU445I 13.2.4.1, p. 375), reported as `OverCapture`.
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
         .config_cap1_input_A(p1.pin1.to_alternate2())
         .config_cap1_trigger(CapTrigger::FallingEdge)

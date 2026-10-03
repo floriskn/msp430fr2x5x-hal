@@ -3,12 +3,17 @@
 //! Besides the internal voltage reference and temperature sensor, [`Pmm`] reports why the device
 //! reset ([`Pmm::take_reset_cause()`]), triggers software resets and controls the high-side supply
 //! voltage supervisor (SVSH).
+//!
+//! The PMM is described in SLAU445I chapter 2: the supply voltage supervisor in SLAU445I 2.2.2, p. 86, the
+//! software BOR and POR in SLAU445I 2.2.6, p. 88, the shared reference in SLAU445I 2.2.8, p. 88 and the
+//! temperature sensor in SLAU445I 2.2.9, p. 89. The reset vector register SYSRSTIV is a SYS register
+//! (SLAU445I 1.15.10, p. 72).
 
 use core::marker::PhantomData;
 
 use crate::{_pac, info_mem::InfoMemory, lpm::SvsState};
 
-/// PMM type
+/// PMM type (the PMM registers: SLAU445I Table 2-1, p. 90)
 pub struct Pmm(_pac::Pmm);
 
 /// Struct indicating that the internal voltage reference has been enabled and configured.
@@ -60,39 +65,41 @@ pub struct VrefOutput<PIN>(pub(crate) PIN);
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ResetCause {
-    /// Power-up, or the supply dropped below the brownout level (BOR)
+    /// Power-up, or the supply dropped below the brownout level (BOR, SYSRSTIV 02h; SLAU445I 2.2.6, p. 88)
     Brownout,
-    /// A low level on the RST/NMI pin (BOR)
+    /// A low level on the RST/NMI pin (BOR, SYSRSTIV 04h; SLAU445I 1.2, p. 30)
     ResetPin,
-    /// [`Pmm::software_bor()`] (BOR)
+    /// [`Pmm::software_bor()`] (BOR, SYSRSTIV 06h; PMMSWBOR in SLAU445I Table 2-2, p. 91)
     SoftwareBor,
-    /// A wake-up from LPM3.5 or LPM4.5 (BOR)
+    /// A wake-up from LPM3.5 or LPM4.5 (BOR, SYSRSTIV 08h; SLAU445I 1.4.3.2, p. 42)
     Lpmx5WakeUp,
-    /// A security violation (BOR)
+    /// A security violation (BOR, SYSRSTIV 0Ah; SLASEC4D Table 6-12, p. 70)
     SecurityViolation,
-    /// The supply dropped below the high-side SVS level (BOR)
+    /// The supply dropped below the high-side SVS level (BOR, SYSRSTIV 0Eh; SVSHIFG in SLAU445I Table 2-6,
+    /// p. 96)
     Svsh,
-    /// [`Pmm::software_por()`] (POR)
+    /// [`Pmm::software_por()`] (POR, SYSRSTIV 14h; PMMSWPOR in SLAU445I Table 2-2, p. 91)
     SoftwarePor,
-    /// The watchdog timed out (PUC)
+    /// The watchdog timed out (PUC, SYSRSTIV 16h; SLAU445I 1.2, p. 30)
     WatchdogTimeout,
-    /// A write to the watchdog without its password (PUC)
+    /// A write to the watchdog without its password (PUC, SYSRSTIV 18h; SLAU445I 1.2, p. 30)
     WatchdogPassword,
-    /// A write to the FRAM controller without its password (PUC)
+    /// A write to the FRAM controller without its password (PUC, SYSRSTIV 1Ah; SLAU445I 1.2, p. 30)
     FramPassword,
     /// The FRAM detected a bit error it couldn't correct, see
     /// [`Fram::set_uncorrectable_bit_error_action()`](crate::fram::Fram::set_uncorrectable_bit_error_action)
-    /// (PUC, GCCTL0.UBDRSTEN in SLAU445I Table 6-3, p. 307)
+    /// (PUC, SYSRSTIV 1Ch; GCCTL0.UBDRSTEN in SLAU445I Table 6-3, p. 307)
     FramBitError,
-    /// The CPU fetched an instruction from the peripheral area (PUC)
+    /// The CPU fetched an instruction from the peripheral area (PUC, SYSRSTIV 1Eh; SLAU445I 1.2, p. 30)
     PeripheralAreaFetch,
-    /// A write to the PMM without its password (PUC)
+    /// A write to the PMM without its password (PUC, SYSRSTIV 20h; SLAU445I 2.3, p. 90)
     PmmPassword,
     /// The DCO ran too fast for the FLL, see
     /// [`ClockConfig::reset_on_fll_unlock()`](crate::clock::ClockConfig::reset_on_fll_unlock) (PUC,
-    /// CSCTL7.FLLULPUC in SLAU445I Table 3-11, p. 121: FLLUNLOCK = 10b, "too fast")
+    /// SYSRSTIV 24h; CSCTL7.FLLULPUC in SLAU445I Table 3-11, p. 121: FLLUNLOCK = 10b, "too fast")
     FllUnlock,
-    /// A value the data sheets list as reserved
+    /// A value the data sheets list as reserved (SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48;
+    /// SLASEO7C Table 9-10, p. 52; SLASEE4C Table 6-10, p. 52)
     Reserved(u16),
 }
 
@@ -144,7 +151,8 @@ impl Pmm {
     /// there may be no reason at all.
     pub fn take_reset_cause(&mut self) -> Option<ResetCause> {
         let sys = unsafe { &*_pac::Sys::ptr() };
-        // SYSRSTIV values from the data sheet tables cited on `ResetCause`
+        // SYSRSTIV values: SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48; SLASEO7C Table 9-10,
+        // p. 52; SLASEE4C Table 6-10, p. 52
         match sys.sysrstiv().read().bits() {
             0x00 => None,
             0x02 => Some(ResetCause::Brownout),
@@ -232,7 +240,7 @@ impl Pmm {
         Some(InternalVRef(vref))
     }
 
-    /// Disables the internal reference voltage
+    /// Disables the internal reference voltage (clears PMMCTL2.INTREFEN, SLAU445I Table 2-4, p. 94)
     pub fn disable_internal_reference(&mut self, _vref: InternalVRef) {
         self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.intrefen().clear_bit()) });
     }
@@ -253,7 +261,7 @@ impl Pmm {
         }
     }
 
-    /// Disables the internal temperature sensor
+    /// Disables the internal temperature sensor (clears PMMCTL2.TSENSOREN, SLAU445I Table 2-4, p. 93)
     pub fn disable_internal_temp_sensor(&mut self, _tsense: InternalTempSensor) {
         self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.tsensoren().clear_bit()) });
     }
@@ -271,7 +279,8 @@ impl Pmm {
         VrefOutput(pin)
     }
 
-    /// Stop outputting the 1.2 V reference, and return the pin.
+    /// Stop outputting the 1.2 V reference, and return the pin (clears PMMCTL2.EXTREFEN, SLAU445I
+    /// Table 2-4, p. 94).
     pub fn disable_vref_output<PIN>(&mut self, output: VrefOutput<PIN>) -> PIN {
         self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.extrefen().clear_bit()) });
         output.0

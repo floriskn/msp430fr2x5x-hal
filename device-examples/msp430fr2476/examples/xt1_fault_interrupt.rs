@@ -50,6 +50,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -67,6 +68,8 @@ fn main() -> ! {
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 
+    // MCLK = SMCLK = DCOCLKDIV (SELMS = 000b) and ACLK from XT1CLK (SELA = 00b) (SLAU445I Table 3-8,
+    // p. 117); XT1 in bypass mode (XT1BYPASS = 1: SLAU445I Table 3-10, p. 120)
     let (_smclk, _aclk, mut xt1clk, mut delay) = ClockConfig::new(periph.cs)
         .xt1clk_on(Xt1Config::bypass(XT1_FREQ_HZ, xin))
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
@@ -74,6 +77,7 @@ fn main() -> ! {
         .aclk_xt1clk()
         .freeze(&mut fram);
 
+    // OFIE enables the oscillator fault interrupt (SLAU445I Table 1-9, p. 62)
     xt1clk.enable_fault_interrupt();
 
     loop {
@@ -84,7 +88,8 @@ fn main() -> ! {
             led2_red.set_high().ok();
             // The fault can only be cleared once XT1 runs again
             // (Cleared while the fault remains, the bits "are automatically set again":
-            // SLAU445I 3.2.13, p. 109)
+            // SLAU445I 3.2.13, p. 109. XT1OFFG: SLAU445I Table 3-11, p. 122; OFIFG: SLAU445I Table 1-10,
+            // p. 63.)
             xt1clk.clear_fault();
             if !xt1clk.is_faulted() {
                 led2_red.set_low().ok();
@@ -95,11 +100,14 @@ fn main() -> ! {
     }
 }
 
+// The user NMI vector: the NMI pin (NMIIFG) and oscillator faults (OFIFG) (FFFAh: SLASEO7C Table 9-2,
+// p. 46)
 #[interrupt]
 fn UNMI() {
     // This also disables the fault interrupt, which would otherwise be requested again straight
     // away for as long as the fault lasts
-    // ("as long as a fault condition still exists, the OFIFG remains set": SLAU445I 3.2.13, p. 110)
+    // ("as long as a fault condition still exists, the OFIFG remains set": SLAU445I 3.2.13, p. 110;
+    // it clears OFIE: SLAU445I Table 1-9, p. 62)
     if clock::take_fault_interrupt() {
         XT1_FAULT.store(true);
     }

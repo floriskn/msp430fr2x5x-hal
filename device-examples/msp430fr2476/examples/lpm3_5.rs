@@ -24,7 +24,12 @@ use panic_msp430 as _;
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366). A WDT in watchdog mode would keep
+    // the device out of LPMx.5 (SLAU445I 1.4.3.1 step 7, p. 41).
     let wdt = Wdt::constrain(periph.wdt_a);
+    // Pmm::new clears LOCKLPM5 here, before the pins are configured again. After a wake-up from LPM3.5,
+    // SLAU445I 1.4.3.3 steps 1 to 4, p. 42 configures the pins and the RTC first and clears LOCKLPM5
+    // after that (as xt1_lpm3_5.rs does with Pmm::new_locked); this example keeps the simpler order.
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // The HAL uses some of the SYS registers internally, but we need a copy as well. We promise not to modify any control bits used by the HAL.
@@ -32,7 +37,8 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of energy (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
-    // (SLAU445I 8.3.3, p. 317: "It is critical that no inputs are left floating", or LPMx.5 draws more)
+    // (SLAU445I 8.3.3, p. 317: "It is critical that no inputs are left floating", or LPMx.5 draws more.
+    // Pulldowns, PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I Table 8-1, p. 313.)
     let port1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -63,6 +69,8 @@ fn main() -> ! {
         // Enter LPM3.5 (without having to configure the RTC, we did that already).
         // (This relies on the RTC keeping its configuration through LPM3.5. SLAU445I 1.4.3.3 step 1,
         // p. 42 initializes the RTC registers again after a wake-up, before LOCKLPM5 is cleared.)
+        // SVSHE = 0 turns the high-side SVS off in LPM3.5 (SLAU445I Table 2-2, p. 91; SLAU445I 1.4.3.1
+        // step 9c, p. 41).
         unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Svshe0) };
     }
     // Otherwise this is a fresh start. Configure the RTC.
@@ -70,6 +78,10 @@ fn main() -> ! {
         // Configure RTC for 1 Hz interrupt
         // (VLOCLK_FREQ_HZ is the VLO's typical 10 kHz: SLASEO7C 8.12.3.5, p. 30; "10 kHz ±50%":
         // SLASEO7C Table 9-8, p. 50.)
+        // (RTCSS = 11b selects VLOCLK, RTCPS = 000b divides by 1 and RTCIE enables the interrupt:
+        // SLAU445I Table 15-2, p. 420. In LPM3.5 the RTC can run from XT1CLK or VLOCLK only: SLAU445I
+        // 15.2.2, p. 417. A period lasts the modulo value + 1 ticks: SLAU445I 15.2.1, p. 417; SLAU445I
+        // Figure 15-2, p. 418.)
         let mut rtc = Rtc::new(periph.rtc).use_vloclk();
         rtc.set_clk_div(RtcDiv::_1);
         rtc.start(VLOCLK_FREQ_HZ); // Count up to VLOCLK freq -> 1 Hz period
@@ -79,6 +91,7 @@ fn main() -> ! {
         // p. 41).
         // Leaving LPMx.5 requires a full system reset, so this function will never return.
         // ("Any exit from LPMx.5 causes a BOR": SLAU445I 1.4.3.2, p. 42)
+        // SVSHE = 0 turns the high-side SVS off in LPM3.5 (SLAU445I Table 2-2, p. 91)
         enter_lpm3_5(wdt, rtc, SvsState::Svshe0);
     }
 }

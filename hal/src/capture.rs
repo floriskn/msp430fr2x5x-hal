@@ -61,6 +61,11 @@ impl Default for PinConfig {
 pub enum NoCapturePin {}
 
 /// Extension trait for creating capture pins from timer peripherals
+///
+/// Input A of capture pin n is the timer's CCInA input (CCIS = 00b: SLAU445I Table 13-6, p. 386; SLAU445I
+/// Table 14-8, p. 411). Which pin drives it is device specific: see the timer signal connection tables
+/// (SLASEC4D Tables 6-16 to 6-19, p. 73 to p. 75; SLASE59F Tables 6-11 to 6-14, p. 50 to p. 52; SLASEO7C
+/// Tables 9-12 to 9-15, p. 55 to p. 59; SLASEE4C Figure 6-2, p. 54).
 pub trait CapturePeriph<M: PinMap = DefaultMapping>: TimerPeriph<M> {
     /// GPIO pin that supplies input A for capture pin 0
     type Gpio0;
@@ -135,6 +140,9 @@ macro_rules! config_fn {
 
 /// Builder object for configuring capture ports derived from timer peripherals with 2
 /// capture-compare registers, see [`CaptureConfig3`]
+///
+/// The timers with 2 capture/compare registers are TA2 and TA3 on the MSP430FR2433 (SLASE59F Table 6-13,
+/// p. 51; SLASE59F Table 6-14, p. 52).
 pub struct CaptureConfig2<T, M = DefaultMapping>
 where
     T: CapturePeriph<M> + CapCmpTimer2<M>,
@@ -165,7 +173,9 @@ where
     config_fn!(config_cap0_input_A, config_cap0_input_B, config_cap0_trigger, config_cap0_software, cap0, Gpio0);
     config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, config_cap1_software, cap1, Gpio1);
 
-    /// Writes all previously configured timer and capture settings into peripheral registers
+    /// Writes all previously configured timer and capture settings into peripheral registers (TAxCTL and
+    /// TAxCCTLn: SLAU445I Table 13-4, p. 384; SLAU445I Table 13-6, p. 386), then starts the timer in
+    /// continuous mode (SLAU445I 13.2.3.2, p. 372).
     pub fn commit(self) -> CaptureParts2<T, M> {
         let timer = self.timer;
         self.config.write_regs(&timer);
@@ -185,6 +195,12 @@ where
 /// capture trigger event, which determines the input transitions that actually trigger the
 /// capture (CCIS and CM: SLAU445I 13.2.4.1, p. 374; 14.2.4.1, p. 398). By default, all pins use GND
 /// as their input source and trigger a capture on a rising edge.
+///
+/// The timers with 3 capture/compare registers, by device: TB0 to TB2 on the MSP430FR2x5x (SLASEC4D
+/// Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74), TA0 and TA1 on the
+/// MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), TA0 to TA3 on the MSP430FR247x
+/// (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58), and TA0 and TA1
+/// on the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54).
 pub struct CaptureConfig3<T, M = DefaultMapping>
 where
     T: CapturePeriph<M> + CapCmpTimer3<M>,
@@ -223,7 +239,10 @@ where
     config_fn!(config_cap1_input_A, config_cap1_input_B, config_cap1_trigger, config_cap1_software, cap1, Gpio1);
     config_fn!(config_cap2_input_A, config_cap2_input_B, config_cap2_trigger, config_cap2_software, cap2, Gpio2);
 
-    /// Writes all previously configured timer and capture settings into peripheral registers
+    /// Writes all previously configured timer and capture settings into peripheral registers (TAxCTL or
+    /// TBxCTL, and TAxCCTLn or TBxCCTLn: SLAU445I Table 13-4, p. 384; SLAU445I Table 13-6, p. 386; SLAU445I
+    /// Table 14-6, p. 409; SLAU445I Table 14-8, p. 411), then starts the timer in continuous mode (SLAU445I
+    /// 13.2.3.2, p. 372; 14.2.3.2, p. 395).
     pub fn commit(self) -> CaptureParts3<T, M> {
         let timer = self.timer;
         self.config.write_regs(&timer);
@@ -249,6 +268,9 @@ where
 /// capture trigger event, which determines the input transitions that actually trigger the
 /// capture (CCIS and CM: SLAU445I 13.2.4.1, p. 374; 14.2.4.1, p. 398). By default, all pins use GND
 /// as their input source and trigger a capture on a rising edge.
+///
+/// The timers with 7 capture/compare registers are TB3 on the MSP430FR2x5x (SLASEC4D Table 6-19, p. 75)
+/// and TB0 on the MSP430FR247x (SLASEO7C Table 9-15, p. 59). Both are Timer_B.
 pub struct CaptureConfig7<T, M = DefaultMapping>
 where
     T: CapturePeriph<M> + CapCmpTimer7<M>,
@@ -299,7 +321,9 @@ where
     config_fn!(config_cap5_input_A, config_cap5_input_B, config_cap5_trigger, config_cap5_software, cap5, Gpio5);
     config_fn!(config_cap6_input_A, config_cap6_input_B, config_cap6_trigger, config_cap6_software, cap6, Gpio6);
 
-    /// Writes all previously configured timer and capture settings into peripheral registers
+    /// Writes all previously configured timer and capture settings into peripheral registers (TBxCTL and
+    /// TBxCCTLn: SLAU445I Table 14-6, p. 409; SLAU445I Table 14-8, p. 411), then starts the timer in
+    /// continuous mode (SLAU445I 14.2.3.2, p. 395).
     pub fn commit(self) -> CaptureParts7<T, M> {
         let timer = self.timer;
         self.config.write_regs(&timer);
@@ -327,60 +351,77 @@ where
 }
 
 /// Collection of capture pins derived from timer peripheral with 2 capture-compare registers
+///
+/// The timers with 2 capture/compare registers are TA2 and TA3 on the MSP430FR2433 (SLASE59F Table 6-13,
+/// p. 51; SLASE59F Table 6-14, p. 52).
 pub struct CaptureParts2<T, M = DefaultMapping>
 where
     T: CapCmpTimer2<M>,
     M: PinMap,
 {
-    /// Capture pin 0 (derived from capture-compare register 0)
+    /// Capture pin 0 (derived from capture-compare register 0, TAxCCR0: SLAU445I Table 13-7, p. 388)
     pub cap0: Capture<T, CCR0>,
-    /// Capture pin 1 (derived from capture-compare register 1)
+    /// Capture pin 1 (derived from capture-compare register 1, TAxCCR1: SLAU445I Table 13-7, p. 388)
     pub cap1: Capture<T, CCR1>,
-    /// Interrupt vector register
+    /// Interrupt vector register (TAxIV: SLAU445I Table 13-8, p. 388)
     pub tbxiv: TBxIV<T, M>,
 }
 
 /// Collection of capture pins derived from timer peripheral with 3 capture-compare registers
+///
+/// The timers with 3 capture/compare registers, by device: TB0 to TB2 on the MSP430FR2x5x (SLASEC4D
+/// Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74), TA0 and TA1 on the
+/// MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), TA0 to TA3 on the MSP430FR247x
+/// (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58), and TA0 and TA1
+/// on the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54).
 pub struct CaptureParts3<T, M = DefaultMapping>
 where
     T: CapCmpTimer3<M>,
     M: PinMap,
 {
-    /// Capture pin 0 (derived from capture-compare register 0)
+    /// Capture pin 0 (derived from capture-compare register 0: SLAU445I Table 13-7, p. 388; SLAU445I
+    /// Table 14-9, p. 413)
     pub cap0: Capture<T, CCR0>,
-    /// Capture pin 1 (derived from capture-compare register 1)
+    /// Capture pin 1 (derived from capture-compare register 1: SLAU445I Table 13-7, p. 388; SLAU445I
+    /// Table 14-9, p. 413)
     pub cap1: Capture<T, CCR1>,
-    /// Capture pin 2 (derived from capture-compare register 2)
+    /// Capture pin 2 (derived from capture-compare register 2: SLAU445I Table 13-7, p. 388; SLAU445I
+    /// Table 14-9, p. 413)
     pub cap2: Capture<T, CCR2>,
-    /// Interrupt vector register
+    /// Interrupt vector register (TAxIV/TBxIV: SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T, M>,
 }
 
 /// Collection of capture pins derived from timer peripheral with 7 capture-compare registers
+///
+/// The timers with 7 capture/compare registers are TB3 on the MSP430FR2x5x (SLASEC4D Table 6-19, p. 75)
+/// and TB0 on the MSP430FR247x (SLASEO7C Table 9-15, p. 59). Both are Timer_B.
 pub struct CaptureParts7<T, M = DefaultMapping>
 where
     T: CapCmpTimer7<M>,
     M: PinMap,
 {
-    /// Capture pin 0 (derived from capture-compare register 0)
+    /// Capture pin 0 (derived from capture-compare register 0, TBxCCR0: SLAU445I Table 14-9, p. 413)
     pub cap0: Capture<T, CCR0>,
-    /// Capture pin 1 (derived from capture-compare register 1)
+    /// Capture pin 1 (derived from capture-compare register 1, TBxCCR1: SLAU445I Table 14-9, p. 413)
     pub cap1: Capture<T, CCR1>,
-    /// Capture pin 2 (derived from capture-compare register 2)
+    /// Capture pin 2 (derived from capture-compare register 2, TBxCCR2: SLAU445I Table 14-9, p. 413)
     pub cap2: Capture<T, CCR2>,
-    /// Capture pin 3 (derived from capture-compare register 3)
+    /// Capture pin 3 (derived from capture-compare register 3, TBxCCR3: SLAU445I Table 14-9, p. 413)
     pub cap3: Capture<T, CCR3>,
-    /// Capture pin 4 (derived from capture-compare register 4)
+    /// Capture pin 4 (derived from capture-compare register 4, TBxCCR4: SLAU445I Table 14-9, p. 413)
     pub cap4: Capture<T, CCR4>,
-    /// Capture pin 5 (derived from capture-compare register 5)
+    /// Capture pin 5 (derived from capture-compare register 5, TBxCCR5: SLAU445I Table 14-9, p. 413)
     pub cap5: Capture<T, CCR5>,
-    /// Capture pin 6 (derived from capture-compare register 6)
+    /// Capture pin 6 (derived from capture-compare register 6, TBxCCR6: SLAU445I Table 14-9, p. 413)
     pub cap6: Capture<T, CCR6>,
-    /// Interrupt vector register
+    /// Interrupt vector register (TBxIV: SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T, M>,
 }
 
-/// Single capture pin with its own capture register
+/// Single capture pin with its own capture register: a capture/compare block in capture mode, which copies
+/// the timer value into its TAxCCRn/TBxCCRn (SLAU445I 13.2.4.1, p. 374; SLAU445I Table 13-7, p. 388;
+/// SLAU445I Table 14-9, p. 413)
 pub struct Capture<T: CapCmp<C>, C>(PhantomData<T>, PhantomData<C>);
 
 impl<T: CapCmp<C>, C> Capture<T, C> {
@@ -388,7 +429,7 @@ impl<T: CapCmp<C>, C> Capture<T, C> {
 }
 
 // Candidate for embedded_hal inclusion
-/// Single input capture pin
+/// Single input capture pin (a capture/compare block in capture mode: SLAU445I 13.2.4.1, p. 374)
 pub trait CapturePin {
     /// Type  of value returned by capture
     type Capture;
@@ -433,7 +474,7 @@ impl<T: CapCmp<C>, C> Capture<T, C> {
     }
 
     #[inline]
-    /// Disable capture interrupts
+    /// Disable capture interrupts (CCIE: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
@@ -486,7 +527,9 @@ impl<T: CapCmp<CCR0>> Capture<T, CCR0> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OverCapture(pub u16);
 
-/// Capture TBIV interrupt vector
+/// Capture TBIV interrupt vector: the TAxIV/TBxIV values, from no interrupt through CCR1 to CCR6 to the
+/// timer overflow (SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414). CCR0 has its own vector
+/// (SLAU445I 13.2.6.1, p. 380; 14.2.6.1, p. 405).
 pub enum CaptureVector<T> {
     /// No pending interrupt
     NoInterrupt,
@@ -507,7 +550,8 @@ pub enum CaptureVector<T> {
 }
 
 /// Token returned when reading the interrupt vector that allows a one-time read of the capture
-/// register corresponding to the interrupt.
+/// register corresponding to the interrupt (TAxCCRn/TBxCCRn: SLAU445I Table 13-7, p. 388; SLAU445I
+/// Table 14-9, p. 413).
 pub struct InterruptCapture<T, C>(PhantomData<T>, PhantomData<C>);
 
 impl<T: CapCmp<C>, C> InterruptCapture<T, C> {
@@ -523,7 +567,8 @@ impl<T: CapCmp<C>, C> InterruptCapture<T, C> {
 }
 
 // TODO: should have default?
-/// Interrupt vector register for determining which capture-register caused an ISR
+/// Interrupt vector register for determining which capture-register caused an ISR (TAxIV/TBxIV: SLAU445I
+/// Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
 pub struct TBxIV<T: TimerPeriph<M>, M: PinMap = DefaultMapping>(PhantomData<T>, PhantomData<M>);
 
 impl<T: TimerPeriph<M>, M: PinMap> TBxIV<T, M> {

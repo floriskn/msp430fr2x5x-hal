@@ -27,6 +27,8 @@ use core::marker::PhantomData;
 
 use embedded_hal::delay::DelayNs;
 
+// DIVM and DIVS settings (SLAU445I Table 3-9, p. 118); XT1DRIVE settings (SLAU445I Table 3-10,
+// p. 119)
 pub use crate::_pac::cs::csctl5::{Divm as MclkDiv, Divs as SmclkDiv};
 pub use crate::_pac::cs::csctl6::Xt1drive as Xt1Drive;
 pub use crate::device_specific::clock::{Xt1Xin, Xt1Xout};
@@ -103,23 +105,23 @@ const DCO_RANGE_BOUNDARY_HZ: [u32; 7] = [
 // CSCTL0 and CSCTL1 fields used by the DCO software trim. They're accessed as raw bits because
 // the PACs name them differently. CSCTL0: SLAU445I Table 3-4, p. 113; CSCTL1: SLAU445I
 // Table 3-5, p. 114.
-/// CSCTL0 DCO tap bits (bits 8-0)
+/// CSCTL0 DCO tap bits (bits 8-0, SLAU445I Table 3-4, p. 113)
 const DCO_TAP_MASK: u16 = 0x1FF;
 /// The middle of the DCO tap range, where the trim routine aims the locked tap (SLAU445I 3.2.11.2,
 /// p. 107: "Ideally, the DCO taps are locked close to the midrange (that is, 256 taps)")
 const DCO_TAP_MID: u16 = 256;
-/// CSCTL1 DCOFTRIMEN bit (bit 7)
+/// CSCTL1 DCOFTRIMEN bit (bit 7, SLAU445I Table 3-5, p. 114)
 const DCOFTRIMEN: u16 = 1 << 7;
-/// CSCTL1 DCOFTRIM field position (bits 6-4)
+/// CSCTL1 DCOFTRIM field position (bits 6-4, SLAU445I Table 3-5, p. 114)
 const DCOFTRIM_SHIFT: u16 = 4;
-/// CSCTL1 DCOFTRIM field
+/// CSCTL1 DCOFTRIM field (SLAU445I Table 3-5, p. 114)
 const DCOFTRIM_MASK: u16 = 0b111 << DCOFTRIM_SHIFT;
 /// Highest DCOFTRIM value (SLAU445I 3.2.11.2, p. 107: "DCOFTRIM values between 0 and 7")
 const DCOFTRIM_MAX: u16 = 7;
 /// DCOFTRIM value the trim routine starts from, as in TI's reference routine. It is also the reset
 /// value of DCOFTRIM (SLAU445I Table 3-5, p. 114).
 const DCOFTRIM_START: u16 = 3;
-/// CSCTL1 DCORSEL field position (bits 3-1)
+/// CSCTL1 DCORSEL field position (bits 3-1, SLAU445I Table 3-5, p. 114)
 const DCORSEL_SHIFT: u16 = 1;
 
 #[derive(Clone, Copy)]
@@ -249,7 +251,8 @@ impl DcoclkFreqSel {
         highest
     }
 
-    /// Numerical frequency, with REFO as FLL reference
+    /// Numerical frequency, with REFO as FLL reference: (FLLN + 1) x 32768 Hz (SLAU445I 3.2.5,
+    /// p. 104)
     #[inline]
     pub fn freq(self) -> u32 {
         (self.multiplier() as u32) * (REFOCLK_FREQ_HZ as u32)
@@ -262,7 +265,7 @@ impl DcoclkFreqSel {
     const HIGHEST: Self = DcoclkFreqSel::_16MHz;
 }
 
-/// What the FLL locks DCOCLKDIV to
+/// What the FLL locks DCOCLKDIV to (SLAU445I 3.2.5, p. 104)
 #[derive(Clone, Copy)]
 struct DcoTarget {
     /// The FLL locks to the largest multiple of its reference that doesn't exceed this (SLAU445I
@@ -270,7 +273,8 @@ struct DcoTarget {
     freq: u32,
     /// DCO range
     range: Dcorsel,
-    /// Lock with the factory DCO trim instead of trimming in software
+    /// Lock with the factory DCO trim instead of trimming in software (SLAU445I 3.2.11.1, p. 106;
+    /// SLAU445I 3.2.11.2, p. 107)
     factory_trim: bool,
 }
 
@@ -309,7 +313,7 @@ impl DcoTarget {
         DcoTarget { freq, range, factory_trim: false }
     }
 
-    /// Nominal frequency of the DCO range
+    /// Nominal frequency of the DCO range (DCORSEL, SLAU445I Table 3-5, p. 114)
     #[inline(always)]
     fn range_freq(self) -> u32 {
         DCO_RANGE_NOMINAL_HZ[self.range as usize]
@@ -358,7 +362,8 @@ mod sealed {
     impl SealedXt1Range for super::HighFrequency {}
 }
 
-/// XT1 frequency modes: [`LowFrequency`], and `HighFrequency` on devices that support it
+/// XT1 frequency modes: [`LowFrequency`], and `HighFrequency` on devices that support it (XTS,
+/// SLAU445I Table 3-10, p. 119)
 pub trait Xt1Range: sealed::SealedXt1Range {
     #[doc(hidden)]
     const HIGH_FREQUENCY: bool;
@@ -698,6 +703,7 @@ impl<MODE, RANGE: Xt1Range> Xt1Config<MODE, RANGE> {
     }
 
     /// The FLL reference XT1 provides: its frequency after FLLREFDIV, and the FLLREFDIV setting
+    /// (SLAU445I 3.2.5, p. 104; FLLREFDIV: SLAU445I Table 3-7, p. 116)
     #[inline]
     fn fll_reference(&self) -> (u32, Fllrefdiv) {
         #[cfg(feature = "xt1_high_frequency")]
@@ -1148,8 +1154,8 @@ impl<MCLK, SMCLK, XT1CLK> ClockConfig<MCLK, SMCLK, XT1CLK> {
         make_clkconf!(self, self.mclk, SmclkDisabled, self.xt1clk, self.fll_ref)
     }
 
-    /// Enable XT1 with specific hardware requirements. Calling this again replaces the
-    /// previous XT1 configuration.
+    /// Enable XT1 with specific hardware requirements (XT1 oscillator: SLAU445I 3.2.4, p. 103).
+    /// Calling this again replaces the previous XT1 configuration.
     #[inline]
     pub fn xt1clk_on<MODE, RANGE>(
         self,
@@ -1214,7 +1220,8 @@ impl<MCLK, SMCLK, MODE, RANGE> ClockConfig<MCLK, SMCLK, Xt1Defined<MODE, RANGE>>
         self
     }
 
-    /// Select XT1CLK for MCLK and set the MCLK divider. Frequency is `xt1_freq / mclk_div` Hz.
+    /// Select XT1CLK for MCLK and set the MCLK divider. Frequency is `xt1_freq / mclk_div` Hz
+    /// (SELMS = 010b and DIVM: SLAU445I Table 3-8, p. 117; SLAU445I Table 3-9, p. 118).
     #[inline]
     pub fn mclk_xt1clk(
         self,
@@ -1250,7 +1257,8 @@ fn fll_on() {
     unsafe { asm!("bic.b #64, SR", options(nomem, nostack)) };
 }
 
-/// FLL settings for a DCOCLKDIV target
+/// FLL settings for a DCOCLKDIV target (SELREF and FLLREFDIV: SLAU445I Table 3-7, p. 116; FLLN:
+/// SLAU445I Table 3-6, p. 115)
 struct FllSettings {
     selref: Selref,
     ref_div: Fllrefdiv,
@@ -1281,10 +1289,12 @@ unsafe fn configure_fram(fram: &mut Fram, mclk_freq: u32) {
 
 impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK> {
     /// FLL settings that lock DCOCLKDIV as close to `target` as possible without exceeding it
+    /// (SLAU445I 3.2.5, p. 104)
     #[inline]
     fn fll_settings(&self, target: DcoTarget) -> FllSettings {
         // The FLL is referenced by XT1CLK only if XT1 has actually been
-        // configured; in every other case it is referenced by REFOCLK.
+        // configured; in every other case it is referenced by REFOCLK
+        // (SELREF, SLAU445I Table 3-7, p. 116).
         // The typestate API already guarantees `fll_ref` can only be
         // XT1CLK while XT1 is defined, but resolving the pair here keeps
         // the hardware configuration consistent by construction.
@@ -1542,7 +1552,8 @@ impl<SMCLK: SmclkState, XT1CLK: Xt1State> ClockConfig<MclkDefined, SMCLK, XT1CLK
         if refo_used {
             while cs.csctl7().read().refoready().bit_is_clear() {}
         }
-        // Let an FLL referenced to REFO lock to the low-power REFO
+        // Let an FLL referenced to REFO lock to the low-power REFO (FLLUNLOCK, SLAU445I Table 3-11,
+        // p. 121)
         if fll_uses_refo {
             while fll_unlocked(cs) {}
         }
@@ -1600,7 +1611,8 @@ impl<MODE, RANGE: Xt1Range> ClockConfig<MclkDefined, SmclkDefined, Xt1Defined<MO
     /// Also returns delay provider.
     ///
     /// Blocks until XT1 is stable, which is forever if it never starts (a missing crystal,
-    /// say). `try_freeze` gives up after a timeout instead.
+    /// say): its fault flag keeps returning (SLAU445I 3.2.13, p. 109). `try_freeze` gives up after
+    /// a timeout instead.
     #[inline]
     pub fn freeze(self, fram: &mut Fram) -> (Smclk, Aclk, Xt1clk<RANGE>, SysDelay) {
         // Without a timeout this only returns once XT1 is running
@@ -1660,7 +1672,8 @@ impl<MODE, RANGE: Xt1Range> ClockConfig<MclkDefined, SmclkDisabled, Xt1Defined<M
     /// is disabled. Also returns delay provider.
     ///
     /// Blocks until XT1 is stable, which is forever if it never starts (a missing crystal,
-    /// say). `try_freeze` gives up after a timeout instead.
+    /// say): its fault flag keeps returning (SLAU445I 3.2.13, p. 109). `try_freeze` gives up after
+    /// a timeout instead.
     #[inline]
     pub fn freeze(self, fram: &mut Fram) -> (Aclk, Xt1clk<RANGE>, SysDelay) {
         // Without a timeout this only returns once XT1 is running

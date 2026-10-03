@@ -22,7 +22,8 @@
 
 use crate::_pac;
 
-/// Struct representing a Cyclic Redundancy Check (CRC) peripheral initialised with a seed.
+/// Struct representing a Cyclic Redundancy Check (CRC) peripheral initialised with a seed (SLAU445I 11.3,
+/// p. 354; the CRC registers: SLAU445I Table 11-1, p. 357).
 pub struct Crc(_pac::Crc);
 
 impl Crc {
@@ -49,6 +50,7 @@ impl Crc {
     }
 
     /// Insert a slice of bytes into the CRC peripheral, assuming that bit 0 is the LSb of each byte. The byte at index 0 is included first.
+    /// Each byte goes through CRCDIRB, which reverses its bits (SLAU445I 11.3.1, p. 354).
     #[inline]
     pub fn add_bytes_lsb(&mut self, bytes: &[u8]) {
         for &byte in bytes {
@@ -93,6 +95,8 @@ impl Crc {
     /// Insert a slice of bytes into the CRC peripheral. The byte at index 0 is included first.
     ///
     /// These bytes are included in the output signature according to the CRC-CCITT standard, which assumes bit 0 is the MSb of each byte.
+    /// Each byte goes through CRCDI, which does not reverse its bits (SLAU445I 11.2, p. 353; SLAU445I 11.3.1,
+    /// p. 354).
     ///
     /// If your data has bit 0 as the LSb (e.g. MSP430 memory locations, variables) use the `_lsb` method instead.
     #[inline]
@@ -120,6 +124,7 @@ impl Crc {
     /// (SLAU445I 11.3.1, p. 354)
     ///
     /// These bytes are included in the output signature according to the CRC-CCITT standard, which assumes bit 0 is the MSb of each byte.
+    /// (CRCDI: SLAU445I Table 11-2, p. 358)
     ///
     /// If your data has bit 0 as the LSb (e.g. MSP430 memory locations, variables) use the `_lsb` method instead.
     #[inline]

@@ -72,7 +72,9 @@ pub mod gpio {
     impl<PIN: PinNum, DIR> ToAdcPctl for Pin<P2, PIN, DIR> where Self: adc::AdcPctlCapable {}
 
     // GPIO port impls, PAC register methods, and marking ports as interrupt-capable: P1 and P2 both have
-    // edge-selectable interrupts (SLASEE4C 6.10.3, p. 51; port registers: SLASEE4C Table 6-28, p. 65)
+    // edge-selectable interrupts (SLASEE4C 6.10.3, p. 51; port registers: SLASEE4C Table 6-28, p. 65;
+    // descriptions in SLAU445I 8.4, p. 319). SLASEE4C Table 6-28, p. 65 gives P2SEL1 the offset 0Ch, the
+    // same as P1SEL1; the PAC places it at 0Dh, as SLAU445I Table 8-4, p. 320 does.
     gpio_impl!(p1: P1 => p1in, p1out, p1dir, p1ren, p1selc, p1sel0, p1sel1, [p1ies, p1ie, p1ifg, p1iv]);
     gpio_impl!(p2: P2 => p2in, p2out, p2dir, p2ren, p2selc, p2sel0, p2sel1, [p2ies, p2ie, p2ifg, p2iv]);
 
@@ -145,7 +147,9 @@ mod capture {
 }
 
 /* Clocks */
-/// MODCLK frequency, typical (SLASEE4C Table 5-9, p. 28: 3.8 MHz to 5.8 MHz, 4.8 MHz typical)
+/// MODCLK frequency, typical (SLASEE4C Table 5-9, p. 28: 3.8 MHz to 5.8 MHz, 4.8 MHz typical). The
+/// clock distribution table gives "5 MHz ±10%" instead (SLASEE4C Table 6-8, p. 49); this follows the
+/// electrical specification.
 pub const MODCLK_FREQ_HZ: u32 = 4_800_000;
 
 /* eUSCI */
@@ -170,6 +174,8 @@ mod i2c {
         pin_mapping::*,
     };
 
+    // eUSCI_B0 registers in I2C mode: addresses in SLASEE4C Table 6-34, p. 67 to p. 68; descriptions in
+    // SLAU445I 24.4, p. 648 (UCBxCTLW0: SLAU445I Table 24-4, p. 649)
     eusci_i2c_impl!(
         EUsciB0,
         ucb0ctlw0,
@@ -286,6 +292,8 @@ mod pwm {
 mod serial {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, pin_mapping::*, serial::*};
 
+    // eUSCI_A0 registers in UART mode: addresses in SLASEE4C Table 6-33, p. 67; descriptions in
+    // SLAU445I 22.4, p. 592 (UCAxCTLW0: SLAU445I Table 22-8, p. 593)
     eusci_uart_impl!(
         EUsciA0,
         uca0ctlw0,
@@ -307,7 +315,9 @@ mod serial {
         type RxPin = UsciA0RxPinDefault;
 
         // USCIARMP = 0: TXD and RXD on P1.4 and P1.5 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
-        // The bit is SYSCFG3.USCIA0RMP (SLAU445I Table 1-32, p. 83).
+        // The bit is SYSCFG3.USCIA0RMP (SLAU445I Table 1-32, p. 83). SLASEE4C Table 6-23, p. 64 lists no
+        // SYSCFG3; the code follows SLASEE4C 6.10.7, p. 53 and SLAU445I Table 1-28, p. 79, which puts
+        // SYSCFG3 at offset 26h on the MSP430FR25xx.
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
             unsafe { sys.syscfg3().clear_bits(|w| w.usciarmp().clear_bit()) };
@@ -366,6 +376,9 @@ mod serial {
 mod spi {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, pin_mapping::*, spi::*};
 
+    // eUSCI_A0 and eUSCI_B0 registers in SPI mode: addresses in SLASEE4C Table 6-33, p. 67 and
+    // SLASEE4C Table 6-34, p. 67 to p. 68; descriptions in SLAU445I 23.4, p. 612 (eUSCI_A) and
+    // SLAU445I 23.5, p. 619 (eUSCI_B)
     eusci_spi_impl!(
         EUsciA0,
         uca0ctlw0_spi,
@@ -548,7 +561,7 @@ mod timer {
     };
 
     // Timer0_A3 and Timer1_A3, three capture/compare registers each (SLASEE4C 6.10.8, p. 54; registers:
-    // SLASEE4C Table 6-30, p. 66 and SLASEE4C Table 6-31, p. 66)
+    // SLASEE4C Table 6-30, p. 66 and SLASEE4C Table 6-31, p. 66; descriptions in SLAU445I 13.3, p. 383)
     timer_a_impl!(
         Ta0,
         ta0,

@@ -25,6 +25,9 @@ fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();
 
     let wdt = Wdt::constrain(periph.wdt_a);
+    // Pmm::new clears LOCKLPM5 here. After a wake-up from LPM3.5, SLAU445I 1.4.3.3, p. 42 initializes the
+    // RTC registers and the port registers "exactly the same way" as before LPM3.5 first and only then
+    // clears LOCKLPM5 (step 4), which Pmm::new_locked allows; this example does it the other way round.
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // The HAL uses some of the SYS registers internally, but we need a copy as well. We promise not to modify any control bits used by the HAL.
@@ -62,6 +65,9 @@ fn main() -> ! {
         periph.rtc.rtciv().read();
 
         // Enter LPM3.5 (without having to configure the RTC, we did that already).
+        // (SLAU445I 1.4.3.3, p. 42, step 1, re-initializes "the registers of the modules connected to the
+        // RTC LDO" after each wake-up from LPM3.5; this example relies on the RTC settings from the first
+        // run instead.)
         unsafe { enter_lpm3_5_unchecked(wdt, SvsState::Svshe0) };
     }
     // Otherwise this is a fresh start. Configure the RTC.

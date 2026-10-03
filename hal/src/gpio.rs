@@ -5,8 +5,8 @@
 //! To specify any pin on port Px, use the bounds `Pin<Px, PIN: PinNum>`.
 //!
 //! Note that interrupts are only supported by some hardware ports (e.g. Ports 1 to 4 on the MSP430FR2355), so interrupt-related
-//! methods are only available on those pins (SLAU445I 8.1, p. 312; SLASEC4D 1.1, p. 2: "32 interrupt
-//! pins (P1, P2, P3, and P4)").
+//! methods are only available on those pins (SLAU445I 8.1, p. 312; SLASEC4D 6.10.3, p. 69: "Interrupt
+//! conditions are possible in P1, P2, P3, and P4").
 //!
 //! Pins can be converted to alternate functionalities 1 to 3, but the availability of these
 //! conversions on each pin is limited by the hardware capabilities in the [`datasheet`], so not
@@ -53,7 +53,8 @@ mod sealed {
     impl<DIR> SealedAlternateMode for Alternate3<DIR> {}
 }
 
-/// Trait that encompasses all `Pinx` types for specifying a pin number.
+/// Trait that encompasses all `Pinx` types for specifying a pin number. Pin x of a port is bit x of each
+/// of the port's registers (SLAU445I Table 8-13, p. 335).
 pub trait PinNum: sealed::SealedPinNum {
     // Pin number
     #[doc(hidden)]
@@ -74,7 +75,8 @@ pub trait PortNum: GpioPeriph {}
 impl<PORT: GpioPeriph> PortNum for PORT {}
 
 // Don't need to seal, since PortNum is already sealed
-/// Marker trait for all Ports that support interrupts
+/// Marker trait for all Ports that support interrupts (P1 and P2 always, other ports depending on the
+/// device: SLAU445I 8.2.6, p. 314)
 pub trait IntrPortNum: IntrPeriph {}
 impl<PORT: IntrPeriph> IntrPortNum for PORT {}
 
@@ -176,25 +178,26 @@ impl PinNum for Pin7 {
     const NUM: u8 = 7;
 }
 
-/// Marker trait for GPIO typestates representing pins in GPIO (non-alternate) state
+/// Marker trait for GPIO typestates representing pins in GPIO (non-alternate) state (PxSEL1/PxSEL0 = 00,
+/// SLAU445I Table 8-3, p. 314)
 pub trait GpioFunction: sealed::SealedGpioFunction {}
 
-/// Direction typestate for GPIO output
+/// Direction typestate for GPIO output (PxDIR = 1, SLAU445I Table 8-1, p. 313)
 pub struct Output;
 impl GpioFunction for Output {}
 
-/// Direction typestate for GPIO input.
+/// Direction typestate for GPIO input (PxDIR = 0, SLAU445I Table 8-1, p. 313).
 /// The type parameter specifies pull direction of input.
 pub struct Input<PULL>(PhantomData<PULL>);
 impl<PULL> GpioFunction for Input<PULL> {}
 
-/// Pull typestate for pullup inputs
+/// Pull typestate for pullup inputs (PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313)
 pub struct Pullup;
 
-/// Pull typestate for pulldown inputs
+/// Pull typestate for pulldown inputs (PxREN = 1, PxOUT = 0: SLAU445I Table 8-1, p. 313)
 pub struct Pulldown;
 
-/// Pull typestate for floating inputs
+/// Pull typestate for floating inputs (PxREN = 0: SLAU445I Table 8-1, p. 313)
 pub struct Floating;
 
 /// A single GPIO pin.
@@ -284,7 +287,7 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Disable interrupts on input pin.
+    /// Disable interrupts on input pin (PxIE, SLAU445I Table 8-17, p. 336).
     #[inline]
     pub fn disable_interrupt(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -292,7 +295,8 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Set interrupt flag high, triggering an ISR if interrupts are enabled (SLAU445I 8.2.6, p. 315).
+    /// Set interrupt flag high, triggering an ISR if interrupts are enabled (SLAU445I 8.2.6, p. 315; PxIFG,
+    /// SLAU445I Table 8-18, p. 337).
     #[inline]
     pub fn set_ifg(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -300,7 +304,7 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Clear interrupt flag.
+    /// Clear interrupt flag (PxIFG, SLAU445I Table 8-18, p. 337).
     #[inline]
     pub fn clear_ifg(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };
@@ -308,7 +312,8 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         self
     }
 
-    /// Wait for interrupt flag to go high nonblockingly. Clear the flag if high.
+    /// Wait for interrupt flag to go high nonblockingly. Clear the flag if high (PxIFG, SLAU445I Table 8-18,
+    /// p. 337).
     #[inline]
     pub fn wait_for_ifg(&mut self) -> nb::Result<(), Infallible> {
         let p = unsafe { PORT::steal() };
@@ -321,7 +326,8 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     }
 }
 
-/// Interrupt vector register used to determine which pin caused a port ISR
+/// Interrupt vector register used to determine which pin caused a port ISR (PxIV, SLAU445I Tables 8-5 to
+/// 8-8, p. 332 to p. 333)
 pub struct PxIV<PORT: PortNum>(PhantomData<PORT>);
 
 impl<PORT: IntrPortNum> PxIV<PORT> {
@@ -347,7 +353,8 @@ impl<PORT: IntrPortNum> PxIV<PORT> {
     }
 }
 
-/// Indicates which pin on the GPIO port caused the ISR.
+/// Indicates which pin on the GPIO port caused the ISR: PxIV reads 00h for none and 02h to 10h for
+/// pins 0 to 7 (SLAU445I Tables 8-5 to 8-8, p. 332 to p. 333).
 pub enum GpioVector {
     /// No ISR
     NoIsr,
@@ -383,7 +390,8 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         make_pin!()
     }
 
-    /// Configures pin as output, driving it low from the start
+    /// Configures pin as output, driving it low from the start: PxOUT is cleared (SLAU445I Table 8-10,
+    /// p. 334) before PxDIR is set (SLAU445I Table 8-11, p. 334)
     #[inline]
     pub fn to_output_low(self) -> Pin<PORT, PIN, Output> {
         let p = unsafe { PORT::steal() };
@@ -392,7 +400,8 @@ impl<PORT: PortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
         make_pin!()
     }
 
-    /// Configures pin as output, driving it high from the start
+    /// Configures pin as output, driving it high from the start: PxOUT is set (SLAU445I Table 8-10, p. 334)
+    /// before PxDIR is set (SLAU445I Table 8-11, p. 334)
     #[inline]
     pub fn to_output_high(self) -> Pin<PORT, PIN, Output> {
         let p = unsafe { PORT::steal() };
@@ -428,7 +437,8 @@ impl<PORT: PortNum, PIN: PinNum> Pin<PORT, PIN, Output> {
     }
 }
 
-/// GPIO parts for a specific port, including all 8 pins.
+/// GPIO parts for a specific port, including all 8 pins (a port has up to eight I/O lines, SLAU445I 8.1,
+/// p. 312; the slots of missing pins are [`Unavailable`]).
 pub struct Parts<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7> {
     /// Pin0
     pub pin0: Pin<PORT, Pin0, DIR0>,
@@ -476,7 +486,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
 }
 
 // Trait will not be used as a bound outside the HAL, since it's only used as an associated type
-// bound inside the HAL, so just keep it hidden
+// bound inside the HAL, so just keep it hidden. It writes PxSEL0, PxSEL1 and PxSELC (SLAU445I Tables 8-13
+// to 8-15, p. 335 to p. 336) and SYSCFG2.ADCPCTLx (SLAU445I Table 1-31, p. 82).
 #[doc(hidden)]
 pub trait ChangeSelectBits {
     fn set_sel0(&mut self);
@@ -492,30 +503,35 @@ pub trait ChangeSelectBits {
 
 // Methods for managing sel1, sel0, and selc registers
 impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
+    // PxSEL0 (SLAU445I Table 8-13, p. 335)
     #[inline]
     fn set_sel0(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel0_set(PIN::SET_MASK);
     }
 
+    // PxSEL1 (SLAU445I Table 8-14, p. 335)
     #[inline]
     fn set_sel1(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel1_set(PIN::SET_MASK);
     }
 
+    // PxSEL0 (SLAU445I Table 8-13, p. 335)
     #[inline]
     fn clear_sel0(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel0_clear(PIN::CLR_MASK);
     }
 
+    // PxSEL1 (SLAU445I Table 8-14, p. 335)
     #[inline]
     fn clear_sel1(&mut self) {
         let p = unsafe { PORT::steal() };
         p.pxsel1_clear(PIN::CLR_MASK);
     }
 
+    // PxSELC (SLAU445I Table 8-15, p. 336)
     #[inline]
     fn flip_selc(&mut self) {
         let p = unsafe { PORT::steal() };
@@ -524,6 +540,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
         p.pxselc_wr(0u8.set(PIN::NUM));
     }
 
+    // SYSCFG2.ADCPCTLx (SLAU445I Table 1-31, p. 82)
     #[cfg(feature = "adcpctl")]
     #[inline]
     fn set_adcpctl(&mut self, mask: u16) {
@@ -531,6 +548,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
         p.adcpctl_set(mask);
     }
 
+    // SYSCFG2.ADCPCTLx (SLAU445I Table 1-31, p. 82)
     #[cfg(feature = "adcpctl")]
     #[inline]
     fn clr_adcpctl(&mut self, mask: u16) {
@@ -539,13 +557,16 @@ impl<PORT: PortNum, PIN: PinNum, DIR> ChangeSelectBits for Pin<PORT, PIN, DIR> {
     }
 }
 
-/// Typestate for GPIO alternate function 1
+/// Typestate for GPIO alternate function 1: PxSEL1/PxSEL0 = 01, the primary module function (SLAU445I
+/// Table 8-3, p. 314)
 pub struct Alternate1<DIR>(PhantomData<DIR>);
 
-/// Typestate for GPIO alternate function 2
+/// Typestate for GPIO alternate function 2: PxSEL1/PxSEL0 = 10, the secondary module function (SLAU445I
+/// Table 8-3, p. 314)
 pub struct Alternate2<DIR>(PhantomData<DIR>);
 
-/// Typestate for GPIO alternate function 3
+/// Typestate for GPIO alternate function 3: PxSEL1/PxSEL0 = 11, the tertiary module function (SLAU445I
+/// Table 8-3, p. 314)
 pub struct Alternate3<DIR>(PhantomData<DIR>);
 
 // Only used as a bound inside the HAL, so keep it hidden
@@ -596,7 +617,8 @@ pub trait AlternatePin: ChangeSelectBits {
     /// PxSEL1 bit value of the alternate function in the pin's type
     const SEL1: bool;
 
-    /// Whether the pin's PxSEL bits currently select the alternate function in its type
+    /// Whether the pin's PxSEL bits currently select the alternate function in its type (PxSEL0 and
+    /// PxSEL1, SLAU445I Table 8-13, p. 335 and SLAU445I Table 8-14, p. 335)
     #[inline]
     fn function_matches_type() -> bool {
         let port = unsafe { Self::Port::steal() };
@@ -643,16 +665,19 @@ impl<PORT: PortNum, PIN: PinNum, MODE: AlternateMode> AlternatePin for Pin<PORT,
 }
 
 #[cfg(feature = "adcpctl")]
-/// Typestate for GPIO ADC mode (for devices that use ADCPCTLx)
+/// Typestate for GPIO ADC mode (for devices that use ADCPCTLx, SYSCFG2: SLAU445I Table 1-31, p. 82)
 pub struct AdcMode<DIR>(PhantomData<DIR>);
 
 // Sealing these traits takes a lot of work, and I'll never add any items in the future, so they
 // are unsealed
-/// Marker trait for all Pins that have alternate function 1 available
+/// Marker trait for all Pins that have alternate function 1 available (the "01" rows of the Port Px Pin
+/// Functions tables in each data sheet, for example SLASEO7C Table 9-23, p. 65)
 pub trait ToAlternate1 {}
-/// Marker trait for all Pins that have alternate function 2 available
+/// Marker trait for all Pins that have alternate function 2 available (the "10" rows of the Port Px Pin
+/// Functions tables in each data sheet, for example SLASEO7C Table 9-23, p. 65)
 pub trait ToAlternate2 {}
-/// Marker trait for all Pins that have alternate function 3 available
+/// Marker trait for all Pins that have alternate function 3 available (the "11" rows of the Port Px Pin
+/// Functions tables in each data sheet, for example SLASEO7C Table 9-23, p. 65)
 pub trait ToAlternate3 {}
 
 #[cfg(feature = "adcpctl")]
@@ -670,7 +695,7 @@ pub trait ToAdcPctl: crate::adc::AdcPctlCapable {
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where Self: ToAlternate1
 {
-    /// Convert pin to GPIO alternate function 1
+    /// Convert pin to GPIO alternate function 1 (sets PxSEL0: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate1(mut self) -> Pin<PORT, PIN, Alternate1<DIR>> {
         self.set_sel0();
@@ -681,7 +706,7 @@ where Self: ToAlternate1
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where Self: ToAlternate2
 {
-    /// Convert pin to GPIO alternate function 2
+    /// Convert pin to GPIO alternate function 2 (sets PxSEL1: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate2(mut self) -> Pin<PORT, PIN, Alternate2<DIR>> {
         self.set_sel1();
@@ -692,7 +717,8 @@ where Self: ToAlternate2
 impl<PORT: PortNum, PIN: PinNum, DIR: GpioFunction> Pin<PORT, PIN, DIR>
 where Self: ToAlternate3
 {
-    /// Convert pin to GPIO alternate function 3
+    /// Convert pin to GPIO alternate function 3 (sets PxSEL0 and PxSEL1 in one PxSELC write: SLAU445I
+    /// 8.2.5, p. 314)
     #[inline]
     pub fn to_alternate3(mut self) -> Pin<PORT, PIN, Alternate3<DIR>> {
         self.flip_selc();
@@ -702,7 +728,7 @@ where Self: ToAlternate3
 
 // sel0 = 1, sel1 = 0: the primary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>> {
-    /// Convert pin to GPIO function
+    /// Convert pin to GPIO function (clears PxSEL0: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_gpio(mut self) -> Pin<PORT, PIN, DIR> {
         self.clear_sel0();
@@ -713,7 +739,8 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>> {
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>>
 where Self: ToAlternate2
 {
-    /// Convert pin to alternate function 2
+    /// Convert pin to alternate function 2 (01 to 10, both PxSEL bits flipped in one PxSELC write:
+    /// SLAU445I 8.2.5, p. 314)
     #[inline]
     pub fn to_alternate2(mut self) -> Pin<PORT, PIN, Alternate2<DIR>> {
         self.flip_selc();
@@ -724,7 +751,7 @@ where Self: ToAlternate2
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate1<DIR>>
 where Self: ToAlternate3
 {
-    /// Convert pin to alternate function 3
+    /// Convert pin to alternate function 3 (sets PxSEL1: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate3(mut self) -> Pin<PORT, PIN, Alternate3<DIR>> {
         self.set_sel1();
@@ -734,7 +761,7 @@ where Self: ToAlternate3
 
 // sel0 = 0, sel1 = 1: the secondary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>> {
-    /// Convert pin to GPIO function
+    /// Convert pin to GPIO function (clears PxSEL1: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_gpio(mut self) -> Pin<PORT, PIN, DIR> {
         self.clear_sel1();
@@ -745,7 +772,8 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>> {
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>>
 where Self: ToAlternate1
 {
-    /// Convert pin to alternate function 1
+    /// Convert pin to alternate function 1 (10 to 01, both PxSEL bits flipped in one PxSELC write:
+    /// SLAU445I 8.2.5, p. 314)
     #[inline]
     pub fn to_alternate1(mut self) -> Pin<PORT, PIN, Alternate1<DIR>> {
         self.flip_selc();
@@ -756,7 +784,7 @@ where Self: ToAlternate1
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate2<DIR>>
 where Self: ToAlternate3
 {
-    /// Convert pin to alternate function 3
+    /// Convert pin to alternate function 3 (sets PxSEL0: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate3(mut self) -> Pin<PORT, PIN, Alternate3<DIR>> {
         self.set_sel0();
@@ -766,7 +794,8 @@ where Self: ToAlternate3
 
 // sel0 = 1, sel1 = 1: the tertiary module function (SLAU445I Table 8-3, p. 314)
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>> {
-    /// Convert pin to GPIO function
+    /// Convert pin to GPIO function (11 to 00, both PxSEL bits cleared in one PxSELC write: SLAU445I 8.2.5,
+    /// p. 314)
     #[inline]
     pub fn to_gpio(mut self) -> Pin<PORT, PIN, DIR> {
         self.flip_selc();
@@ -777,7 +806,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>> {
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>>
 where Self: ToAlternate1
 {
-    /// Convert pin to alternate function 1
+    /// Convert pin to alternate function 1 (clears PxSEL1: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate1(mut self) -> Pin<PORT, PIN, Alternate1<DIR>> {
         self.clear_sel1();
@@ -788,7 +817,7 @@ where Self: ToAlternate1
 impl<PORT: PortNum, PIN: PinNum, DIR> Pin<PORT, PIN, Alternate3<DIR>>
 where Self: ToAlternate2
 {
-    /// Convert pin to alternate function 2
+    /// Convert pin to alternate function 2 (clears PxSEL0: SLAU445I Table 8-3, p. 314)
     #[inline]
     pub fn to_alternate2(mut self) -> Pin<PORT, PIN, Alternate2<DIR>> {
         self.clear_sel0();
@@ -800,7 +829,9 @@ where Self: ToAlternate2
 impl<PORT: PortNum, PIN: PinNum, MODE> Pin<PORT, PIN, MODE>
 where Self: ToAdcPctl
 {
-    /// Convert pin to ADC mode (ADCPCTL set)
+    /// Convert pin to ADC mode (ADCPCTL set, SYSCFG2: SLAU445I Table 1-31, p. 82). Setting the bit
+    /// "disables both the output driver and input Schmitt trigger" of the pin (SLASE59F Table 6-17, p. 55;
+    /// SLASEE4C Table 6-15, p. 58).
     #[inline]
     pub fn to_adc_mode(mut self) -> Pin<PORT, PIN, AdcMode<MODE>> {
         self.set_adcpctl(Self::SET_MASK);
@@ -812,7 +843,8 @@ where Self: ToAdcPctl
 impl<PORT: PortNum, PIN: PinNum, MODE> Pin<PORT, PIN, AdcMode<MODE>>
 where Self: ToAdcPctl
 {
-    /// Return pin to the mode it was in prior to ADCPCTL mode
+    /// Return pin to the mode it was in prior to ADCPCTL mode (clears ADCPCTLx in SYSCFG2: SLAU445I
+    /// Table 1-31, p. 82)
     #[inline]
     pub fn from_adc_mode(mut self) -> Pin<PORT, PIN, MODE> {
         self.clr_adcpctl(Self::CLR_MASK);
@@ -831,6 +863,7 @@ mod ehal1 {
     }
 
     impl<PORT: PortNum, PIN: PinNum, PULL> InputPin for Pin<PORT, PIN, Input<PULL>> {
+        // PxIN (SLAU445I Table 8-9, p. 334)
         #[inline]
         fn is_high(&mut self) -> Result<bool, Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -842,6 +875,7 @@ mod ehal1 {
     }
 
     impl<PORT: PortNum, PIN: PinNum> OutputPin for Pin<PORT, PIN, Output> {
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn set_low(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -849,6 +883,7 @@ mod ehal1 {
             Ok(())
         }
 
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn set_high(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -858,6 +893,7 @@ mod ehal1 {
     }
 
     impl<PORT: PortNum, PIN: PinNum> StatefulOutputPin for Pin<PORT, PIN, Output> {
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn is_set_high(&mut self) -> Result<bool, Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -867,6 +903,7 @@ mod ehal1 {
         #[inline]
         fn is_set_low(&mut self) -> Result<bool, Self::Error> { self.is_set_high().map(|r| !r) }
 
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn toggle(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -887,6 +924,7 @@ mod ehal02 {
     impl<PORT: PortNum, PIN: PinNum, PULL> InputPin for Pin<PORT, PIN, Input<PULL>> {
         type Error = void::Void;
 
+        // PxIN (SLAU445I Table 8-9, p. 334)
         #[inline]
         fn is_high(&self) -> Result<bool, Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -900,6 +938,7 @@ mod ehal02 {
     impl<PORT: PortNum, PIN: PinNum> OutputPin for Pin<PORT, PIN, Output> {
         type Error = void::Void;
 
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn set_low(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -907,6 +946,7 @@ mod ehal02 {
             Ok(())
         }
 
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn set_high(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -916,6 +956,7 @@ mod ehal02 {
     }
 
     impl<PORT: PortNum, PIN: PinNum> StatefulOutputPin for Pin<PORT, PIN, Output> {
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn is_set_high(&self) -> Result<bool, Self::Error> {
             let p = unsafe { PORT::steal() };
@@ -929,6 +970,7 @@ mod ehal02 {
     impl<PORT: PortNum, PIN: PinNum> ToggleableOutputPin for Pin<PORT, PIN, Output> {
         type Error = void::Void;
 
+        // PxOUT (SLAU445I Table 8-10, p. 334)
         #[inline]
         fn toggle(&mut self) -> Result<(), Self::Error> {
             let p = unsafe { PORT::steal() };

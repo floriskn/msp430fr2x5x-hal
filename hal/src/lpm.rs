@@ -106,7 +106,8 @@ const OSC_OFF: u8 = 1 << 5;
 const CPU_OFF: u8 = 1 << 4;
 const GIE:     u8 = 1 << 3;
 
-/// For each set bit in the bitmask, set the corresponding bit in the status register.
+/// For each set bit in the bitmask, set the corresponding bit in the status register (SLAU445I
+/// Figure 4-9, p. 130; BIS changes SR bits: SLAU445I 4.3.3, p. 130).
 #[inline(always)]
 fn set_sr_bits<const MASK: u8>() {
     unsafe { asm!("bis.b #{mask}, SR", mask = const MASK, options(nomem, nostack)) };
@@ -281,7 +282,8 @@ pub fn enter_lpm4_5<MODE: WatchdogSelect>(wdt: Wdt<MODE>, rtc_reg: _pac::Rtc, sv
     enter_lpmx_5(wdt, svs)
 }
 
-/// The XT1 pins to leave in their XT1 function when entering LPMx.5
+/// The XT1 pins to leave in their XT1 function when entering LPMx.5 (SLAU445I 1.4.3.1, p. 41,
+/// step 2)
 #[derive(Clone, Copy)]
 pub(crate) struct KeepXt1Pins {
     xin: bool,

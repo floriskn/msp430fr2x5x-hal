@@ -24,8 +24,11 @@ use panic_never as _;
 fn main() -> ! {
     if let Some(periph) = msp430fr247x::Peripherals::take() {
         let mut fram = Fram::new(periph.frctl);
+        // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
         let _wdt = Wdt::constrain(periph.wdt_a);
 
+        // MCLK from DCOCLKDIV, SMCLK = MCLK / 2 and ACLK from REFO (SELMS = 000b, SELA = 01b: SLAU445I
+        // Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
         let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
             .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
             .smclk_on(SmclkDiv::_2)
@@ -45,6 +48,8 @@ fn main() -> ! {
 
         // FIRST: Default UART mapping (P1.4 TX / P1.5 RX)
         // (SLASEO7C Table 9-11, p. 54; UCA0TXD with P1SEL = 01: SLASEO7C Table 9-23, p. 65)
+        // (8N1, LSB first: UCMSB, UC7BIT, UCSPB, UCPEN in SLAU445I Table 22-8, p. 593; ACLK is
+        // UCSSEL = 01b: SLASEO7C Table 9-8, p. 50)
         {
             let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
                 e_usci_a0,
@@ -66,7 +71,7 @@ fn main() -> ! {
 
         // SECOND: Remap UART to P5.2 TX / P5.1 RX
         // (USCIA0RMP: SLASEO7C Table 9-11, p. 54; UCA0TXD and UCA0RXD with P5SEL = 01:
-        // SLASEO7C Table 9-27, p. 69)
+        // SLASEO7C Table 9-27, p. 69. USCIA0RMP is bit 0 of SYSCFG3: SLAU445I Table 1-32, p. 83)
         let serial = SerialConfig::<_, _, RemappedMapping>::new(
             e_usci_a0,
             BitOrder::LsbFirst,
@@ -86,6 +91,7 @@ fn main() -> ! {
         embedded_io::Write::write_all(&mut tx, b"HELLO REMAPPED\n").ok();
 
         // Echo loop on remapped UART
+        // (The receive errors are the UCPE, UCOE, UCFE and UCBRK flags: SLAU445I Table 22-1, p. 582)
         loop {
             let ch: u8 = match block!(rx.read()) {
                 Ok(c) => c,

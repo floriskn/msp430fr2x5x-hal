@@ -29,9 +29,15 @@ static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog, then use it as an interval timer (WDTHOLD, WDTTMSEL: SLAU445I Table 12-2,
+    // p. 366; interval timer mode: SLAU445I 12.2.3, p. 363)
     let mut wdt = Wdt::constrain(periph.wdt_a).to_interval();
 
     // REFO runs at 32.768 kHz (SLASEO7C 8.12.3.4, p. 30)
+    // (MCLK from REFOCLK, SELMS = 001b, and ACLK from the VLO: SLAU445I Table 3-8, p. 117; SMCLK =
+    // MCLK / 2, DIVS = 01b: SLAU445I Table 3-9, p. 118. ACLK from the VLO: SLASEO7C 9.10.2, p. 49;
+    // SLAU445I Table 3-1, p. 98 lists that for the enhanced clock system only, and the HAL follows the
+    // data sheet.)
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_refoclk(MclkDiv::_1) // 32 kHz MCLK
         .smclk_on(SmclkDiv::_2) // 16 kHz SMCLK
@@ -40,6 +46,8 @@ fn main() -> ! {
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
+    // P2.3 with its pullup and P2.7 with its pulldown (PxREN = 1, PxOUT = 1 or 0: SLAU445I Table 8-1,
+    // p. 313)
     let p2 = Batch::new(periph.p2)
         .config_pin3(|p| p.pullup())
         .split(&pmm);
@@ -60,14 +68,20 @@ fn main() -> ! {
     with(|cs| RED_LED.borrow_ref_mut(cs).replace(red_led));
     with(|cs| P2IV.borrow_ref_mut(cs).replace(p2iv));
 
+    // ACLK is WDTSSEL = 01b (SLAU445I Table 12-2, p. 366); WDTIE enables the interval interrupt
+    // (SLAU445I Table 1-9, p. 62). PxIES = 0 sets PxIFG on a low-to-high transition, PxIES = 1 on a
+    // high-to-low one (SLAU445I Table 8-16, p. 336).
     wdt.set_aclk(&aclk)
         .enable_interrupts()
         .set_interval_and_start(WdtClkPeriods::_32k);
     pin.select_rising_edge_trigger().enable_interrupts();
     button.select_falling_edge_trigger();
 
+    // Set GIE, which masks every maskable interrupt while clear (SLAU445I 1.3.3, p. 33)
     unsafe { enable_int() };
 
+    // P2IFG.3 is set on the selected edge even with its interrupt disabled, so it can be polled
+    // (SLAU445I 8.2.6, p. 315)
     loop {
         block!(button.wait_for_ifg()).ok();
         green_led.toggle().ok();
@@ -75,6 +89,8 @@ fn main() -> ! {
     }
 }
 
+// The port 2 interrupt vector, P2IFG.0 to P2IFG.7 through P2IV (FFD4h: SLASEO7C Table 9-2, p. 47).
+// Reading P2IV "automatically resets the highest pending interrupt flag" (SLAU445I 8.2.6, p. 315).
 #[interrupt]
 fn PORT2() {
     with(|cs| {
@@ -87,6 +103,8 @@ fn PORT2() {
     });
 }
 
+// The watchdog interval mode vector, WDTIFG (FFE2h: SLASEO7C Table 9-2, p. 46). In interval mode
+// "WDTIFG is reset automatically by servicing the interrupt" (SLAU445I Table 1-10, p. 63).
 #[interrupt]
 fn WDT() {
     with(|cs| {

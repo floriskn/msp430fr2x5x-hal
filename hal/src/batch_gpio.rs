@@ -8,6 +8,9 @@
 //! For example, `P2.batch().config_pin3(|p| p.to_input_pullup()).config_pin1(|p| p.to_output()).split(&pmm)`
 //! configures P2.3 as a pullup input pin and P2.1 as an output pin and then writes the
 //! configuration to the hardware in a single set of writes.
+//!
+//! The writes go to the port's PxIE, PxSELC, PxSEL0, PxSEL1, PxOUT, PxDIR and PxREN registers (SLAU445I
+//! Tables 8-10 to 8-17, p. 334 to p. 336).
 
 use crate::gpio::*;
 use crate::hw_traits::gpio::{GpioPeriph, IntrPeriph};
@@ -18,7 +21,8 @@ use core::marker::PhantomData;
 /// Proxy for a GPIO pin used for batch writes.
 ///
 /// Configuring the proxy only changes the typestate of the proxy. Registers are only written once
-/// all the proxies for the GPIO port are "committed".
+/// all the proxies for the GPIO port are "committed". The values written for each typestate follow
+/// SLAU445I Table 8-1, p. 313 (direction and pull resistor) and SLAU445I Table 8-3, p. 314 (function).
 pub struct PinProxy<PORT: PortNum, PIN: PinNum, DIR> {
     _port: PhantomData<PORT>,
     _pin: PhantomData<PIN>,
@@ -32,33 +36,33 @@ macro_rules! make_proxy {
 }
 
 impl<PORT: PortNum, PIN: PinNum, PULL> PinProxy<PORT, PIN, Input<PULL>> {
-    /// Configures pin as pulldown input
+    /// Configures pin as pulldown input (PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn pulldown(self) -> PinProxy<PORT, PIN, Input<Pulldown>> { make_proxy!() }
 
-    /// Configures pin as pullup input
+    /// Configures pin as pullup input (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn pullup(self) -> PinProxy<PORT, PIN, Input<Pullup>> { make_proxy!() }
 
-    /// Configures pin as floating input
+    /// Configures pin as floating input (PxDIR = 0, PxREN = 0: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn floating(self) -> PinProxy<PORT, PIN, Input<Floating>> { make_proxy!() }
 
-    /// Configures pin as output
+    /// Configures pin as output (PxDIR = 1: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn to_output(self) -> PinProxy<PORT, PIN, Output> { make_proxy!() }
 }
 
 impl<PORT: PortNum, PIN: PinNum> PinProxy<PORT, PIN, Output> {
-    /// Configures pin as floating input
+    /// Configures pin as floating input (PxDIR = 0, PxREN = 0: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn to_input_floating(self) -> PinProxy<PORT, PIN, Input<Floating>> { make_proxy!() }
 
-    /// Configures pin as pullup input
+    /// Configures pin as pullup input (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn to_input_pullup(self) -> PinProxy<PORT, PIN, Input<Pullup>> { make_proxy!() }
 
-    /// Configures pin as pulldown input
+    /// Configures pin as pulldown input (PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I Table 8-1, p. 313)
     #[inline(always)]
     pub fn to_input_pulldown(self) -> PinProxy<PORT, PIN, Input<Pulldown>> { make_proxy!() }
 }
@@ -84,35 +88,36 @@ macro_rules! pinproxy_transition {
     };
 }
 
-// GPIO to alternates
+// GPIO to alternates: PxSEL1/PxSEL0 from 00 to 01, 10 or 11 (SLAU445I Table 8-3, p. 314)
 pinproxy_transition!(DIR: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
 pinproxy_transition!(DIR: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
 pinproxy_transition!(DIR: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
-// Alternates to GPIO
+// Alternates to GPIO: PxSEL1/PxSEL0 back to 00 (SLAU445I Table 8-3, p. 314)
 pinproxy_transition!(Alternate1<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
 pinproxy_transition!(Alternate2<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
 pinproxy_transition!(Alternate3<DIR> => DIR, to_gpio(), "Convert pin to GPIO function");
 
-// Alternate 1 to other alternates
+// Alternate 1 to other alternates (PxSEL1/PxSEL0 = 01 to 10 or 11, SLAU445I Table 8-3, p. 314)
 pinproxy_transition!(Alternate1<DIR>: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
 pinproxy_transition!(Alternate1<DIR>: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
-// Alternate 2 to other alternates
+// Alternate 2 to other alternates (PxSEL1/PxSEL0 = 10 to 01 or 11, SLAU445I Table 8-3, p. 314)
 pinproxy_transition!(Alternate2<DIR>: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
 pinproxy_transition!(Alternate2<DIR>: ToAlternate3 => Alternate3<DIR>, to_alternate3(), "Convert pin to GPIO alternate function 3");
 
-// Alternate 3 to other alternates
+// Alternate 3 to other alternates (PxSEL1/PxSEL0 = 11 to 01 or 10, SLAU445I Table 8-3, p. 314)
 pinproxy_transition!(Alternate3<DIR>: ToAlternate1 => Alternate1<DIR>, to_alternate1(), "Convert pin to GPIO alternate function 1");
 pinproxy_transition!(Alternate3<DIR>: ToAlternate2 => Alternate2<DIR>, to_alternate2(), "Convert pin to GPIO alternate function 2");
 
-// To and from ADCPCTL mode
+// To and from ADCPCTL mode (SYSCFG2.ADCPCTLx, SLAU445I Table 1-31, p. 82)
 #[cfg(feature = "adcpctl")]
 pinproxy_transition!(DIR: ToAdcPctl => AdcMode<DIR>, to_adc_mode(), "Convert pin to ADC mode (ADCPCTL set)");
 #[cfg(feature = "adcpctl")]
 pinproxy_transition!(AdcMode<DIR> => DIR, from_adc_mode(), "Return pin to the mode it was in prior to ADCPCTL mode");
 
-// Traits for deciding the value of a pin's registers
+// Traits for deciding the value of a pin's registers: PxDIR, PxOUT and PxREN as in SLAU445I Table 8-1,
+// p. 313, PxSEL0 and PxSEL1 as in SLAU445I Table 8-3, p. 314
 trait PxdirOn {}
 trait PxoutSet {}
 trait PxoutClr {}
@@ -120,6 +125,7 @@ trait PxrenOn {}
 trait Pxsel0On {}
 trait Pxsel1On {}
 
+// Whether PxDIR is set: 1 makes the pin an output (SLAU445I Table 8-11, p. 334)
 trait WritePxdir {
     fn pxdir_on(&self) -> bool;
 }
@@ -132,7 +138,8 @@ impl<T: PxdirOn> WritePxdir for T {
     fn pxdir_on(&self) -> bool { true }
 }
 
-// Whether PxOUT is set during config
+// Whether PxOUT is set during config: with PxREN = 1, PxOUT = 1 selects the pull-up (SLAU445I Table 8-10,
+// p. 334)
 trait WritePxoutSet {
     // The bit mask value - if true then the set bit mask is 1 (i.e. bit is set), if false then the bit mask is 0 (i.e. no effect)
     fn pxout_set_on(&self) -> bool;
@@ -146,7 +153,8 @@ impl<T: PxoutSet> WritePxoutSet for T {
     fn pxout_set_on(&self) -> bool { true }
 }
 
-// Whether PxOUT is cleared during config
+// Whether PxOUT is cleared during config: with PxREN = 1, PxOUT = 0 selects the pull-down (SLAU445I
+// Table 8-10, p. 334)
 trait WritePxoutClr {
     // The bit mask value - if true then the clear bit mask is 1 (i.e. no effect), if false then the bit mask is 0 (i.e. bit is cleared)
     fn pxout_clr_on(&self) -> bool;
@@ -160,6 +168,7 @@ impl<T: PxoutClr> WritePxoutClr for T {
     fn pxout_clr_on(&self) -> bool { false }
 }
 
+// Whether PxREN is set, enabling the pull resistor (SLAU445I Table 8-12, p. 335)
 trait WritePxren {
     fn pxren_on(&self) -> bool;
 }
@@ -172,6 +181,7 @@ impl<T: PxrenOn> WritePxren for T {
     fn pxren_on(&self) -> bool { true }
 }
 
+// Whether PxSEL0 is set (SLAU445I Table 8-13, p. 335)
 trait WritePxsel0 {
     fn pxsel0_on(&self) -> bool;
 }
@@ -184,6 +194,7 @@ impl<T: Pxsel0On> WritePxsel0 for T {
     fn pxsel0_on(&self) -> bool { true }
 }
 
+// Whether PxSEL1 is set (SLAU445I Table 8-14, p. 335)
 trait WritePxsel1 {
     fn pxsel1_on(&self) -> bool;
 }
@@ -197,7 +208,9 @@ impl<T: Pxsel1On> WritePxsel1 for T {
 }
 
 // Register marker trait implementations. PxDIR, PxREN and PxOUT follow SLAU445I Table 8-1, p. 313,
-// PxSEL0 and PxSEL1 follow SLAU445I Table 8-3, p. 314.
+// PxSEL0 and PxSEL1 follow SLAU445I Table 8-3, p. 314. A pin in an alternate function keeps the PxDIR of
+// its type, because "PxDIR bits for I/O pins that are selected for other functions must be set as
+// required by the other function" (SLAU445I 8.2.3, p. 313).
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Output> {}
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate1<Output>> {}
 impl<PORT: PortNum, PIN: PinNum> PxdirOn for PinProxy<PORT, PIN, Alternate2<Output>> {}
@@ -228,7 +241,8 @@ impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel0On for PinProxy<PORT, PIN, Alternate
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel1On for PinProxy<PORT, PIN, Alternate2<DIR>> {}
 impl<PORT: PortNum, PIN: PinNum, DIR> Pxsel1On for PinProxy<PORT, PIN, Alternate3<DIR>> {}
 
-// Derive bitmasks for different GPIO registers from pin numbers and register trait implementations
+// Derive bitmasks for different GPIO registers from pin numbers and register trait implementations. Bit x
+// of each port register belongs to pin x (SLAU445I Table 8-13, p. 335).
 trait MaskRegisters {
     fn pxout_set_mask(&self) -> u8;
     fn pxout_clr_mask(&self) -> u8;
@@ -258,6 +272,7 @@ impl<PORT: PortNum, PIN: PinNum, DIR> MaskRegisters for PinProxy<PORT, PIN, DIR>
     fn pxsel1_mask(&self) -> u8 { (self.pxsel1_on() as u8) << PIN::NUM }
 }
 
+// Only ports with interrupts have PxIE (SLAU445I 8.2.6, p. 314)
 trait InterruptOperations {
     fn maybe_write_pxie(&self, b: u8);
 }
@@ -268,6 +283,7 @@ impl<P: GpioPeriph> InterruptOperations for P {
 }
 
 impl<P: IntrPeriph> InterruptOperations for P {
+    // PxIE (SLAU445I Table 8-17, p. 336)
     #[inline(always)]
     fn maybe_write_pxie(&self, b: u8) { self.pxie_wr(b); }
 }
@@ -276,7 +292,8 @@ impl<P: PortNum + PortPins>
     Batch<P, P::Init0, P::Init1, P::Init2, P::Init3, P::Init4, P::Init5, P::Init6, P::Init7>
 {
     /// Split into a batch of individual GPIO pin proxies. The pin slots the device has no pin for
-    /// start out [`Unavailable`].
+    /// start out [`Unavailable`]. The pins that exist start out as floating inputs, as after a reset
+    /// (SLAU445I 8.3.1, p. 316).
     pub fn new(_port: P) -> Self { Self::create() }
 }
 
@@ -363,11 +380,12 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
 
         let p = unsafe { PORT::steal() };
         // Turn off interrupts first so nothing fires during subsequent register writes, which can set
-        // PxIFG flags (SLAU445I 8.2.6, p. 315)
+        // PxIFG flags (SLAU445I 8.2.6, p. 315). PxIE: SLAU445I Table 8-17, p. 336.
         p.maybe_write_pxie(0);
         // Pins whose PxSEL0 and PxSEL1 bits both change switch through PxSELC, so they don't pass
         // through another function on the way (SLAU445I 8.2.5, p. 314). After that, every
-        // remaining change is a single bit.
+        // remaining change is a single bit. PxSEL0, PxSEL1 and PxSELC: SLAU445I Tables 8-13 to 8-15,
+        // p. 335 to p. 336.
         let both = (p.pxsel0_rd() ^ pxsel0) & (p.pxsel1_rd() ^ pxsel1);
         if both != 0 {
             p.pxselc_wr(both);
@@ -378,9 +396,11 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         // Only write to PxOUT if we need to match the pull resistor state to the typestate,
         // otherwise keep it at it's previous value.
         // Instead of a write(), use a set_bits() and a clear_bits() to allow for leaving unchanged.
+        // PxOUT: SLAU445I Table 8-10, p. 334.
         p.pxout_set(pxout_set);
         p.pxout_clear(pxout_clr);
 
+        // PxDIR (SLAU445I Table 8-11, p. 334) and PxREN (SLAU445I Table 8-12, p. 335)
         p.pxdir_wr(pxdir);
         p.pxren_wr(pxren);
     }
@@ -400,7 +420,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
     }
 
     /// Commits all pin configurations to GPIO registers and returns GPIO parts and turns off all
-    /// interrupt enable bits.
+    /// interrupt enable bits (PxIE, SLAU445I Table 8-17, p. 336).
     ///
     /// Note that the pin's interrupt flags may become set as a result of
     /// this operation (SLAU445I 8.2.6, p. 315).
@@ -417,7 +437,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         Parts::new()
     }
 
-    /// Edit configuration of pin 0
+    /// Edit configuration of pin 0 (bit 0 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin0<NEW, F: FnOnce(PinProxy<PORT, Pin0, DIR0>) -> PinProxy<PORT, Pin0, NEW>>(
         self,
@@ -435,7 +455,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 1
+    /// Edit configuration of pin 1 (bit 1 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin1<NEW, F: FnOnce(PinProxy<PORT, Pin1, DIR1>) -> PinProxy<PORT, Pin1, NEW>>(
         self,
@@ -453,7 +473,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 2
+    /// Edit configuration of pin 2 (bit 2 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin2<NEW, F: FnOnce(PinProxy<PORT, Pin2, DIR2>) -> PinProxy<PORT, Pin2, NEW>>(
         self,
@@ -471,7 +491,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 3
+    /// Edit configuration of pin 3 (bit 3 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin3<NEW, F: FnOnce(PinProxy<PORT, Pin3, DIR3>) -> PinProxy<PORT, Pin3, NEW>>(
         self,
@@ -489,7 +509,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 4
+    /// Edit configuration of pin 4 (bit 4 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin4<NEW, F: FnOnce(PinProxy<PORT, Pin4, DIR4>) -> PinProxy<PORT, Pin4, NEW>>(
         self,
@@ -507,7 +527,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 5
+    /// Edit configuration of pin 5 (bit 5 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin5<NEW, F: FnOnce(PinProxy<PORT, Pin5, DIR5>) -> PinProxy<PORT, Pin5, NEW>>(
         self,
@@ -525,7 +545,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 6
+    /// Edit configuration of pin 6 (bit 6 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin6<NEW, F: FnOnce(PinProxy<PORT, Pin6, DIR6>) -> PinProxy<PORT, Pin6, NEW>>(
         self,
@@ -543,7 +563,7 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Edit configuration of pin 7
+    /// Edit configuration of pin 7 (bit 7 of the port registers, SLAU445I Table 8-13, p. 335)
     #[inline(always)]
     pub fn config_pin7<NEW, F: FnOnce(PinProxy<PORT, Pin7, DIR7>) -> PinProxy<PORT, Pin7, NEW>>(
         self,
@@ -561,7 +581,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Set all pins to inputs with pulldowns. Leaving unused pins as floating massively increases power
+    /// Set all pins to inputs with pulldowns (PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I Table 8-1,
+    /// p. 313). Leaving unused pins as floating massively increases power
     /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
     #[inline(always)]
     pub fn pulldown_all(self) -> Batch<PORT, Pd, Pd, Pd, Pd, Pd, Pd, Pd, Pd> {
@@ -577,7 +598,8 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Set all pins to inputs with pullups. Leaving unused pins as floating massively increases power
+    /// Set all pins to inputs with pullups (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313).
+    /// Leaving unused pins as floating massively increases power
     /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
     #[inline(always)]
     pub fn pullup_all(self) -> Batch<PORT, Pu, Pu, Pu, Pu, Pu, Pu, Pu, Pu> {

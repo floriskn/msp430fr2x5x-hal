@@ -51,11 +51,15 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
 
+    // MCLK = SMCLK = DCOCLKDIV in the 8 MHz range, ACLK from REFO (SELMS = 000b, SELA = 01b: SLAU445I
+    // Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118). The timers count SMCLK (TASSEL = 10b:
+    // SLASEO7C Table 9-8, p. 50).
     let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
@@ -73,7 +77,8 @@ fn main() -> ! {
         .pwm2
         .into_ir_input(0);
     // P1.4 = UCA0TXD with P1SEL = 01 (SLASEO7C Table 9-23, p. 65). The data bit is IRDATA, set by
-    // software (SLASEO7C 9.10.8, p. 60 to p. 61).
+    // software (SLASEO7C 9.10.8, p. 60 to p. 61). In SYSCFG1: IREN = 1, IRMSEL = 0 for ASK, IRPSEL = 0
+    // for normal polarity, IRDSSEL = 1 for data "From IRDATA bit" (SLAU445I Table 1-30, p. 81).
     let mut ir = IrModulator::with_software_data(&carrier, &envelope, IrMode::Ask, false, p1.pin4.to_alternate1());
 
     loop {

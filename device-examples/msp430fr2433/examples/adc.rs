@@ -15,10 +15,13 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
+    // (WDTHOLD, SLAU445I Table 12-2, p. 366: after a PUC the WDT runs, SLAU445I 12.2.2, p. 363)
     let periph = msp430fr2433::Peripherals::take().unwrap();
     let _wdt = Wdt::constrain(periph.watchdog_timer);
 
     // Configure GPIO
+    // Pmm::new clears LOCKLPM5 (SLAU445I Table 2-7, p. 97). SLASE59F 6.10.3, p. 46 sets the ports up before
+    // that; clearing it first leaves the pins inputs until they are set up (SLAU445I 8.3.1, p. 316).
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
     let mut red_led = port1.pin0.to_output();
@@ -26,6 +29,12 @@ fn main() -> ! {
     let mut adc_pin = port1.pin2.to_adc_mode(); // A2: ADCPCTL2 = 1 (SLASE59F Table 6-17, p. 55)
 
     // ADC setup
+    // ADCCLK = MODCLK undivided (ADCSSELx = 00b, ADCDIVx = 000b: SLAU445I Table 21-4, p. 563 to p. 564;
+    // ADCPDIVx = 00b: SLAU445I Table 21-5, p. 565), 8-bit results (ADCRES = 00b) with the 50-ksps buffer
+    // (ADCSR = 1) (SLAU445I Table 21-5, p. 565), 4-cycle samples (ADCSHTx = 0000b, SLAU445I Table 21-3,
+    // p. 561). 4 MODCLK cycles last 0.69 us to 1.05 us (SLASE59F Table 5-9, p. 26). SLASE59F Table 5-21,
+    // p. 35 gives a tSample of 1.5 us at 2 V and 2.0 us at 3 V for 10 bits from a 1-kOhm source; its note 2
+    // makes that about 0.8 us for 8 bits, so 4 cycles of a fast MODCLK are short even for a 1-kOhm source.
     let mut adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,

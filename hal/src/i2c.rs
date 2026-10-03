@@ -1302,6 +1302,7 @@ where
     /// `Ok(n)` if data was successfully retreived from the Rx buffer.
     #[inline]
     pub fn read_rx_buf(&mut self) -> nb::Result<u8, I2cMultiMasterErr> {
+        // UCALIFG in UCBxIFG (SLAU445I Table 24-19, p. 663)
         let ifg = self.usci.ifg_rd();
         if ifg.ucalifg() {
             return Err(Other(I2cMultiMasterErr::ArbitrationLost));
@@ -1317,6 +1318,7 @@ where
     /// `Ok(())` if data was successfully loaded into the Tx buffer.
     #[inline]
     pub fn write_tx_buf(&mut self, byte: u8) -> nb::Result<(), I2cMultiMasterErr> {
+        // UCALIFG in UCBxIFG (SLAU445I Table 24-19, p. 663)
         let ifg = self.usci.ifg_rd();
         if ifg.ucalifg() {
             return Err(Other(I2cMultiMasterErr::ArbitrationLost));
@@ -1487,6 +1489,8 @@ where
     /// `Ok(n)` if data was successfully retreived from the Rx buffer.
     #[inline]
     pub fn read_rx_buf_as_master(&mut self) -> nb::Result<u8, I2cMasterSlaveErr> {
+        // UCALIFG with UCSTTIFG: addressed after losing arbitration (SLAU445I Table 24-19, p. 663;
+        // SLAU445I Figure 24-13, p. 640)
         let ifg = self.usci.ifg_rd();
         if ifg.ucalifg() {
             return match ifg.ucsttifg() {
@@ -1522,6 +1526,8 @@ where
     /// `Ok(())` if data was successfully loaded into the Tx buffer.
     #[inline]
     pub fn write_tx_buf_as_master(&mut self, byte: u8) -> nb::Result<(), I2cMasterSlaveErr> {
+        // UCALIFG with UCSTTIFG: addressed after losing arbitration (SLAU445I Table 24-19, p. 663;
+        // SLAU445I Figure 24-12, p. 638)
         let ifg = self.usci.ifg_rd();
         if ifg.ucalifg() {
             return match ifg.ucsttifg() {
@@ -1697,14 +1703,19 @@ pub enum I2cVector {
     /// The Tx buffer is empty and slave address 1 was on the I2C bus when this occurred.
     Slave1TxBufEmpty = 0x14,
     /// Data is waiting in the Rx buffer. In slave mode slave address 0 was on the I2C bus when this occurred.
+    /// (UCRXIFG0, SLAU445I Table 24-19, p. 663; vector 16h, SLAU445I Table 24-20, p. 664)
     RxBufFull        = 0x16,
     /// The Tx buffer is empty. In slave mode slave address 0 was on the I2C bus when this occurred.
+    /// (UCTXIFG0, SLAU445I Table 24-19, p. 663; vector 18h, SLAU445I Table 24-20, p. 664)
     TxBufEmpty       = 0x18,
     /// The target byte count has been reached.
+    /// (UCBCNTIFG, SLAU445I Table 24-19, p. 662; vector 1Ah, SLAU445I Table 24-20, p. 664)
     ByteCounterZero  = 0x1A,
     /// The SCL line has been held low longer than the Clock Low Timeout value.
+    /// (UCCLTOIFG, SLAU445I Table 24-19, p. 662; vector 1Ch, SLAU445I Table 24-20, p. 664)
     ClockLowTimeout  = 0x1C,
     /// The 9th bit of an I2C data packet has been completed.
+    /// (UCBIT9IFG, SLAU445I Table 24-19, p. 662; vector 1Eh, SLAU445I Table 24-20, p. 664)
     NinthBitReceived = 0x1E,
 }
 
@@ -1730,26 +1741,36 @@ bitflags::bitflags! {
         /// `I2cVector::StopReceived`).
         const StopReceived        = 1 << 3;
         /// UCALIE. Trigger an interrupt when arbitration was lost during an attempted transmission.
+        /// (Bit 4, SLAU445I Table 24-18, p. 660)
         const ArbitrationLost     = 1 << 4;
-        /// UCNACKIE. Trigger an interrupt a NACK is received.
+        /// UCNACKIE. Trigger an interrupt a NACK is received. (Bit 5, SLAU445I Table 24-18, p. 660)
         const NackReceived        = 1 << 5;
         /// UCBCNTIE. Trigger an interrupt when the target byte count has been reached.
+        /// (Bit 6, SLAU445I Table 24-18, p. 660)
         const ByteCounterZero     = 1 << 6;
         /// UCCLTOIE. Trigger an interrupt when the SCL line has been held low longer than the Clock Low Timeout value.
+        /// (Bit 7, SLAU445I Table 24-18, p. 660)
         const ClockLowTimeout     = 1 << 7;
         /// UCRXIE1. Trigger an interrupt when slave address 1 receives a data byte.
+        /// (Bit 8, SLAU445I Table 24-18, p. 660)
         const Slave1RxBufFull     = 1 << 8;
         /// UCTXIE1. Trigger an interrupt when the Tx buffer is empty and slave address 1 was on the I2C bus when this occurred.
+        /// (Bit 9, SLAU445I Table 24-18, p. 660)
         const Slave1TxBufEmpty    = 1 << 9;
         /// UCRXIE2. Trigger an interrupt when slave address 2 receives a data byte.
+        /// (Bit 10, SLAU445I Table 24-18, p. 660)
         const Slave2RxBufFull     = 1 << 10;
         /// UCTXIE2. Trigger an interrupt when the Tx buffer is empty and slave address 2 was on the I2C bus when this occurred.
+        /// (Bit 11, SLAU445I Table 24-18, p. 660)
         const Slave2TxBufEmpty    = 1 << 11;
         /// UCRXIE3. Trigger an interrupt when slave address 3 receives a data byte.
+        /// (Bit 12, SLAU445I Table 24-18, p. 660)
         const Slave3RxBufFull     = 1 << 12;
         /// UCTXIE3. Trigger an interrupt when the Tx buffer is empty and slave address 3 was on the I2C bus when this occurred.
+        /// (Bit 13, SLAU445I Table 24-18, p. 660)
         const Slave3TxBufEmpty    = 1 << 13;
         /// UCBIT9IE. Trigger an interrupt when the 9th bit of an I2C data packet we are involved in has been completed.
+        /// (Bit 14, SLAU445I Table 24-18, p. 660)
         const NinthBitReceived    = 1 << 14;
     }
 }

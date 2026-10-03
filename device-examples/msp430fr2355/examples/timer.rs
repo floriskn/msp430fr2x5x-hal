@@ -49,6 +49,8 @@ fn main() -> ! {
         p1_0.set_high().unwrap();
         // first 0.5 s of timer countdown expires while subtimer expires, so this should only block
         // for 0.5 s
+        // (In up mode TBxR counts from 0 to TBxCL0; CCR2's CCIFG is set when TBxR reaches TBxCL2, SLAU445I
+        // 14.2.4.2, p. 399, and TBIFG when the timer counts from TBxCL0 to zero, SLAU445I 14.2.3.1, p. 394.)
         block!(timer.wait()).unwrap();
         p1_0.set_low().unwrap();
     }

@@ -74,6 +74,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -97,6 +98,10 @@ fn main() -> ! {
     // P1.3 = MCLK with P1SEL = 10 and P1DIR = 1 (SLASEO7C Table 9-23, p. 65)
     let _mclk_out = p1.pin3.to_output().to_alternate2();
 
+    // MCLK = SMCLK = DCOCLKDIV (SELMS = 000b: SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I
+    // Table 3-9, p. 118). With the generator, XT1 runs in bypass mode (XT1BYPASS = 1: SLAU445I
+    // Table 3-10, p. 120) and is the FLL reference (SELREF = 00b: SLAU445I Table 3-7, p. 116) and ACLK
+    // (SELA = 00b: SLAU445I Table 3-8, p. 117); otherwise REFO is both (SELREF = 01b, SELA = 01b).
     let (smclk, aclk, mut delay, xt1_ok) = if FLL_REF_FROM_XT1 {
         // P2.1 = XIN with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
         let config = ClockConfig::new(periph.cs)
@@ -126,6 +131,8 @@ fn main() -> ! {
 
     // The UART runs from ACLK, so the report stays readable even if MCLK is wrong
     // P1.4 = UCA0TXD with P1SEL = 01 (SLASEO7C Table 9-23, p. 65)
+    // (8N1, LSB first: UCMSB, UC7BIT, UCSPB, UCPEN in SLAU445I Table 22-8, p. 593; ACLK is UCSSEL = 01b:
+    // SLASEO7C Table 9-8, p. 50)
     let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
         periph.e_usci_a0,
         BitOrder::LsbFirst,
@@ -143,6 +150,9 @@ fn main() -> ! {
     // captures the rising edges of that output on CCR0 (input B: SLASEO7C Table 9-13, p. 56, CCI0B =
     // "Timer0_A3 CCR0B output (internal)"; SLASEO7C Table 9-12, p. 55), so two captures are 64 ACLK
     // cycles apart. CCR1 captures from software, to time the delays.
+    // (TASSEL: ACLK = 01b, SMCLK = 10b: SLASEO7C Table 9-8, p. 50. CCR0 captures on rising edges of
+    // input B: CM = 01b, CCIS = 01b, SLAU445I Table 13-6, p. 386. A software capture switches CCIS
+    // between GND and VCC: SLAU445I 13.2.4.1.1, p. 376.)
     let _ta0 = PwmParts3::new(periph.ta0, TimerConfig::aclk(&aclk), 31);
     let captures = CaptureParts3::config(periph.ta1, TimerConfig::smclk(&smclk))
         .config_cap0_input_B()
@@ -269,7 +279,8 @@ fn main() -> ! {
     }
 }
 
-/// The SMCLK cycles from just before `f` runs to just after it returns
+/// The SMCLK cycles from just before `f` runs to just after it returns, from two software captures
+/// (SLAU445I 13.2.4.1.1, p. 376)
 fn time(stopwatch: &mut Capture<Ta1, CCR1>, f: impl FnOnce()) -> u16 {
     stopwatch.trigger_capture();
     let start = read_capture(stopwatch);
@@ -278,6 +289,8 @@ fn time(stopwatch: &mut Capture<Ta1, CCR1>, f: impl FnOnce()) -> u16 {
     read_capture(stopwatch).wrapping_sub(start)
 }
 
+/// The next captured count. After a missed capture (COV: SLAU445I 13.2.4.1, p. 375) this is the
+/// latest one.
 fn read_capture<C>(capture: &mut Capture<Ta1, C>) -> u16
 where
     Ta1: msp430_hal::timer::CapCmp<C>,

@@ -39,15 +39,18 @@ static RED_LED: Mutex<UnsafeCell<Option<Pin<P1, Pin0, Output>>>> =
 // Connect push button input to P1.5, TA0.CCI2A, the capture input set up below (P1.6 is TA0CLK, no
 // capture input: SLASEE4C Table 6-15, p. 58; SLASEE4C Figure 6-2, p. 54). When button is pressed, red
 // LED should toggle. No debouncing, so sometimes inputs are missed. No board document covers the button
-// or the LED (P1.0): there is none for the MSP430FR25x2.
+// or the LED (P1.0): there is none for the MSP430FR25x2. P1.0 is a GPIO output, P1SELx = 00 and P1DIR = 1
+// (SLASEE4C Table 6-15, p. 58).
 #[entry]
 fn main() -> ! {
     let Some(periph) = msp430fr25x2::Peripherals::take() else {
         loop {}
     };
     let mut fram = Fram::new(periph.frctl);
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     Wdt::constrain(periph.wdt_a);
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
@@ -59,7 +62,7 @@ fn main() -> ! {
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
-        .aclk_refoclk()
+        .aclk_refoclk() // ACLK from REFO, 32768 Hz (SLASEE4C Table 5-7, p. 27)
         .freeze(&mut fram);
 
     // P1.5 as TA0.CCI2A, capture input A of CCR2: P1SELx = 10 with P1DIR = 0 (SLASEE4C Table 6-15, p. 58;
@@ -82,6 +85,7 @@ fn main() -> ! {
 }
 
 fn setup_capture<T: CapCmp<C>, C>(capture: &mut Capture<T, C>) {
+    // CCIE = 1: the CCR's CCIFG requests an interrupt (SLAU445I Table 13-6, p. 386)
     capture.enable_interrupts();
 }
 
@@ -99,6 +103,7 @@ fn TIMER0_A1() {
             return;
         };
 
+        // Reading TA0IV resets the highest-pending interrupt flag (SLAU445I 13.2.6.2, p. 380)
         if let CaptureVector::Capture2(cap) = vector.interrupt_vector() {
             if cap.interrupt_capture(capture).is_ok() {
                 led.toggle().unwrap();

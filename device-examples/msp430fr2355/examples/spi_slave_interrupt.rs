@@ -55,6 +55,7 @@ fn main() -> ! {
     let mut ste = p4.pin4.to_output();
     ste.set_high().ok();
 
+    // LED1, red, on P1.0 and LED2, green, on P6.6 (SLAU680 Figure 18, p. 26)
     let mut red_led = p1.pin0.to_output();
     let mut green_led = Batch::new(periph.p6).split(&pmm).pin6.to_output();
 
@@ -102,6 +103,7 @@ fn main() -> ! {
         ste.set_high().ok(); // Make slave MISO high impedance
 
         // Green LED on if result matches expected
+        // (LED2, green, on P6.6 and LED1, red, on P1.0: SLAU680 Figure 18, p. 26)
         green_led.set_state( (recv_buf[1..] == [13, 15, 00]).into() ).ok();
         red_led.toggle().ok();
 
@@ -117,6 +119,7 @@ fn EUSCI_A0() {
     critical_section::with(|cs| {
         let Some(ref mut spi_slave) = *SPI_SLAVE.borrow_ref_mut(cs) else {return};
         // If you have multiple interrupts enabled you can use .interrupt_source() to determine which one caused this interrupt
+        // (UCRXIFG is set when data moves from the RX shift register to UCxRXBUF: SLAU445I 23.3.4, p. 608)
         let byte = match unsafe{spi_slave.read_unchecked()} { // Only Rx interrupts are enabled, so Rx buffer must be ready
             Ok(b) => b,
             Err(SpiErr::Overrun(b)) => b,

@@ -399,7 +399,8 @@ mod i2c {
     };
 
     // "The eUSCI_B module supports either SPI or I2C communications" (SLASEO7C 9.10.7, p. 54); registers:
-    // SLASEO7C Tables 9-52 and 9-53, p. 80 to p. 81
+    // SLASEO7C Tables 9-52 and 9-53, p. 80 to p. 81.
+    // eUSCI_B0 registers: SLASEO7C Table 9-52, p. 80; in I2C mode: SLAU445I Table 24-3, p. 648
     eusci_i2c_impl!(
         EUsciB0,
         ucb0ctlw0,
@@ -421,6 +422,7 @@ mod i2c {
         ucb0iv,
         crate::pac::e_usci_b0::ucb0ifg::R,
     );
+    // eUSCI_B1 registers: SLASEO7C Table 9-53, p. 80 to p. 81; in I2C mode: SLAU445I Table 24-3, p. 648
     eusci_i2c_impl!(
         EUsciB1,
         ucb1ctlw0,
@@ -449,52 +451,88 @@ mod i2c {
     // input pin", UCBxCLK (SLAU445I Figure 24-1, p. 628).
 
     /// I2C SCL pin for eUSCI B0 (default mapping)
+    ///
+    /// P1.3 in its UCB0SOMI/UCB0SCL function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SCLPinDefault;
-    impl_i2c_pin!(UsciB0SCLPinDefault, P1, Pin3); // P1.3 UCB0SCL, P1SELx = 01, USCIB0RMP = 0
+    impl_i2c_pin!(UsciB0SCLPinDefault, P1, Pin3);
 
     /// I2C SCL pin for eUSCI B0 (remapped mapping)
+    ///
+    /// P4.5 in its UCB0SOMI/UCB0SCL function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SCLPinRemapped;
-    impl_i2c_pin!(UsciB0SCLPinRemapped, P4, Pin5); // P4.5 UCB0SCL, P4SELx = 01, USCIB0RMP = 1
+    impl_i2c_pin!(UsciB0SCLPinRemapped, P4, Pin5);
 
     /// I2C SDA pin for eUSCI B0 (default mapping)
+    ///
+    /// P1.2 in its UCB0SIMO/UCB0SDA function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SDAPinDefault;
-    impl_i2c_pin!(UsciB0SDAPinDefault, P1, Pin2); // P1.2 UCB0SDA, P1SELx = 01, USCIB0RMP = 0
+    impl_i2c_pin!(UsciB0SDAPinDefault, P1, Pin2);
 
     /// I2C SDA pin for eUSCI B0 (remapped mapping)
+    ///
+    /// P4.6 in its UCB0SIMO/UCB0SDA function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SDAPinRemapped;
-    impl_i2c_pin!(UsciB0SDAPinRemapped, P4, Pin6); // P4.6 UCB0SDA, P4SELx = 01, USCIB0RMP = 1
+    impl_i2c_pin!(UsciB0SDAPinRemapped, P4, Pin6);
 
     /// UCLKI pin for eUSCI B0. Used as an external clock source. (default mapping)
+    ///
+    /// P1.1 in its UCB0CLK function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0UCLKIPinDefault;
-    impl_i2c_pin!(UsciB0UCLKIPinDefault, P1, Pin1); // P1.1 UCB0CLK, P1SELx = 01, USCIB0RMP = 0
+    impl_i2c_pin!(UsciB0UCLKIPinDefault, P1, Pin1);
 
     /// UCLKI pin for eUSCI B0. Used as an external clock source. (remapped mapping)
+    ///
+    /// P5.5 in its UCB0CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0UCLKIPinRemapped;
-    impl_i2c_pin!(UsciB0UCLKIPinRemapped, P5, Pin5); // P5.5 UCB0CLK, P5SELx = 01, USCIB0RMP = 1
+    impl_i2c_pin!(UsciB0UCLKIPinRemapped, P5, Pin5);
 
     /// I2C SCL pin for eUSCI B1 (default mapping)
+    ///
+    /// P3.6 in its UCB1SOMI/UCB1SCL function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SCLPinDefault;
-    impl_i2c_pin!(UsciB1SCLPinDefault, P3, Pin6); // P3.6 UCB1SCL, P3SELx = 01, USCIB1RMP = 0
+    impl_i2c_pin!(UsciB1SCLPinDefault, P3, Pin6);
 
     /// I2C SCL pin for eUSCI B1 (remapped mapping)
+    ///
+    /// P4.3 in its UCB1SOMI/UCB1SCL function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SCLPinRemapped;
-    impl_i2c_pin!(UsciB1SCLPinRemapped, P4, Pin3); // P4.3 UCB1SCL, P4SELx = 01, USCIB1RMP = 1
+    impl_i2c_pin!(UsciB1SCLPinRemapped, P4, Pin3);
 
     /// I2C SDA pin for eUSCI B1 (default mapping)
+    ///
+    /// P3.2 in its UCB1SIMO/UCB1SDA function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SDAPinDefault;
-    impl_i2c_pin!(UsciB1SDAPinDefault, P3, Pin2); // P3.2 UCB1SDA, P3SELx = 01, USCIB1RMP = 0
+    impl_i2c_pin!(UsciB1SDAPinDefault, P3, Pin2);
 
     /// I2C SDA pin for eUSCI B1 (remapped mapping)
+    ///
+    /// P4.4 in its UCB1SIMO/UCB1SDA function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SDAPinRemapped;
-    impl_i2c_pin!(UsciB1SDAPinRemapped, P4, Pin4); // P4.4 UCB1SDA, P4SELx = 01, USCIB1RMP = 1
+    impl_i2c_pin!(UsciB1SDAPinRemapped, P4, Pin4);
 
     /// UCLKI pin for eUSCI B1. Used as an external clock source. (default mapping)
+    ///
+    /// P3.5 in its UCB1CLK function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1UCLKIPinDefault;
-    impl_i2c_pin!(UsciB1UCLKIPinDefault, P3, Pin5); // P3.5 UCB1CLK, P3SELx = 01, USCIB1RMP = 0
+    impl_i2c_pin!(UsciB1UCLKIPinDefault, P3, Pin5);
 
     /// UCLKI pin for eUSCI B1. Used as an external clock source. (remapped mapping)
+    ///
+    /// P5.3 in its UCB1CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1UCLKIPinRemapped;
-    impl_i2c_pin!(UsciB1UCLKIPinRemapped, P5, Pin3); // P5.3 UCB1CLK, P5SELx = 01, USCIB1RMP = 1
+    impl_i2c_pin!(UsciB1UCLKIPinRemapped, P5, Pin3);
 
     impl I2cUsci<DefaultMapping> for EUsciB0 {
         type ClockPin = UsciB0SCLPinDefault;
@@ -564,6 +602,8 @@ mod pwm {
     impl PwmPeriph<CCR2, RemappedMapping> for Ta2 {
         type Gpio = Pin<P6, Pin0, Alternate1<Output>>; // P6.0 TA2.2, P6SELx = 01, TA2RMP = 1
     }
+    // TA3 outputs with TA3RMP set (SLASEO7C Table 9-16, p. 60; pins: SLASEO7C Table 9-26, p. 68;
+    // SLASEO7C Table 9-27, p. 69)
     impl PwmPeriph<CCR0, RemappedMapping> for Ta3 {
         type Gpio = Pin<P5, Pin3, Alternate2<Output>>; // P5.3 TA3.0, P5SELx = 10, TA3RMP = 1
     }
@@ -622,25 +662,25 @@ mod pwm {
     // and P5.4; SLASEO7C Table 9-15, p. 59, SLASEO7C Table 9-26, p. 68 and SLASEO7C Table 7-2, p. 18
     // give P4.3 and P4.4.
     impl PwmPeriph<CCR0> for Tb0 {
-        type Gpio = Pin<P6, Pin2, Alternate1<Output>>; // P6.2 TB0.0, P6SELx = 01
+        type Gpio = Pin<P6, Pin2, Alternate1<Output>>; // P6.2 TB0.0, P6SELx = 01 (SLASEO7C Table 9-28, p. 70)
     }
     impl PwmPeriph<CCR1> for Tb0 {
-        type Gpio = Pin<P4, Pin7, Alternate2<Output>>; // P4.7 TB0.1, P4SELx = 10
+        type Gpio = Pin<P4, Pin7, Alternate2<Output>>; // P4.7 TB0.1, P4SELx = 10 (SLASEO7C Table 9-26, p. 68)
     }
     impl PwmPeriph<CCR2> for Tb0 {
-        type Gpio = Pin<P5, Pin0, Alternate2<Output>>; // P5.0 TB0.2, P5SELx = 10
+        type Gpio = Pin<P5, Pin0, Alternate2<Output>>; // P5.0 TB0.2, P5SELx = 10 (SLASEO7C Table 9-27, p. 69)
     }
     impl PwmPeriph<CCR3> for Tb0 {
-        type Gpio = Pin<P5, Pin1, Alternate2<Output>>; // P5.1 TB0.3, P5SELx = 10
+        type Gpio = Pin<P5, Pin1, Alternate2<Output>>; // P5.1 TB0.3, P5SELx = 10 (SLASEO7C Table 9-27, p. 69)
     }
     impl PwmPeriph<CCR4> for Tb0 {
-        type Gpio = Pin<P5, Pin2, Alternate2<Output>>; // P5.2 TB0.4, P5SELx = 10
+        type Gpio = Pin<P5, Pin2, Alternate2<Output>>; // P5.2 TB0.4, P5SELx = 10 (SLASEO7C Table 9-27, p. 69)
     }
     impl PwmPeriph<CCR5> for Tb0 {
-        type Gpio = Pin<P4, Pin3, Alternate2<Output>>; // P4.3 TB0.5, P4SELx = 10
+        type Gpio = Pin<P4, Pin3, Alternate2<Output>>; // P4.3 TB0.5, P4SELx = 10 (SLASEO7C Table 9-26, p. 68)
     }
     impl PwmPeriph<CCR6> for Tb0 {
-        type Gpio = Pin<P4, Pin4, Alternate2<Output>>; // P4.4 TB0.6, P4SELx = 10
+        type Gpio = Pin<P4, Pin4, Alternate2<Output>>; // P4.4 TB0.6, P4SELx = 10 (SLASEO7C Table 9-26, p. 68)
     }
 }
 
@@ -649,7 +689,8 @@ mod serial {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, pin_mapping::*, serial::*};
 
     // "The eUSCI_A module supports either UART or SPI communications" (SLASEO7C 9.10.7, p. 54);
-    // registers: SLASEO7C Tables 9-50 and 9-51, p. 79 to p. 80
+    // registers: SLASEO7C Tables 9-50 and 9-51, p. 79 to p. 80.
+    // eUSCI_A0 registers: SLASEO7C Table 9-50, p. 79 to p. 80; in UART mode: SLAU445I Table 22-7, p. 592
     eusci_uart_impl!(
         EUsciA0,
         uca0ctlw0,
@@ -665,6 +706,7 @@ mod serial {
         crate::pac::e_usci_a0::uca0statw::R
     );
 
+    // eUSCI_A1 registers: SLASEO7C Table 9-51, p. 80; in UART mode: SLAU445I Table 22-7, p. 592
     eusci_uart_impl!(
         EUsciA1,
         uca1ctlw0,
@@ -717,52 +759,76 @@ mod serial {
     // listed for SPI only (SLASEO7C Table 9-11, p. 54).
 
     /// UCLK pin for E_USCI_A0 (default mapping)
+    ///
+    /// P1.6 in its UCA0CLK function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0ClockPinDefault;
-    // Default pin mapping for the eUSCI_A0 clock signal: P1.6 UCA0CLK, P1SELx = 01.
-    // Active when the USCIA0RMP remap bit in SYSCFG3 is cleared.
+    // Default pin mapping for the eUSCI_A0 clock signal.
+    // Active when the USCIA0RMP remap bit in SYSCFG3 is cleared (SLAU445I Table 1-32, p. 83).
     impl_serial_pin!(UsciA0ClockPinDefault, P1, Pin6);
 
     /// UCLK pin for E_USCI_A0 (remapped mapping)
+    ///
+    /// P5.0 in its UCA0CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0ClockPinRemapped;
-    // Alternate pin mapping selected when the USCIA0RMP remap bit is set: P5.0 UCA0CLK, P5SELx = 01.
-    // Only one mapping (default or remapped) is active at a time.
+    // Alternate pin mapping selected when the USCIA0RMP remap bit is set.
+    // Only one mapping (default or remapped) is active at a time (SLASEO7C Table 9-11 note 2, p. 54).
     impl_serial_pin!(UsciA0ClockPinRemapped, P5, Pin0);
 
     /// Tx pin for E_USCI_A0 (default mapping)
+    ///
+    /// P1.4 in its UCA0TXD/UCA0SIMO function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0TxPinDefault;
-    // Default transmit pin mapping: P1.4 UCA0TXD, P1SELx = 01.
-    // Used when the USCIA0RMP remap bit in SYSCFG3 is cleared.
+    // Default transmit pin mapping.
+    // Used when the USCIA0RMP remap bit in SYSCFG3 is cleared (SLAU445I Table 1-32, p. 83).
     impl_serial_pin!(UsciA0TxPinDefault, P1, Pin4);
 
     /// Tx pin for E_USCI_A0 (remapped mapping)
+    ///
+    /// P5.2 in its UCA0TXD/UCA0SIMO function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0TxPinRemapped;
-    // Alternate transmit pin mapping selected via the USCIA0RMP remap bit: P5.2 UCA0TXD, P5SELx = 01.
-    // Only one mapping (default or remapped) is active at a time.
+    // Alternate transmit pin mapping selected via the USCIA0RMP remap bit.
+    // Only one mapping (default or remapped) is active at a time (SLASEO7C Table 9-11 note 2, p. 54).
     impl_serial_pin!(UsciA0TxPinRemapped, P5, Pin2);
 
     /// Rx pin for E_USCI_A0 (default mapping)
+    ///
+    /// P1.5 in its UCA0RXD/UCA0SOMI function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0RxPinDefault;
-    // Default receive pin mapping: P1.5 UCA0RXD, P1SELx = 01.
-    // Active when the USCIA0RMP remap bit in SYSCFG3 is cleared.
+    // Default receive pin mapping.
+    // Active when the USCIA0RMP remap bit in SYSCFG3 is cleared (SLAU445I Table 1-32, p. 83).
     impl_serial_pin!(UsciA0RxPinDefault, P1, Pin5);
 
     /// Rx pin for E_USCI_A0 (remapped mapping)
+    ///
+    /// P5.1 in its UCA0RXD/UCA0SOMI function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0RxPinRemapped;
-    // Alternate receive pin mapping selected when the USCIA0RMP remap bit is set: P5.1 UCA0RXD,
-    // P5SELx = 01. Only one mapping (default or remapped) is active at a time.
+    // Alternate receive pin mapping selected when the USCIA0RMP remap bit is set.
+    // Only one mapping (default or remapped) is active at a time (SLASEO7C Table 9-11 note 2, p. 54).
     impl_serial_pin!(UsciA0RxPinRemapped, P5, Pin1);
 
     /// UCLK pin for E_USCI_A1
+    ///
+    /// P2.4 in its UCA1CLK function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1ClockPin;
-    impl_serial_pin!(UsciA1ClockPin, P2, Pin4); // P2.4 UCA1CLK, P2SELx = 01
+    impl_serial_pin!(UsciA1ClockPin, P2, Pin4);
 
     /// Tx pin for E_USCI_A1
+    ///
+    /// P2.6 in its UCA1TXD/UCA1SIMO function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1TxPin;
-    impl_serial_pin!(UsciA1TxPin, P2, Pin6); // P2.6 UCA1TXD, P2SELx = 01
+    impl_serial_pin!(UsciA1TxPin, P2, Pin6);
 
     /// Rx pin for E_USCI_A1
+    ///
+    /// P2.5 in its UCA1RXD/UCA1SOMI function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1RxPin;
-    impl_serial_pin!(UsciA1RxPin, P2, Pin5); // P2.5 UCA1RXD, P2SELx = 01
+    impl_serial_pin!(UsciA1RxPin, P2, Pin5);
 }
 
 /* SPI */
@@ -770,7 +836,8 @@ mod spi {
     use crate::{gpio::*, hw_traits::eusci::*, pac::*, pin_mapping::*, spi::*};
 
     // eUSCI_A and eUSCI_B both support SPI (SLASEO7C 9.10.7, p. 54); registers:
-    // SLASEO7C Tables 9-50 to 9-53, p. 79 to p. 81
+    // SLASEO7C Tables 9-50 to 9-53, p. 79 to p. 81.
+    // eUSCI_A0 registers: SLASEO7C Table 9-50, p. 79 to p. 80; in SPI mode: SLAU445I Table 23-2, p. 612
     eusci_spi_impl!(
         EUsciA0,
         uca0ctlw0_spi,
@@ -783,6 +850,7 @@ mod spi {
         uca0iv,
         crate::pac::e_usci_a0::uca0statw_spi::R
     );
+    // eUSCI_A1 registers: SLASEO7C Table 9-51, p. 80; in SPI mode: SLAU445I Table 23-2, p. 612
     eusci_spi_impl!(
         EUsciA1,
         uca1ctlw0_spi,
@@ -795,6 +863,7 @@ mod spi {
         uca1iv,
         crate::pac::e_usci_a1::uca1statw_spi::R
     );
+    // eUSCI_B0 registers: SLASEO7C Table 9-52, p. 80; in SPI mode: SLAU445I Table 23-11, p. 619
     eusci_spi_impl!(
         EUsciB0,
         ucb0ctlw0_spi,
@@ -807,6 +876,7 @@ mod spi {
         ucb0iv,
         crate::pac::e_usci_b0::ucb0statw_spi::R
     );
+    // eUSCI_B1 registers: SLASEO7C Table 9-53, p. 80 to p. 81; in SPI mode: SLAU445I Table 23-11, p. 619
     eusci_spi_impl!(
         EUsciB1,
         ucb1ctlw0_spi,
@@ -911,115 +981,195 @@ mod spi {
     // pins need the remap bit (USCIA0RMP, USCIB0RMP, USCIB1RMP) at 0, the remapped ones at 1.
 
     /// SPI MISO pin for eUSCI A0 (P1.5) (default mapping)
+    ///
+    /// P1.5 in its UCA0RXD/UCA0SOMI function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0MISOPinDefault;
-    impl_spi_pin!(UsciA0MISOPinDefault, P1, Pin5); // UCA0SOMI, P1SELx = 01, USCIA0RMP = 0
+    impl_spi_pin!(UsciA0MISOPinDefault, P1, Pin5);
 
     /// SPI MISO pin for eUSCI A0 (P5.1) (remapped mapping)
+    ///
+    /// P5.1 in its UCA0RXD/UCA0SOMI function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0MISOPinRemapped;
-    impl_spi_pin!(UsciA0MISOPinRemapped, P5, Pin1); // UCA0SOMI, P5SELx = 01, USCIA0RMP = 1
+    impl_spi_pin!(UsciA0MISOPinRemapped, P5, Pin1);
 
     /// SPI MOSI pin for eUSCI A0 (P1.4) (default mapping)
+    ///
+    /// P1.4 in its UCA0TXD/UCA0SIMO function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0MOSIPinDefault;
-    impl_spi_pin!(UsciA0MOSIPinDefault, P1, Pin4); // UCA0SIMO, P1SELx = 01, USCIA0RMP = 0
+    impl_spi_pin!(UsciA0MOSIPinDefault, P1, Pin4);
 
     /// SPI MOSI pin for eUSCI A0 (P5.2) (remapped mapping)
+    ///
+    /// P5.2 in its UCA0TXD/UCA0SIMO function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0MOSIPinRemapped;
-    impl_spi_pin!(UsciA0MOSIPinRemapped, P5, Pin2); // UCA0SIMO, P5SELx = 01, USCIA0RMP = 1
+    impl_spi_pin!(UsciA0MOSIPinRemapped, P5, Pin2);
 
     /// SPI SCLK pin for eUSCI A0 (P1.6) (default mapping)
+    ///
+    /// P1.6 in its UCA0CLK function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0SCLKPinDefault;
-    impl_spi_pin!(UsciA0SCLKPinDefault, P1, Pin6); // UCA0CLK, P1SELx = 01, USCIA0RMP = 0
+    impl_spi_pin!(UsciA0SCLKPinDefault, P1, Pin6);
 
     /// SPI SCLK pin for eUSCI A0 (P5.0) (remapped mapping)
+    ///
+    /// P5.0 in its UCA0CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0SCLKPinRemapped;
-    impl_spi_pin!(UsciA0SCLKPinRemapped, P5, Pin0); // UCA0CLK, P5SELx = 01, USCIA0RMP = 1
+    impl_spi_pin!(UsciA0SCLKPinRemapped, P5, Pin0);
 
     /// SPI STE pin for eUSCI A0 (P1.7) (default mapping)
+    ///
+    /// P1.7 in its UCA0STE function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIA0RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0STEPinDefault;
-    impl_spi_pin!(UsciA0STEPinDefault, P1, Pin7); // UCA0STE, P1SELx = 01, USCIA0RMP = 0
+    impl_spi_pin!(UsciA0STEPinDefault, P1, Pin7);
 
     /// SPI STE pin for eUSCI A0 (P4.7) (remapped mapping)
+    ///
+    /// P4.7 in its UCA0STE function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIA0RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciA0STEPinRemapped;
-    impl_spi_pin!(UsciA0STEPinRemapped, P4, Pin7); // UCA0STE, P4SELx = 01, USCIA0RMP = 1
+    impl_spi_pin!(UsciA0STEPinRemapped, P4, Pin7);
 
     /// SPI MISO pin for eUSCI A1 (P2.5)
+    ///
+    /// P2.5 in its UCA1RXD/UCA1SOMI function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1MISOPin;
-    impl_spi_pin!(UsciA1MISOPin, P2, Pin5); // UCA1SOMI, P2SELx = 01
+    impl_spi_pin!(UsciA1MISOPin, P2, Pin5);
 
     /// SPI MOSI pin for eUSCI A1 (P2.6)
+    ///
+    /// P2.6 in its UCA1TXD/UCA1SIMO function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1MOSIPin;
-    impl_spi_pin!(UsciA1MOSIPin, P2, Pin6); // UCA1SIMO, P2SELx = 01
+    impl_spi_pin!(UsciA1MOSIPin, P2, Pin6);
 
     /// SPI SCLK pin for eUSCI A1 (P2.4)
+    ///
+    /// P2.4 in its UCA1CLK function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66).
     pub struct UsciA1SCLKPin;
-    impl_spi_pin!(UsciA1SCLKPin, P2, Pin4); // UCA1CLK, P2SELx = 01
+    impl_spi_pin!(UsciA1SCLKPin, P2, Pin4);
     /// SPI STE pin for eUSCI A1 (P3.1)
+    ///
+    /// P3.1 in its UCA1STE function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67).
     pub struct UsciA1STEPin;
-    impl_spi_pin!(UsciA1STEPin, P3, Pin1); // UCA1STE, P3SELx = 01
+    impl_spi_pin!(UsciA1STEPin, P3, Pin1);
 
     /// SPI MISO pin for eUSCI B0 (P1.3) (default mapping)
+    ///
+    /// P1.3 in its UCB0SOMI/UCB0SCL function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0MISOPinDefault;
-    impl_spi_pin!(UsciB0MISOPinDefault, P1, Pin3); // UCB0SOMI, P1SELx = 01, USCIB0RMP = 0
+    impl_spi_pin!(UsciB0MISOPinDefault, P1, Pin3);
 
     /// SPI MISO pin for eUSCI B0 (P4.5) (remapped mapping)
+    ///
+    /// P4.5 in its UCB0SOMI/UCB0SCL function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0MISOPinRemapped;
-    impl_spi_pin!(UsciB0MISOPinRemapped, P4, Pin5); // UCB0SOMI, P4SELx = 01, USCIB0RMP = 1
+    impl_spi_pin!(UsciB0MISOPinRemapped, P4, Pin5);
 
     /// SPI MOSI pin for eUSCI B0 (P1.2) (default mapping)
+    ///
+    /// P1.2 in its UCB0SIMO/UCB0SDA function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0MOSIPinDefault;
-    impl_spi_pin!(UsciB0MOSIPinDefault, P1, Pin2); // UCB0SIMO, P1SELx = 01, USCIB0RMP = 0
+    impl_spi_pin!(UsciB0MOSIPinDefault, P1, Pin2);
 
     /// SPI MOSI pin for eUSCI B0 (P4.6) (remapped mapping)
+    ///
+    /// P4.6 in its UCB0SIMO/UCB0SDA function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0MOSIPinRemapped;
-    impl_spi_pin!(UsciB0MOSIPinRemapped, P4, Pin6); // UCB0SIMO, P4SELx = 01, USCIB0RMP = 1
+    impl_spi_pin!(UsciB0MOSIPinRemapped, P4, Pin6);
 
     /// SPI SCLK pin for eUSCI B0 (P1.1) (default mapping)
+    ///
+    /// P1.1 in its UCB0CLK function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SCLKPinDefault;
-    impl_spi_pin!(UsciB0SCLKPinDefault, P1, Pin1); // UCB0CLK, P1SELx = 01, USCIB0RMP = 0
+    impl_spi_pin!(UsciB0SCLKPinDefault, P1, Pin1);
 
     /// SPI SCLK pin for eUSCI B0 (P5.5) (remapped mapping)
+    ///
+    /// P5.5 in its UCB0CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0SCLKPinRemapped;
-    impl_spi_pin!(UsciB0SCLKPinRemapped, P5, Pin5); // UCB0CLK, P5SELx = 01, USCIB0RMP = 1
+    impl_spi_pin!(UsciB0SCLKPinRemapped, P5, Pin5);
 
     /// SPI STE pin for eUSCI B0 (P1.0) (default mapping)
+    ///
+    /// P1.0 in its UCB0STE function, P1SELx = 01 (SLASEO7C Table 9-23, p. 65),
+    /// used while USCIB0RMP = 0 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0STEPinDefault;
-    impl_spi_pin!(UsciB0STEPinDefault, P1, Pin0); // UCB0STE, P1SELx = 01, USCIB0RMP = 0
+    impl_spi_pin!(UsciB0STEPinDefault, P1, Pin0);
 
     /// SPI STE pin for eUSCI B0 (P5.6) (remapped mapping)
+    ///
+    /// P5.6 in its UCB0STE function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB0RMP = 1 (SLAU445I Table 1-31, p. 82).
     pub struct UsciB0STEPinRemapped;
-    impl_spi_pin!(UsciB0STEPinRemapped, P5, Pin6); // UCB0STE, P5SELx = 01, USCIB0RMP = 1
+    impl_spi_pin!(UsciB0STEPinRemapped, P5, Pin6);
 
     /// SPI MISO pin for eUSCI B1 (P3.6) (default mapping)
+    ///
+    /// P3.6 in its UCB1SOMI/UCB1SCL function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1MISOPinDefault;
-    impl_spi_pin!(UsciB1MISOPinDefault, P3, Pin6); // UCB1SOMI, P3SELx = 01, USCIB1RMP = 0
+    impl_spi_pin!(UsciB1MISOPinDefault, P3, Pin6);
 
     /// SPI MISO pin for eUSCI B1 (P4.3) (remapped mapping)
+    ///
+    /// P4.3 in its UCB1SOMI/UCB1SCL function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1MISOPinRemapped;
-    impl_spi_pin!(UsciB1MISOPinRemapped, P4, Pin3); // UCB1SOMI, P4SELx = 01, USCIB1RMP = 1
+    impl_spi_pin!(UsciB1MISOPinRemapped, P4, Pin3);
 
     /// SPI MOSI pin for eUSCI B1 (P3.2) (default mapping)
+    ///
+    /// P3.2 in its UCB1SIMO/UCB1SDA function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1MOSIPinDefault;
-    impl_spi_pin!(UsciB1MOSIPinDefault, P3, Pin2); // UCB1SIMO, P3SELx = 01, USCIB1RMP = 0
+    impl_spi_pin!(UsciB1MOSIPinDefault, P3, Pin2);
 
     /// SPI MOSI pin for eUSCI B1 (P4.4) (remapped mapping)
+    ///
+    /// P4.4 in its UCB1SIMO/UCB1SDA function, P4SELx = 01 (SLASEO7C Table 9-26, p. 68),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1MOSIPinRemapped;
-    impl_spi_pin!(UsciB1MOSIPinRemapped, P4, Pin4); // UCB1SIMO, P4SELx = 01, USCIB1RMP = 1
+    impl_spi_pin!(UsciB1MOSIPinRemapped, P4, Pin4);
 
     /// SPI SCLK pin for eUSCI B1 (P3.5) (default mapping)
+    ///
+    /// P3.5 in its UCB1CLK function, P3SELx = 01 (SLASEO7C Table 9-25, p. 67),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SCLKPinDefault;
-    impl_spi_pin!(UsciB1SCLKPinDefault, P3, Pin5); // UCB1CLK, P3SELx = 01, USCIB1RMP = 0
+    impl_spi_pin!(UsciB1SCLKPinDefault, P3, Pin5);
 
     /// SPI SCLK pin for eUSCI B1 (P5.3) (remapped mapping)
+    ///
+    /// P5.3 in its UCB1CLK function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1SCLKPinRemapped;
-    impl_spi_pin!(UsciB1SCLKPinRemapped, P5, Pin3); // UCB1CLK, P5SELx = 01, USCIB1RMP = 1
+    impl_spi_pin!(UsciB1SCLKPinRemapped, P5, Pin3);
 
     /// SPI STE pin for eUSCI B1 (P2.7) (default mapping)
+    ///
+    /// P2.7 in its UCB1STE function, P2SELx = 01 (SLASEO7C Table 9-24, p. 66),
+    /// used while USCIB1RMP = 0 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1STEPinDefault;
-    impl_spi_pin!(UsciB1STEPinDefault, P2, Pin7); // UCB1STE, P2SELx = 01, USCIB1RMP = 0
+    impl_spi_pin!(UsciB1STEPinDefault, P2, Pin7);
 
     /// SPI STE pin for eUSCI B1 (P5.4) (remapped mapping)
+    ///
+    /// P5.4 in its UCB1STE function, P5SELx = 01 (SLASEO7C Table 9-27, p. 69),
+    /// used while USCIB1RMP = 1 (SLAU445I Table 1-32, p. 83).
     pub struct UsciB1STEPinRemapped;
-    impl_spi_pin!(UsciB1STEPinRemapped, P5, Pin4); // UCB1STE, P5SELx = 01, USCIB1RMP = 1
+    impl_spi_pin!(UsciB1STEPinRemapped, P5, Pin4);
 }
 
 /* Timer */
@@ -1033,7 +1183,8 @@ mod timer {
     };
 
     // TA0 to TA3 have three capture/compare registers each (SLASEO7C 9.10.8, p. 55), TB0 seven
-    // (SLASEO7C Table 9-15, p. 59); registers: SLASEO7C Tables 9-44 to 9-48, p. 77 to p. 79
+    // (SLASEO7C Table 9-15, p. 59); registers: SLASEO7C Tables 9-44 to 9-48, p. 77 to p. 79.
+    // TA0 registers: SLASEO7C Table 9-44, p. 77; Timer_A registers: SLAU445I Table 13-3, p. 383
     timer_a_impl!(
         Ta0,
         ta0,
@@ -1051,6 +1202,7 @@ mod timer {
         [CCR2, ta0cctl2, ta0ccr2]
     );
 
+    // TA1 registers: SLASEO7C Table 9-45, p. 77 to p. 78; Timer_A registers: SLAU445I Table 13-3, p. 383
     timer_a_impl!(
         Ta1,
         ta1,
@@ -1068,6 +1220,7 @@ mod timer {
         [CCR2, ta1cctl2, ta1ccr2]
     );
 
+    // TA2 registers: SLASEO7C Table 9-46, p. 78; Timer_A registers: SLAU445I Table 13-3, p. 383
     timer_a_impl!(
         Ta2,
         ta2,
@@ -1085,6 +1238,7 @@ mod timer {
         [CCR2, ta2cctl2, ta2ccr2]
     );
 
+    // TA3 registers: SLASEO7C Table 9-47, p. 78; Timer_A registers: SLAU445I Table 13-3, p. 383
     timer_a_impl!(
         Ta3,
         ta3,
@@ -1102,6 +1256,8 @@ mod timer {
         [CCR2, ta3cctl2, ta3ccr2]
     );
 
+    // TB0 registers, CCR0 to CCR6: SLASEO7C Table 9-48, p. 78 to p. 79; Timer_B registers:
+    // SLAU445I Table 14-5, p. 408
     timer_b_impl!(
         Tb0,
         tb0,
@@ -1128,17 +1284,20 @@ mod timer {
     // (SLASEO7C Tables 9-23 to 9-28, p. 65 to p. 70). These functions need PxDIR = 0, so the pins are
     // inputs.
     impl TimerPeriph for Ta0 {
-        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>; // P1.0 TA0CLK, P1SELx = 10
+        // P1.0 TA0CLK, P1SELx = 10 (SLASEO7C Table 9-23, p. 65; SLASEO7C Table 9-12, p. 55)
+        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>;
     }
-    impl CapCmpTimer3 for Ta0 {}
+    impl CapCmpTimer3 for Ta0 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
 
     impl TimerPeriph for Ta1 {
-        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>; // P1.6 TA1CLK, P1SELx = 10
+        // P1.6 TA1CLK, P1SELx = 10 (SLASEO7C Table 9-23, p. 65; SLASEO7C Table 9-13, p. 56)
+        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
     }
-    impl CapCmpTimer3 for Ta1 {}
+    impl CapCmpTimer3 for Ta1 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
 
     impl TimerPeriph<DefaultMapping> for Ta2 {
-        type Tbxclk = Pin<P3, Pin4, Alternate1<Input<Floating>>>; // P3.4 TA2CLK, P3SELx = 01, TA2RMP = 0
+        // P3.4 TA2CLK, P3SELx = 01, TA2RMP = 0 (SLASEO7C Table 9-25, p. 67; SLASEO7C Table 9-16, p. 60)
+        type Tbxclk = Pin<P3, Pin4, Alternate1<Input<Floating>>>;
 
         fn configure_pin_mapping() {
             // TA2RMP, SYSCFG3 bit 2, = 0: default pins (SLAU445I Table 1-32, p. 83;
@@ -1148,7 +1307,8 @@ mod timer {
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta2 {
-        type Tbxclk = Pin<P5, Pin5, Alternate2<Input<Floating>>>; // P5.5 TA2CLK, P5SELx = 10, TA2RMP = 1
+        // P5.5 TA2CLK, P5SELx = 10, TA2RMP = 1 (SLASEO7C Table 9-27, p. 69; SLASEO7C Table 9-16, p. 60)
+        type Tbxclk = Pin<P5, Pin5, Alternate2<Input<Floating>>>;
 
         fn configure_pin_mapping() {
             // TA2RMP, SYSCFG3 bit 2, = 1: remapped pins (SLAU445I Table 1-32, p. 83;
@@ -1157,11 +1317,12 @@ mod timer {
             unsafe { sys.syscfg3().set_bits(|w| w.ta2rmp().set_bit()) };
         }
     }
-    impl CapCmpTimer3<DefaultMapping> for Ta2 {}
+    impl CapCmpTimer3<DefaultMapping> for Ta2 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
     impl CapCmpTimer3<RemappedMapping> for Ta2 {}
 
     impl TimerPeriph<DefaultMapping> for Ta3 {
-        type Tbxclk = Pin<P4, Pin2, Alternate1<Input<Floating>>>; // P4.2 TA3CLK, P4SELx = 01, TA3RMP = 0
+        // P4.2 TA3CLK, P4SELx = 01, TA3RMP = 0 (SLASEO7C Table 9-26, p. 68; SLASEO7C Table 9-16, p. 60)
+        type Tbxclk = Pin<P4, Pin2, Alternate1<Input<Floating>>>;
 
         fn configure_pin_mapping() {
             // TA3RMP, SYSCFG3 bit 3, = 0: default pins (SLAU445I Table 1-32, p. 83;
@@ -1171,7 +1332,8 @@ mod timer {
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta3 {
-        type Tbxclk = Pin<P5, Pin4, Alternate2<Input<Floating>>>; // P5.4 TA3CLK, P5SELx = 10, TA3RMP = 1
+        // P5.4 TA3CLK, P5SELx = 10, TA3RMP = 1 (SLASEO7C Table 9-27, p. 69; SLASEO7C Table 9-16, p. 60)
+        type Tbxclk = Pin<P5, Pin4, Alternate2<Input<Floating>>>;
 
         fn configure_pin_mapping() {
             // TA3RMP, SYSCFG3 bit 3, = 1: remapped pins (SLAU445I Table 1-32, p. 83;
@@ -1180,15 +1342,16 @@ mod timer {
             unsafe { sys.syscfg3().set_bits(|w| w.ta3rmp().set_bit()) };
         }
     }
-    impl CapCmpTimer3<DefaultMapping> for Ta3 {}
+    impl CapCmpTimer3<DefaultMapping> for Ta3 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
     impl CapCmpTimer3<RemappedMapping> for Ta3 {}
 
     impl TimerPeriph for Tb0 {
         // TB0CLK is only bonded out in the 48-pin package (SLASEO7C Table 7-2, p. 18: pin 40 of the PT
-        // package, none on RHA and RHB)
-        type Tbxclk = Pin<P6, Pin1, Alternate1<Input<Floating>>>; // P6.1 TB0CLK, P6SELx = 01
+        // package, none on RHA and RHB). P6.1 TB0CLK, P6SELx = 01 (SLASEO7C Table 9-28, p. 70;
+        // SLASEO7C Table 9-15, p. 59)
+        type Tbxclk = Pin<P6, Pin1, Alternate1<Input<Floating>>>;
     }
-    impl CapCmpTimer7 for Tb0 {}
+    impl CapCmpTimer7 for Tb0 {} // CCR0 to CCR6 (SLASEO7C Table 9-15, p. 59)
 
     // INCLK is the VLO on TA0 and TA2, and the CCR2 output of TA0 on TA1 and of TA2 on TA3. It
     // isn't connected on TB0. (SLASEO7C Tables 9-12 to 9-15, p. 55 to p. 59)

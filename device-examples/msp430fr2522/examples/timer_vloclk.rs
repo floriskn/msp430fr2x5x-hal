@@ -3,7 +3,8 @@
 //! The red LED on P1.0 toggles every 10000 VLO cycles. The VLO runs at about 10 kHz but is only
 //! accurate to ±50 % (data sheet: SLASEE4C Table 6-8, p. 49, "10 kHz ±50%"), so that is anywhere
 //! from 0.7 s to 2 s. With a scope on P1.0, the VLO frequency is 20000 divided by the period of the
-//! LED signal. No board document covers the LED: there is none for the MSP430FR25x2.
+//! LED signal. No board document covers the LED: there is none for the MSP430FR25x2. P1.0 is a GPIO
+//! output, P1SELx = 00 and P1DIR = 1 (SLASEE4C Table 6-15, p. 58).
 //!
 //! The VLO needs no clock configuration: it starts when the timer requests it
 //! (SLAU445I 3.2.2, p. 102: VLOCLK is active when "At least one peripheral requests VLO as clock
@@ -33,8 +34,10 @@ fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     Wdt::constrain(periph.wdt_a);
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())

@@ -22,10 +22,12 @@ fn main() -> ! {
     //let _wdt = Wdt::constrain(periph.wdt_a);
 
     // Configure GPIO
+    // (Pin settings take effect once LOCKLPM5 is cleared, which Pmm::new does: SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let mut led = Batch::new(periph.p1).split(&pmm).pin0.to_output();
 
-    // Interpret register block as a &mut [u8;32] (32 bytes: SLASEO7C 9.10.10, p. 61)
+    // Interpret register block as a &mut [u8;32] (32 bytes: SLASEO7C 9.10.10, p. 61; BAKMEM0 to
+    // BAKMEM15 at 0660h: SLASEO7C Table 9-54, p. 81)
     let bk_mem = BackupMemory::as_u8s(periph.bkmem);
 
     bk_mem[0] = bk_mem[0].wrapping_add(1);

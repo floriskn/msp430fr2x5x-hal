@@ -1,8 +1,10 @@
 //! Watchdog timer, configurable as either a traditional watchdog or an interval timer, counting with a
-//! 32-bit counter (SLAU445I 12.1, p. 361; 12.2.1, p. 363: "The WDTCNT is a 32-bit up counter").
+//! 32-bit counter (SLAU445I 12.1, p. 361; SLAU445I 12.2.1, p. 363: "The WDTCNT is a 32-bit up
+//! counter").
 //!
 //! **Note**: MSP430 devices will reset after bootup if watchdog is not stopped after an initial 32
-//! ms interval (roughly) (SLAU445I 12.1, p. 361, note "Watchdog timer powers up active"; 12.2.2, p. 363).
+//! ms interval (roughly) (SLAU445I 12.1, p. 361, note "Watchdog timer powers up active"; SLAU445I
+//! 12.2.2, p. 363).
 //! If this is undesirable, call `Wdt::constrain()` as soon in the application as possible to stop the
 //! watchdog.
 
@@ -52,7 +54,8 @@ mod sealed {
     impl SealedWatchdogSelect for IntervalMode {}
 }
 
-/// Watchdog timer which can be configured to watchdog or interval (timer) mode
+/// Watchdog timer which can be configured to watchdog or interval (timer) mode (WDTTMSEL, SLAU445I
+/// Table 12-2, p. 366; SLAU445I 12.2.2 and 12.2.3, p. 363)
 pub struct Wdt<MODE> {
     _mode: PhantomData<MODE>,
     periph: _pac::WdtA,
@@ -60,7 +63,8 @@ pub struct Wdt<MODE> {
 
 impl Wdt<WatchdogMode> {
     /// Convert WDT peripheral into a watchdog timer (watchdog mode) and disable the watchdog. Set
-    /// clock source to VLOCLK.
+    /// clock source to VLOCLK (WDTTMSEL = 0, WDTHOLD = 1, WDTSSEL = 10b: SLAU445I Table 12-2,
+    /// p. 366).
     pub fn constrain(wdt: _pac::WdtA) -> Self {
         // Disable first (WDTHOLD stops the watchdog timer; WDTSSEL selects VLOCLK: SLAU445I Table 12-2,
         // p. 366)
@@ -73,9 +77,10 @@ impl Wdt<WatchdogMode> {
     }
 }
 
-/// Watchdog mode typestate
+/// Watchdog mode typestate: expiry of the interval resets the device with a PUC (SLAU445I 12.2.2,
+/// p. 363)
 pub struct WatchdogMode;
-/// Interval mode typestate
+/// Interval mode typestate: expiry of the interval sets WDTIFG instead (SLAU445I 12.2.3, p. 363)
 pub struct IntervalMode;
 
 /// Marker trait for watchdog modes
@@ -123,15 +128,18 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
         self
     }
 
-    /// Set watchdog clock source to ACLK and halt timer.
+    /// Set watchdog clock source to ACLK and halt timer (WDTSSEL = 01b: SLAU445I Table 12-2,
+    /// p. 366).
     #[inline]
     pub fn set_aclk(&mut self, _clks: &Aclk) -> &mut Self { self.set_clk(Wdtssel::Aclk) }
 
-    /// Set watchdog clock source to VLOCLK and halt timer.
+    /// Set watchdog clock source to VLOCLK and halt timer (WDTSSEL = 10b: SLAU445I Table 12-2,
+    /// p. 366).
     #[inline]
     pub fn set_vloclk(&mut self) -> &mut Self { self.set_clk(Wdtssel::Vloclk) }
 
-    /// Set watchdog clock source to SMCLK and halt timer.
+    /// Set watchdog clock source to SMCLK and halt timer (WDTSSEL = 00b: SLAU445I Table 12-2,
+    /// p. 366).
     #[inline]
     pub fn set_smclk(&mut self, _clks: &Smclk) -> &mut Self { self.set_clk(Wdtssel::Smclk) }
 
@@ -171,7 +179,8 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
 }
 
 impl Wdt<WatchdogMode> {
-    /// Convert to interval mode and pause timer
+    /// Convert to interval mode and pause timer (WDTTMSEL = 1, WDTHOLD = 1: SLAU445I Table 12-2,
+    /// p. 366)
     #[inline]
     pub fn to_interval(self) -> Wdt<IntervalMode> {
         let mut wdt = Wdt { _mode: PhantomData, periph: self.periph };
@@ -194,7 +203,8 @@ impl Wdt<IntervalMode> {
     /// If called while the timer is not running, this will always return `WouldBlock`.
     ///
     /// Only available in interval mode: in watchdog mode the flag only tells that the last reset
-    /// came from the watchdog (WDTIFG in SFRIFG1: SLAU445I 12.2.4, p. 363).
+    /// came from the watchdog (WDTIFG in SFRIFG1: SLAU445I 12.2.4, p. 363; SLAU445I Table 1-10,
+    /// p. 63).
     #[inline]
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let sfr = unsafe { &*_pac::Sfr::ptr() };
@@ -206,7 +216,8 @@ impl Wdt<IntervalMode> {
         }
     }
 
-    /// Convert to watchdog mode and pause timer
+    /// Convert to watchdog mode and pause timer (WDTTMSEL = 0, WDTHOLD = 1: SLAU445I Table 12-2,
+    /// p. 366)
     #[inline]
     pub fn to_watchdog(self) -> Wdt<WatchdogMode> {
         let mut wdt = Wdt { _mode: PhantomData, periph: self.periph };
@@ -221,7 +232,8 @@ impl Wdt<IntervalMode> {
 
     /// Enable interrupts for watchdog, which fires when the watchdog interrupt flag is set in
     /// interval mode. This setting does nothing in watchdog mode, but will carry over when
-    /// switching to interval mode (WDTIE in SFRIE1: SLAU445I 12.2.3 and 12.2.4, p. 363).
+    /// switching to interval mode (WDTIE in SFRIE1: SLAU445I 12.2.3 and 12.2.4, p. 363; SLAU445I
+    /// Table 1-9, p. 62).
     #[inline]
     pub fn enable_interrupts(&mut self) -> &mut Self {
         let sfr = unsafe { &*_pac::Sfr::ptr() };
@@ -229,7 +241,8 @@ impl Wdt<IntervalMode> {
         self
     }
 
-    /// Disable interrupts for watchdog.
+    /// Disable interrupts for watchdog (WDTIE in SFRIE1: SLAU445I 12.2.4, p. 363; SLAU445I
+    /// Table 1-9, p. 62).
     #[inline]
     pub fn disable_interrupts(&mut self) -> &mut Self {
         let sfr = unsafe { &*_pac::Sfr::ptr() };

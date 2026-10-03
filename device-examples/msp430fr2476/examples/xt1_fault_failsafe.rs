@@ -50,12 +50,14 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
+    // S2 on P2.3 with the internal pullup (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313)
     let p2 = Batch::new(periph.p2)
         .config_pin3(|p| p.pullup())
         .split(&pmm);
@@ -66,6 +68,8 @@ fn main() -> ! {
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 
+    // MCLK = SMCLK = DCOCLKDIV (SELMS = 000b) and ACLK from XT1CLK (SELA = 00b) (SLAU445I Table 3-8,
+    // p. 117); XT1 in bypass mode (XT1BYPASS = 1: SLAU445I Table 3-10, p. 120)
     let (_smclk, _aclk, mut xt1clk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
@@ -75,7 +79,8 @@ fn main() -> ! {
 
     loop {
         // While S2 is held the flags are left alone, so the latched fault keeps ACLK on REFO
-        // (SLAU445I 3.2.13, p. 109 to p. 110)
+        // (SLAU445I 3.2.13, p. 109 to p. 110. XT1OFFG: SLAU445I Table 3-11, p. 122; OFIFG: SLAU445I
+        // Table 1-10, p. 63.)
         let s2_held = button.is_low().unwrap_or(false);
         if !s2_held {
             xt1clk.clear_fault();

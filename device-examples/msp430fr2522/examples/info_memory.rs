@@ -10,15 +10,18 @@ use panic_msp430 as _;
 // Use the non-volatile information memory to toggle the red onboard LED.
 // Resetting or power cycling the board toggles the red LED.
 // Information memory: 256 bytes of FRAM at 1800h to 18FFh (SLASEE4C Table 6-19, p. 62). No board document
-// covers the LED (on P1.0 here): there is none for the MSP430FR25x2.
+// covers the LED (on P1.0 here): there is none for the MSP430FR25x2. P1.0 is a GPIO output, P1SELx = 00
+// and P1DIR = 1 (SLASEE4C Table 6-15, p. 58).
 
 #[entry]
 fn main() -> ! {
     // Take peripherals
     let periph = msp430fr25x2::Peripherals::take().unwrap();
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
-    // Configure GPIO
+    // Configure GPIO. Pmm::new clears LOCKLPM5, so the pins take on their configuration
+    // (SLAU445I 8.3.1, p. 316).
     let (pmm, mut nv_mem) = Pmm::new(periph.pmm, periph.sys);
     let mut led = Batch::new(periph.p1).split(&pmm).pin0.to_output();
 

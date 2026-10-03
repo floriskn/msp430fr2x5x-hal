@@ -32,12 +32,13 @@ static RED_LED: Mutex<RefCell<Option< Pin<P1, Pin0, Output> >>> = Mutex::new(Ref
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     let _wdt = Wdt::constrain(periph.wdt_a);
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
-    // (SLAU445I 8.3.2, p. 317)
+    // (SLAU445I 8.3.2, p. 317; pullup and pulldown settings: SLAU445I Table 8-1, p. 313)
     let p1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -58,12 +59,16 @@ fn main() -> ! {
         RED_LED.borrow_ref_mut(cs).replace(red_led);
     });
 
+    // S2 pulls P2.3 low, so a press is a high-to-low transition (PxIES = 1: SLAU445I Table 8-16, p. 336;
+    // PxIE: SLAU445I Table 8-17, p. 336)
     button.select_falling_edge_trigger().enable_interrupts();
 
+    // Set GIE, which masks every maskable interrupt while clear (SLAU445I 1.3.3, p. 33)
     unsafe { enable_interrupts() };
 
     // Since no peripherals were configured to use SMCLK / ACLK we could just as well enter LPM3 / LPM4 here
     // (port interrupts wake the device from LPM4 too: SLASEO7C Table 9-1, p. 45)
+    // LPM0 sets CPUOFF: "CPU, MCLK are disabled" (SLAU445I Table 1-2, p. 39)
     enter_lpm0();
 
     loop {}
@@ -71,6 +76,8 @@ fn main() -> ! {
 
 // The CPU will wake up to handle interrupts, but will be put back to sleep afterwards.
 // (SLAU445I 1.4, p. 36)
+// The port 2 interrupt vector, P2IFG.0 to P2IFG.7 through P2IV (FFD4h: SLASEO7C Table 9-2, p. 47).
+// Reading P2IV "automatically resets the highest pending interrupt flag" (SLAU445I 8.2.6, p. 315).
 #[interrupt]
 fn PORT2() {
     with(|cs| {

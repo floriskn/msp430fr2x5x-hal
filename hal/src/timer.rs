@@ -51,13 +51,19 @@ pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
 pub enum NoTbxclkPin {}
 
 // Traits effectively sealed by CCRn
-/// Trait indicating that the peripheral has 2 capture compare registers
+/// Trait indicating that the peripheral has 2 capture compare registers: TA2 and TA3 on the MSP430FR2433
+/// (SLASE59F 6.10.8, p. 51: "two capture/compare registers each")
 pub trait CapCmpTimer2<M: PinMap = DefaultMapping>: TimerPeriph<M> + CapCmp<CCR1> {}
-/// Trait indicating that the peripheral has 3 capture compare registers
+/// Trait indicating that the peripheral has 3 capture compare registers ("three capture/compare registers
+/// each"): TB0 to TB2 on the MSP430FR2x5x (SLASEC4D 6.10.9, p. 73), TA0 and TA1 on the MSP430FR2433
+/// (SLASE59F 6.10.8, p. 50), TA0 to TA3 on the MSP430FR247x (SLASEO7C 9.10.8, p. 55), and TA0 and TA1 on
+/// the MSP430FR25x2 (SLASEE4C 6.10.8, p. 54)
 pub trait CapCmpTimer3<M: PinMap = DefaultMapping>:
     TimerPeriph<M> + CapCmp<CCR1> + CapCmp<CCR2>
 {}
-/// Trait indicating that the peripheral has 7 capture compare registers
+/// Trait indicating that the peripheral has 7 capture compare registers: TB3 on the MSP430FR2x5x
+/// (SLASEC4D 6.10.9, p. 73: "seven capture/compare registers") and TB0 on the MSP430FR247x (SLASEO7C
+/// Table 9-15, p. 59, CCR0 to CCR6)
 pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     TimerPeriph<M>
     + CapCmp<CCR1>
@@ -79,14 +85,14 @@ pub trait TimerB: TimerBase {}
 /// (SLAU445I 14.2.1.1, p. 393; SLAU445I Table 14-6, p. 409)
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CounterLength {
-    /// 16 bits, up to 0xFFFF, as after reset
+    /// 16 bits, up to 0xFFFF, as after reset (CNTL = 00b, reset value 0h: SLAU445I Table 14-6, p. 409)
     #[default]
     _16Bit = 0,
-    /// 12 bits, up to 0x0FFF
+    /// 12 bits, up to 0x0FFF (CNTL = 01b: SLAU445I Table 14-6, p. 409)
     _12Bit = 1,
-    /// 10 bits, up to 0x03FF
+    /// 10 bits, up to 0x03FF (CNTL = 10b: SLAU445I Table 14-6, p. 409)
     _10Bit = 2,
-    /// 8 bits, up to 0x00FF
+    /// 8 bits, up to 0x00FF (CNTL = 11b: SLAU445I Table 14-6, p. 409)
     _8Bit = 3,
 }
 
@@ -108,6 +114,10 @@ pub enum HighImpedanceTrigger<'a, T> {
 }
 
 /// Marker trait for the TBxTRG pin of a Timer_B in its trigger function, see [`HighImpedanceTrigger::Pin`]
+///
+/// The pins: on the MSP430FR2x5x P1.2 is TB0TRG (SLASEC4D Table 6-63, p. 96), P2.3 is TB1TRG (SLASEC4D
+/// Table 6-64, p. 98) and P5.3 is TB2TRG (SLASEC4D Table 6-67, p. 104); on the MSP430FR247x P3.5 is TB0TRG
+/// (SLASEO7C Table 9-25, p. 67). Each is an input in its trigger function.
 pub trait HighImpedancePin<T> {}
 
 /// Trait indicating a Timer_B whose outputs can be switched to high impedance, see
@@ -184,7 +194,8 @@ where
     div: TimerDiv,
     ex_div: TimerExDiv,
     cntl: u8,
-    /// SYSCFG2 bit to change, and whether to set it
+    /// SYSCFG2 bit to change, and whether to set it (TBxTRGSEL: SLAU445I Table 1-26, p. 77; SLAU445I
+    /// Table 1-31, p. 82)
     trgsel: Option<(u16, bool)>,
     _pin_map: PhantomData<M>,
 }
@@ -207,19 +218,23 @@ where
         }
     }
 
-    /// Configure timer clock source to ACLK
+    /// Configure timer clock source to ACLK (TASSEL/TBSSEL = 01b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409)
     #[inline]
     pub fn aclk(_aclk: &Aclk) -> Self { Self::with_clock(Tbssel::Aclk) }
 
-    /// Configure timer clock source to SMCLK
+    /// Configure timer clock source to SMCLK (TASSEL/TBSSEL = 10b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409)
     #[inline]
     pub fn smclk(_smclk: &Smclk) -> Self { Self::with_clock(Tbssel::Smclk) }
 
-    /// Configure timer clock source to TBCLK
+    /// Configure timer clock source to TBCLK, the timer's clock pin (TASSEL/TBSSEL = 00b: SLAU445I
+    /// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     #[inline]
     pub fn tbclk(_pin: T::Tbxclk) -> Self { Self::with_clock(Tbssel::Tbxclk) }
 
-    /// Configure the normal clock divider and expansion clock divider settings
+    /// Configure the normal clock divider and expansion clock divider settings (ID and TAIDEX/TBIDEX:
+    /// SLAU445I 13.2.1.1, p. 370; 14.2.1.2, p. 393)
     #[inline]
     pub fn clk_div(self, div: TimerDiv, ex_div: TimerExDiv) -> Self {
         TimerConfig { div, ex_div, ..self }
@@ -284,7 +299,8 @@ where
 {
     /// Configure timer clock source to VLOCLK, which runs at about 10 kHz but is only accurate to
     /// ±50 % (VLOCLK "10 kHz ±50%": SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49). Only some
-    /// timers have this option, see [`VloclkTimer`].
+    /// timers have this option, see [`VloclkTimer`]. It selects INCLK (TASSEL = 11b: SLAU445I Table 13-4,
+    /// p. 384).
     #[inline]
     pub fn vloclk() -> Self { Self::with_clock(Tbssel::Inclk) }
 }
@@ -296,7 +312,8 @@ where
 {
     /// Configure the timer to be clocked by its source timer (cascading): it counts once per
     /// period of the source timer, while that timer runs. Only some timers have this option, see
-    /// [`CascadedTimer`].
+    /// [`CascadedTimer`]. It selects INCLK (TASSEL/TBSSEL = 11b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409).
     ///
     /// `source` is the source timer's CCR2 output, from [`SubTimer::into_cascade_output`] or
     /// [`PwmUninit::into_cascade_output`](crate::pwm::PwmUninit::into_cascade_output). For
@@ -306,6 +323,9 @@ where
 }
 
 /// Main timer and sub-timer for timer peripherals with 2 capture-compare registers
+///
+/// The timers with 2 capture/compare registers are TA2 and TA3 on the MSP430FR2433 (SLASE59F Table 6-13,
+/// p. 51; SLASE59F Table 6-14, p. 52).
 pub struct TimerParts2<T, M = DefaultMapping>
 where
     T: CapCmpTimer2<M>,
@@ -313,9 +333,9 @@ where
 {
     /// Main timer
     pub timer: Timer<T, M>,
-    /// Timer interrupt vector
+    /// Timer interrupt vector (TAxIV: SLAU445I Table 13-8, p. 388)
     pub tbxiv: TBxIV<T>,
-    /// Sub-timer 1 (derived from CCR1 register)
+    /// Sub-timer 1 (derived from CCR1 register, TAxCCR1: SLAU445I Table 13-7, p. 388)
     pub subtimer1: SubTimer<T, CCR1>,
 }
 
@@ -337,6 +357,12 @@ where
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
+///
+/// The timers with 3 capture/compare registers, by device: TB0 to TB2 on the MSP430FR2x5x (SLASEC4D
+/// Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74), TA0 and TA1 on the
+/// MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), TA0 to TA3 on the MSP430FR247x
+/// (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58), and TA0 and TA1
+/// on the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54).
 pub struct TimerParts3<T, M = DefaultMapping>
 where
     T: CapCmpTimer3<M>,
@@ -344,11 +370,11 @@ where
 {
     /// Main timer
     pub timer: Timer<T, M>,
-    /// Timer interrupt vector
+    /// Timer interrupt vector (TAxIV/TBxIV: SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T>,
-    /// Sub-timer 1 (derived from CCR1 register)
+    /// Sub-timer 1 (derived from CCR1 register: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
     pub subtimer1: SubTimer<T, CCR1>,
-    /// Sub-timer 2 (derived from CCR2 register)
+    /// Sub-timer 2 (derived from CCR2 register: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
     pub subtimer2: SubTimer<T, CCR2>,
 }
 
@@ -371,6 +397,9 @@ where
 }
 
 /// Main timer and sub-timers for timer peripherals with 7 capture-compare registers
+///
+/// The timers with 7 capture/compare registers are TB3 on the MSP430FR2x5x (SLASEC4D Table 6-19, p. 75)
+/// and TB0 on the MSP430FR247x (SLASEO7C Table 9-15, p. 59). Both are Timer_B.
 pub struct TimerParts7<T, M = DefaultMapping>
 where
     T: CapCmpTimer7<M>,
@@ -378,19 +407,19 @@ where
 {
     /// Main timer
     pub timer: Timer<T, M>,
-    /// Timer interrupt vector
+    /// Timer interrupt vector (TBxIV: SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T>,
-    /// Sub-timer 1 (derived from CCR1 register)
+    /// Sub-timer 1 (derived from CCR1 register, TBxCCR1: SLAU445I Table 14-9, p. 413)
     pub subtimer1: SubTimer<T, CCR1>,
-    /// Sub-timer 2 (derived from CCR2 register)
+    /// Sub-timer 2 (derived from CCR2 register, TBxCCR2: SLAU445I Table 14-9, p. 413)
     pub subtimer2: SubTimer<T, CCR2>,
-    /// Sub-timer 3 (derived from CCR3 register)
+    /// Sub-timer 3 (derived from CCR3 register, TBxCCR3: SLAU445I Table 14-9, p. 413)
     pub subtimer3: SubTimer<T, CCR3>,
-    /// Sub-timer 4 (derived from CCR4 register)
+    /// Sub-timer 4 (derived from CCR4 register, TBxCCR4: SLAU445I Table 14-9, p. 413)
     pub subtimer4: SubTimer<T, CCR4>,
-    /// Sub-timer 5 (derived from CCR5 register)
+    /// Sub-timer 5 (derived from CCR5 register, TBxCCR5: SLAU445I Table 14-9, p. 413)
     pub subtimer5: SubTimer<T, CCR5>,
-    /// Sub-timer 6 (derived from CCR6 register)
+    /// Sub-timer 6 (derived from CCR6 register, TBxCCR6: SLAU445I Table 14-9, p. 413)
     pub subtimer6: SubTimer<T, CCR6>,
 }
 
@@ -442,7 +471,10 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     fn new() -> Self { Self(PhantomData, PhantomData) }
 }
 
-/// Indicates which sub/main timer caused the interrupt to fire
+/// Indicates which sub/main timer caused the interrupt to fire: the TAxIV/TBxIV values 00h to 0Eh, from
+/// no interrupt through CCR1 to CCR6 to the timer overflow (SLAU445I Table 13-8, p. 388; SLAU445I
+/// Table 14-10, p. 414). CCR0 has its own interrupt vector and isn't in this list (SLAU445I 13.2.6.1,
+/// p. 380; 14.2.6.1, p. 405).
 pub enum TimerVector {
     /// No pending interrupt
     NoInterrupt,
@@ -478,7 +510,8 @@ pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector {
     }
 }
 
-/// Interrupt vector register for determining which timer caused an ISR
+/// Interrupt vector register for determining which timer caused an ISR (TAxIV/TBxIV: SLAU445I Table 13-8,
+/// p. 388; SLAU445I Table 14-10, p. 414)
 pub struct TBxIV<T>(PhantomData<T>);
 
 impl<T: TimerBase> TBxIV<T> {
@@ -504,7 +537,8 @@ where
         timer.tbie_set();
     }
 
-    /// Disable timer countdown expiration interrupts
+    /// Disable timer countdown expiration interrupts (TBIE: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    /// p. 410)
     #[inline(always)]
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
@@ -591,6 +625,12 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     /// resets once it counts to its own threshold, not the sub-timer thresholds. It follows that the
     /// sub-timer threshold must not be more than the main threshold for it to fire: the main timer
     /// counts up to and including its threshold (SLAU445I 13.2.3.1, p. 371; 14.2.3.1, p. 394).
+    ///
+    /// It writes TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) and clears
+    /// CCIFG (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412) while the timer runs. For Timer_A
+    /// the user's guide says "the timer should be stopped by writing the MC bits to zero (MC = 0) before
+    /// writing new data to TAxCCRn" (SLAU445I 13.2.4.2, p. 376). This code doesn't stop it, so that the
+    /// main timer keeps counting.
     pub fn set_count(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
         timer.set_ccrn(count);
@@ -617,7 +657,7 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     }
 
     #[inline(always)]
-    /// Disable the sub-timer interrupts
+    /// Disable the sub-timer interrupts (CCIE: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
@@ -626,7 +666,9 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
 
 impl<T: CapCmp<CCR2>> SubTimer<T, CCR2> {
     #[inline]
-    /// Use CCR2 to clock a cascaded timer instead, see [`TimerConfig::cascade`]
+    /// Use CCR2 to clock a cascaded timer instead, see [`TimerConfig::cascade`]. The CCR2 output drives the
+    /// cascaded timer's INCLK (SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14,
+    /// p. 58; SLASEE4C Figure 6-2, p. 54).
     pub fn into_cascade_output(self) -> CascadeOutput<T> { CascadeOutput::new() }
 }
 

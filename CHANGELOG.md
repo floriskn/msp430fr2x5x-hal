@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add eCOMP edge flags, `Comparator::rising_edge_flag()`, `falling_edge_flag()` and `clear_edge_flags()`, and `Comparator::interrupt_source()` for the interrupt handler.
 - Add center-aligned PWM, `PwmParts3::new_center_aligned()` and `PwmParts7::new_center_aligned()`, and `Pwm::set_polarity()` for active-low outputs.
 - Add `period_output` to `PwmParts3` and `PwmParts7`: the CCR0 output, a square wave at half the PWM frequency, on the timers that have a pin for it (TA2, TA3 and TB0 on the MSP430FR247x).
-- PWM duty cycle changes on a Timer_B now take effect at the start of the next period, through its compare latches, so no period is cut short.
+- PWM duty cycle changes on a Timer_B now go through its compare latches. With center-aligned PWM a new duty cycle loads when the timer next counts to 0 or to the top. With edge-aligned PWM it is meant to load at the start of the next period, but erratum TB25 makes it load at once on the MSP430FR2x5x and the MSP430FR247x, the supported devices that have a Timer_B.
 - Add `TimerConfig::high_impedance_trigger()`. After reset, a high eCOMP output switches the outputs of some Timer_B peripherals to high impedance (eCOMP0 those of TB0 and TB1, eCOMP1 those of TB2 and TB3), which stops their PWM; this selects the TBxTRG pin instead, or nothing.
 - Add `TimerConfig::counter_length()` for Timer_B, and `Timer::start_up_down()` for up/down counting. `Timer::resume()` now keeps the counting mode instead of switching to up mode.
 - Add captures started from software: the `config_capN_software()` methods and `Capture::trigger_capture()`.
@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `mfm` module on the MSP430FR2x5x: the Manchester Function Module on P5.0 and P5.1, with eUSCI_B1 as its SPI slave through `SpiConfig::mfm_slave()`. Not tested on hardware yet.
 - Add `ClockConfig::mclk_dcoclk_hz()`, which runs the DCO at any frequency from 1 MHz up to the device maximum. The FLL locks to the largest multiple of its reference that doesn't exceed the target, with the DCO in the range whose nominal frequency is closest to it. The MSP430FR2476 example `dco_delay_test` checks it and the delays on the board, with an oscilloscope, and optionally with a function generator as the FLL reference.
 - Fixed `I2cRoleSlave::poll()` panicking when the start flag had been cleared, by reading the interrupt vector say, while a received byte was still unread and the master had started reading. It now reports `OverrunWrite`.
+- The comments in the HAL and the examples now cite the TI documents each register setting, procedure, pin function and limit comes from: document, section, table or figure, and page. `REFERENCES.md` lists the documents, their revisions and how references are written.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

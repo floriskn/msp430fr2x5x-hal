@@ -27,7 +27,8 @@
 //! either active high or active low (UCMODEx, SLAU445I Table 23-1, p. 606).
 //! If the bus is used exclusively by this device then the [`exclusive_bus()`](SpiConfig::exclusive_bus)
 //! configuration method can be used, which allows the STE pin to be used for other purposes. In this mode the
-//! MISO pin will remain an output pin at all times (3-pin mode doesn't use STE: SLAU445I 23.3.4.1, p. 609).
+//! MISO pin will remain an output pin at all times (SLAU445I 23.3.4.1, p. 609: "The UCxSTE input signal
+//! is not used in 3-pin slave mode").
 //!
 //! [`SpiSlave`] provides non-blocking methods that can be used for polling or interrupt-based implementations.
 //! It does not implement either of the embedded-hal traits.
@@ -283,7 +284,8 @@ where
     // }
     /// For an SPI bus with a single master.
     /// SCLK and MOSI are always outputs. The STE pin is not required
-    /// (3-pin master mode: SLAU445I 23.3, p. 606; SLAU445I 23.3.3.1, p. 608).
+    /// (3-pin master mode, UCMODEx = 00b: SLAU445I Table 23-3, p. 613; SLAU445I 23.3.3.1, p. 608: "The
+    /// UCxSTE input signal is not used in 3-pin master mode").
     pub fn single_master_bus<MOSI, MISO, SCLK>(
         mut self,
         _miso: MISO,
@@ -460,7 +462,8 @@ macro_rules! spi_common {
 
         fn recv_byte(&mut self) -> nb::Result<u8, SpiErr> {
             if self.usci.receive_flag() {
-                // UCOE first, as in read_unchecked: reading UCxRXBUF clears it
+                // UCOE first, as in read_unchecked: reading UCxRXBUF clears it (SLAU445I Table 23-5, p. 615;
+                // SLAU445I Table 23-14, p. 622)
                 if self.usci.overrun_flag() {
                     Err(nb::Error::Other(SpiErr::Overrun(self.usci.rxbuf_rd())))
                 } else {

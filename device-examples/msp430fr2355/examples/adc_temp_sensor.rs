@@ -57,7 +57,7 @@ fn main() -> ! {
         let count = block!(adc.read_count(&mut t_sense)).unwrap();
         let temp_decicelsius = calibration.decicelsius(count);
 
-        // Turn on LED if temp between 20 and 25C
+        // Turn on LED if temp between 20 and 25C (LED1 on P1.0: SLAU680 Figure 18, p. 26)
         if (200..=250).contains(&temp_decicelsius) {
             led.set_high().ok();
         } else {

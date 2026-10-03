@@ -48,7 +48,7 @@ fn main() -> ! {
         // If you want a raw count use adc.read_count() instead.
         let reading_mv = block!( adc.read_voltage_mv(&mut adc_pin, 3300) ).unwrap();
 
-        // Turn on LED if voltage between 1000 and 2000mV
+        // Turn on LED if voltage between 1000 and 2000mV (LED1 on P1.0: SLAU680 Figure 18, p. 26)
         if (1000..=2000).contains(&reading_mv) {
             led.set_high().ok();
         } else {

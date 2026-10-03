@@ -48,6 +48,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -60,6 +61,9 @@ fn main() -> ! {
     // P2.1 = XIN with P2SEL = 01 (SLASEO7C Table 9-24, p. 66)
     let xin = p2.pin1.to_alternate1();
 
+    // MCLK from DCOCLKDIV (SELMS = 000b) and ACLK from XT1CLK (SELA = 00b) (SLAU445I Table 3-8,
+    // p. 117); SMCLK = MCLK / 8 (DIVS = 11b: SLAU445I Table 3-9, p. 118); XT1 in bypass mode
+    // (XT1BYPASS = 1: SLAU445I Table 3-10, p. 120)
     let (_smclk, aclk, mut xt1clk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_8)
@@ -69,9 +73,12 @@ fn main() -> ! {
 
     let rtc = Rtc::new(periph.rtc);
     if RTC_FROM_ACLK {
+        // RTCSS = 01b with RTCCKSEL = 1 selects ACLK (SLASEO7C Table 9-18, p. 61; RTCSS: SLAU445I
+        // Table 15-2, p. 420; RTCCKSEL in SYSCFG2: SLAU445I Table 1-31, p. 82)
         let rtc = rtc.use_aclk(&aclk);
         run(rtc, &mut led, &mut xt1clk)
     } else {
+        // RTCSS = 10b selects XT1CLK (SLASEO7C Table 9-18, p. 61; SLAU445I Table 15-2, p. 420)
         let rtc = rtc.use_xt1clk(&xt1clk);
         run(rtc, &mut led, &mut xt1clk)
     }
@@ -82,12 +89,14 @@ fn run<SRC: RtcClockSrc>(
     led: &mut impl StatefulOutputPin,
     xt1clk: &mut Xt1clk,
 ) -> ! {
+    // RTCPS = 000b divides by 1 (SLAU445I Table 15-2, p. 420)
     rtc.set_clk_div(RtcDiv::_1);
     // A period lasts `count + 1` ticks
     // (The counter resets to 0 after reaching the modulo value: SLAU445I 15.2.1, p. 417;
     // SLAU445I Figure 15-2, p. 418)
     rtc.start(TICKS_PER_TOGGLE - 1);
     loop {
+        // Waits for RTCIFG, which "can be cleared by reading RTCIV register" (SLAU445I Table 15-2, p. 420)
         block!(rtc.wait()).ok();
         led.toggle().ok();
         // Clearing the sticky fault flag lets ACLK move back from REFO to XT1 once the signal

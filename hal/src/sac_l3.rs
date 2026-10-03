@@ -111,6 +111,7 @@ pub enum LoadTrigger<'a> {
     /// The DAC loads the new value when TB2.2 exhibits a rising edge.
     TB2_2(&'a SubTimer<Tb2, CCR2>),
 }
+// DACLSEL values (SLAU445I Table 20-8, p. 534; SLASEC4D Table 6-32, p. 80)
 impl From<LoadTrigger<'_>> for u8 {
     #[inline(always)]
     fn from(value: LoadTrigger) -> Self {

@@ -102,7 +102,8 @@ pub fn adc_gain_factor() -> u16 { read(ADC_GAIN_FACTOR) }
 pub fn adc_offset() -> i16 { read(ADC_OFFSET) as i16 }
 
 /// The correction factor of the internal reference at `vref`, in 1/32768ths: multiply results
-/// measured against it by the factor and divide by 32768 (SLAU445I 1.13.3.1, p. 59: Equations 2 and 3).
+/// measured against it by the factor and divide by 32768 (SLAU445I 1.13.3, p. 59, in "1.5-V Reference
+/// Calibration": Equations 2 and 3).
 #[inline]
 pub fn reference_factor(vref: ReferenceVoltage) -> u16 {
     // The 1.5 V, 2.0 V and 2.5 V factors at 1A28h, 1A2Ah and 1A2Ch (SLASEC4D Table 6-70, p. 108; SLASEO7C

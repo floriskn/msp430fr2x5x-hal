@@ -37,6 +37,7 @@ static RED_LED: Mutex<UnsafeCell<Option<Pin<P1, Pin0, Output>>>> =
 fn main() -> ! {
     let Some(periph) = msp430fr247x::Peripherals::take() else { loop {} };
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -50,6 +51,9 @@ fn main() -> ! {
 
     with(|cs| unsafe { *RED_LED.borrow(cs).get() = Some(red_led) });
 
+    // MCLK = SMCLK = DCOCLKDIV in the 1 MHz range, ACLK from the VLO (SELMS, SELA: SLAU445I
+    // Table 3-8, p. 117). ACLK from the VLO: SLASEO7C 9.10.2, p. 49; SLAU445I Table 3-1, p. 98 lists
+    // that for the enhanced clock system only, and the HAL follows the data sheet.
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
@@ -57,7 +61,8 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     // TA2 CCR1 input A (CCI1A) is P3.3 with P3SEL = 01 and P3DIR = 0 (SLASEO7C Table 9-14, p. 58;
-    // SLASEO7C Table 9-25, p. 67)
+    // SLASEO7C Table 9-25, p. 67). ACLK is TASSEL = 01b (SLASEO7C Table 9-8, p. 50). Capture on the
+    // falling edge: CM = 10b, CCIS = 00b (SLAU445I Table 13-6, p. 386).
     let captures = CaptureParts3::config(periph.ta2, TimerConfig::aclk(&aclk))
         .config_cap1_input_A(p3.pin3.to_alternate1())
         .config_cap1_trigger(CapTrigger::FallingEdge)
@@ -70,15 +75,20 @@ fn main() -> ! {
         unsafe { *CAPTURE.borrow(cs).get() = Some(capture) }
         unsafe { *VECTOR.borrow(cs).get() = Some(vectors) }
     });
+    // Set GIE, which masks every maskable interrupt while clear (SLAU445I 1.3.3, p. 33)
     unsafe { enable() };
 
     loop {}
 }
 
+/// Enable the capture interrupt (CCIE: SLAU445I Table 13-6, p. 386)
 fn setup_capture<T: CapCmp<C>, C>(capture: &mut Capture<T, C>) {
     capture.enable_interrupts();
 }
 
+// The TA2 CCR1, CCR2 and overflow interrupt vector (FFEEh: SLASEO7C Table 9-2, p. 46). Reading TA2IV
+// gives the highest pending source and clears its flag (SLAU445I 13.2.6.2, p. 380; SLAU445I
+// Table 13-8, p. 388).
 #[interrupt]
 fn TIMER2_A1() {
     with(|cs| {

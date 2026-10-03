@@ -16,7 +16,12 @@ use panic_msp430 as _;
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366). A WDT in watchdog mode would keep
+    // the device out of LPMx.5 (SLAU445I 1.4.3.1 step 7, p. 41).
     let wdt = Wdt::constrain(periph.wdt_a);
+    // Pmm::new clears LOCKLPM5 here, before the pins are configured again. After a wake-up from LPM4.5,
+    // SLAU445I 1.4.3.4 steps 1 and 2, p. 42 configures the port registers first and clears LOCKLPM5
+    // after that; this example keeps the simpler order.
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // The HAL uses some of the SYS registers internally, but we need a copy as well. We promise not to modify any control bits used by the HAL.
@@ -24,7 +29,8 @@ fn main() -> ! {
 
     // Floating input pins consume a *huge* amount of power (relatively speaking).
     // Set unused pins to outputs or enable their pull resistors.
-    // (SLAU445I 8.3.3, p. 317: "It is critical that no inputs are left floating", or LPMx.5 draws more)
+    // (SLAU445I 8.3.3, p. 317: "It is critical that no inputs are left floating", or LPMx.5 draws more.
+    // Pullup and pulldown settings: SLAU445I Table 8-1, p. 313.)
     let port1 = Batch::new(periph.p1)
         .pulldown_all()
         .config_pin0(|p| p.to_output())
@@ -52,12 +58,16 @@ fn main() -> ! {
     else {
         // Configure P2.3 for interrupts
         // (S2 pulls P2.3 low, so a press is a falling edge: SLAU802 Figure 19, p. 25. Wake-up edge and
-        // enable: SLAU445I 1.4.3.1 step 4, p. 41)
+        // enable: SLAU445I 1.4.3.1 step 4, p. 41; PxIES = 1 for a high-to-low transition: SLAU445I
+        // Table 8-16, p. 336)
         let mut button = port2.pin3;
         button.select_falling_edge_trigger().enable_interrupts();
 
         // And enter LPM4.5. Interrupts were never enabled, so GIE stays clear, as in
         // SLAU445I 1.4.3.1 step 8, p. 41; the P2.3 edge wakes the device anyway (SLAU445I 1.4.3.2, p. 41).
+        // The RTC is stopped (RTCSS = 00b: SLAU445I Table 15-2, p. 420), so the device enters LPM4.5
+        // rather than LPM3.5 (SLAU445I 1.4.3.1, p. 41), and SVSHE = 0 turns the high-side SVS off in
+        // LPM4.5 (SLAU445I Table 2-2, p. 91).
         enter_lpm4_5(wdt, periph.rtc, SvsState::Svshe0);
     }
 }

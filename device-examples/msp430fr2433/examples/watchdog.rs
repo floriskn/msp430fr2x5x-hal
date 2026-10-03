@@ -19,9 +19,13 @@ fn main() -> ! {
         .set_vloclk() // ~10kHz
         .set_interval_and_start(WdtClkPeriods::_8192); // ~10kHz / 8192 ~= 1 sec
 
+    // Pmm::new clears LOCKLPM5 (SLAU445I Table 2-7, p. 97). SLASE59F 6.10.3, p. 46 sets the ports up before
+    // that; clearing it first leaves the pins inputs until they are set up (SLAU445I 8.3.1, p. 316).
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let mut red_led = Batch::new(periph.p1).split(&pmm).pin0.to_output();
 
+    // The LED changes state only if P1OUT keeps its value through the watchdog's PUC, which SLAU445I
+    // Table 8-10, p. 334 doesn't promise: the reset value of PxOUT is "Undefined".
     red_led.toggle();
 
     // The watchdog will reset program execution when it times out (a PUC in watchdog mode: SLAU445I

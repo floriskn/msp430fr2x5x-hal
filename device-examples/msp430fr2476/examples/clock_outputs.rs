@@ -50,6 +50,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -66,6 +67,9 @@ fn main() -> ! {
     let _smclk_out = p1.pin7.to_output().to_alternate2();
     let _aclk_out = p2.pin2.to_output().to_alternate2();
 
+    // MCLK from DCOCLKDIV and ACLK from REFO (SELMS = 000b, SELA = 01b: SLAU445I Table 3-8, p. 117).
+    // SMCLK "directly derives from MCLK", here divided by 8 (DIVS = 11b: SLAU445I Table 3-9, p. 118).
+    // MCLK above 8 MHz needs one FRAM wait state (fSYSTEM: SLASEO7C 8.3, p. 20), which freeze() sets.
     let (_smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DCO_FREQ, MclkDiv::_1)
         .smclk_on(SmclkDiv::_8)

@@ -103,6 +103,7 @@ fn main() -> ! {
         });
 
         // If the I2C devices echoed correctly set the red LED
+        // (LED1, red, on P1.0 and LED2, green, on P6.6: SLAU680 Figure 18, p. 26)
         red_led.set_state((echo_rx == ECHO_TX).into()).ok();
         delay.delay_ms(100);
     }
@@ -119,18 +120,24 @@ fn EUSCI_B1() {
         match i2c_master_slave.interrupt_source() {
             I2cVector::StartReceived => {
                 // We have been addressed as a slave. Enable Rx, Tx and Stop interrupts.
+                // (UCSTTIFG is set when the module "detects a START condition together with its own address":
+                // SLAU445I Table 24-2, p. 646)
                 i2c_master_slave.set_interrupts(Flags::TxBufEmpty | Flags::RxBufFull | Flags::StopReceived);
             }
             I2cVector::RxBufFull => {
                 // Store the received value so we can echo it back later when the master switches to read mode
+                // (UCRXIFG0 is set when a data byte is received: SLAU445I 24.3.5.1.2, p. 634)
                 *TEMP_VAR = unsafe { i2c_master_slave.read_rx_buf_as_slave_unchecked() };
             }
             I2cVector::TxBufEmpty => {
                 // Echo back the stored value
+                // (When the master reads, "UCTR and UCTXIFG0 become set": SLAU445I 24.3.5.1.1, p. 633)
                 unsafe { i2c_master_slave.write_tx_buf_as_slave_unchecked(*TEMP_VAR) };
             }
             I2cVector::StopReceived => {
                 // Slave addressing concluded. Disable Rx, Tx, and Stop interrupts. We don't want these to trigger when acting as a master.
+                // (UCSTPIFG "is set when the I2C module detects a STOP condition on the bus" and is "used in
+                // slave and master mode": SLAU445I Table 24-2, p. 646)
                 i2c_master_slave.clear_interrupts(Flags::TxBufEmpty | Flags::RxBufFull | Flags::StopReceived);
                 i2c_master_slave.return_to_master();
             }

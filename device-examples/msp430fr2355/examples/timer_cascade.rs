@@ -22,7 +22,7 @@ use msp430_hal::{
 };
 use panic_msp430 as _;
 
-/// ACLK cycles per TB0 period: 1 s
+/// ACLK cycles per TB0 period: 1 s (ACLK is REFO, 32768 Hz: SLASEC4D Table 5-7, p. 40)
 const ACLK_CYCLES: u16 = 32_768;
 /// TB0 periods per LED2 toggle
 const PERIODS: u16 = 5;
@@ -35,6 +35,7 @@ fn main() -> ! {
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    // LED1, red, on P1.0 and LED2, green, on P6.6 (SLAU680 Figure 18, p. 26)
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
@@ -51,7 +52,8 @@ fn main() -> ! {
         .freeze(&mut fram);
 
     let tb0 = TimerParts3::new(periph.tb0, TimerConfig::aclk(&aclk));
-    // CCR2 of TB0 now pulses once per period, to clock TB1
+    // CCR2 of TB0 now pulses once per period, to clock TB1 (TB1's INCLK is the "Timer0_B3 CCR2B output":
+    // SLASEC4D Table 6-17, p. 74)
     let tb0_periods = tb0.subtimer2.into_cascade_output();
     let mut tb0 = tb0.timer;
     let mut tb1 = TimerParts3::new(periph.tb1, TimerConfig::cascade(&tb0_periods)).timer;

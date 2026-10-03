@@ -13,15 +13,20 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
+    // (WDTHOLD = 1 stops it: SLAU445I Table 12-2, p. 366; after a PUC it runs: SLAU445I 12.2.2, p. 363)
     let periph = msp430fr247x::Peripherals::take().unwrap();
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     // Configure GPIO
+    // (Pin settings take effect once LOCKLPM5 is cleared, which Pmm::new does: SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p4 = Batch::new(periph.p4).split(&pmm);
     let p5 = Batch::new(periph.p5).split(&pmm);
 
     // Configure clocks to get accurate delay timing
+    // (MCLK = SMCLK = DCOCLKDIV in the 1 MHz range: SELMS = 000b, SLAU445I Table 3-8, p. 117; DIVM,
+    // DIVS: SLAU445I Table 3-9, p. 118. TB0 counts SMCLK, TBSSEL = 10b: SLASEO7C Table 9-8, p. 50, in up
+    // mode, where a period is TBxCL0 + 1 counts: SLAU445I 14.2.3.1, p. 394.)
     let mut fram = Fram::new(periph.frctl);
     let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)

@@ -28,20 +28,23 @@ use panic_never as _;
 fn main() -> ! {
     if let Some(periph) = msp430fr25x2::Peripherals::take() {
         let mut fram = Fram::new(periph.frctl);
+        // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
         let _wdt = Wdt::constrain(periph.wdt_a);
 
         let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
             .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
             .smclk_on(SmclkDiv::_2)
-            .aclk_refoclk()
+            .aclk_refoclk() // ACLK from REFO, 32768 Hz (SLASEE4C Table 5-7, p. 27)
             .freeze(&mut fram);
 
+        // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
         let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
         let p1 = Batch::new(periph.p1).split(&pmm);
         let p2 = Batch::new(periph.p2).split(&pmm);
 
-        // No board document covers an LED on P1.0: there is none for the MSP430FR25x2.
+        // No board document covers an LED on P1.0: there is none for the MSP430FR25x2. P1.0 is a GPIO
+        // output, P1SELx = 00 and P1DIR = 1 (SLASEE4C Table 6-15, p. 58).
         let mut led = p1.pin0.to_output();
         led.set_low().ok();
 

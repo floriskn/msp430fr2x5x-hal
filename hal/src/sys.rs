@@ -1,9 +1,9 @@
 //! System control: the RST/NMI pin, the vacant memory access interrupt, the JTAG mailbox and the
 //! non-maskable interrupts (NMIs)
 //!
-//! Begin with [`SysParts::new()`], which splits the special function registers (SFR) into these
-//! functions. The reset cause and software resets are on [`Pmm`](crate::pmm::Pmm), FRAM bit error
-//! handling on [`Fram`](crate::fram::Fram).
+//! Begin with [`SysParts::new()`], which splits the special function registers (SFR, SLAU445I 1.14,
+//! p. 61) into these functions. The reset cause and software resets are on [`Pmm`](crate::pmm::Pmm), FRAM
+//! bit error handling on [`Fram`](crate::fram::Fram).
 //!
 //! # Non-maskable interrupts
 //!
@@ -28,11 +28,11 @@ use core::{convert::Infallible, marker::PhantomData};
 
 const SYSFLTE: u16 = 1 << 4; // SFRRPCR bit 4 (SLAU445I Table 1-11, p. 64). Missing from most PACs
 
-/// The system control functions of the special function registers (SFR)
+/// The system control functions of the special function registers (SFR, SLAU445I Table 1-8, p. 61)
 pub struct SysParts {
     /// The RST/NMI pin, in reset mode as after a brownout reset (SLAU445I 1.2.1, p. 32)
     pub rst_nmi_pin: RstNmiPin<ResetMode>,
-    /// The vacant memory access interrupt
+    /// The vacant memory access interrupt (SLAU445I 1.9.2, p. 45)
     pub vacant_memory: VacantMemory,
     /// The JTAG mailbox, in 16-bit mode as after reset (JMBMODE, SLAU445I Table 1-15, p. 68)
     pub jtag_mailbox: JtagMailbox<Mode16>,
@@ -51,9 +51,11 @@ impl SysParts {
     }
 }
 
+// The SFRs, base address 00100h (SLAU445I Table 1-7, p. 61)
 #[inline(always)]
 fn sfr() -> &'static _pac::sfr::RegisterBlock { unsafe { &*_pac::Sfr::ptr() } }
 
+// The SYS registers (SLAU445I Table 1-12, p. 65)
 #[inline(always)]
 fn sys() -> &'static _pac::sys::RegisterBlock { unsafe { &*_pac::Sys::ptr() } }
 
@@ -68,18 +70,18 @@ pub enum RstPull {
     /// Pull-up, as after reset. The user's guide requires this or an external resistor if the pin is unused
     /// (SLAU445I 1.7, p. 43).
     Up,
-    /// Pull-down
+    /// Pull-down (SYSRSTRE = 1, SYSRSTUP = 0: SLAU445I Table 1-11, p. 64)
     Down,
-    /// No resistor
+    /// No resistor (SYSRSTRE = 0: SLAU445I Table 1-11, p. 64)
     None,
 }
 
 /// The edge of the RST/NMI pin that requests the NMI (SFRRPCR.SYSNMIIES, SLAU445I Table 1-11, p. 64)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum NmiEdge {
-    /// Rising edge
+    /// Rising edge (SYSNMIIES = 0: SLAU445I Table 1-11, p. 64)
     Rising,
-    /// Falling edge
+    /// Falling edge (SYSNMIIES = 1: SLAU445I Table 1-11, p. 64)
     Falling,
 }
 
@@ -89,7 +91,7 @@ pub enum NmiEdge {
 pub struct RstNmiPin<MODE>(PhantomData<MODE>);
 
 impl<MODE> RstNmiPin<MODE> {
-    /// Select the resistor on the pin.
+    /// Select the resistor on the pin (SFRRPCR.SYSRSTRE and SYSRSTUP, SLAU445I Table 1-11, p. 64).
     #[inline]
     pub fn set_pull(&mut self, pull: RstPull) {
         sfr().sfrrpcr().modify(|r, w| unsafe { w.bits(with_pull(r.bits(), pull)) });
@@ -184,15 +186,19 @@ fn with_pull(rpcr: u16, pull: RstPull) -> u16 {
     }
 }
 
+// SFRIE1.NMIIE, bit 4 (SLAU445I Table 1-9, p. 62)
 #[inline(always)]
 fn nmi_pin_interrupt_enabled() -> bool { sfr().sfrie1().read().nmiie().bit_is_set() }
 
+// SFRIE1.NMIIE, bit 4 (SLAU445I Table 1-9, p. 62)
 #[inline(always)]
 fn enable_nmi_pin_interrupt() { unsafe { sfr().sfrie1().set_bits(|w| w.nmiie().set_bit()) } }
 
+// SFRIE1.NMIIE, bit 4 (SLAU445I Table 1-9, p. 62)
 #[inline(always)]
 fn disable_nmi_pin_interrupt() { unsafe { sfr().sfrie1().clear_bits(|w| w.nmiie().clear_bit()) } }
 
+// SFRIFG1.NMIIFG, bit 4 (SLAU445I Table 1-10, p. 63)
 #[inline(always)]
 fn clear_nmi_pin_flag() { unsafe { sfr().sfrifg1().clear_bits(|w| w.nmiifg().clear_bit()) } }
 
@@ -226,7 +232,7 @@ impl VacantMemory {
         unsafe { sfr().sfrie1().set_bits(|w| w.vmaie().set_bit()) };
     }
 
-    /// Stop requesting the `SYSNMI` interrupt on vacant memory accesses.
+    /// Stop requesting the `SYSNMI` interrupt on vacant memory accesses (VMAIE, SLAU445I Table 1-9, p. 62).
     #[inline]
     pub fn disable_interrupts(&mut self) {
         unsafe { sfr().sfrie1().clear_bits(|w| w.vmaie().clear_bit()) };
@@ -286,6 +292,7 @@ impl JtagMailbox<Mode16> {
         if sys.sysjmbc().read().jmbout0fg().bit_is_clear() {
             return Err(nb::Error::WouldBlock);
         }
+        // SYSJMBO0 (SLAU445I Table 1-18, p. 70)
         sys.sysjmbo0().write(|w| unsafe { w.bits(msg) });
         Ok(())
     }
@@ -298,6 +305,7 @@ impl JtagMailbox<Mode16> {
         if sys.sysjmbc().read().jmbin0fg().bit_is_clear() {
             return Err(nb::Error::WouldBlock);
         }
+        // SYSJMBI0 (SLAU445I Table 1-16, p. 69)
         Ok(sys.sysjmbi0().read().bits())
     }
 }
@@ -322,6 +330,7 @@ impl JtagMailbox<Mode32> {
         if jmbc.jmbout0fg().bit_is_clear() || jmbc.jmbout1fg().bit_is_clear() {
             return Err(nb::Error::WouldBlock);
         }
+        // SYSJMBO0 and SYSJMBO1 (SLAU445I Table 1-18, p. 70 and SLAU445I Table 1-19, p. 70)
         sys.sysjmbo0().write(|w| unsafe { w.bits(msg as u16) });
         sys.sysjmbo1().write(|w| unsafe { w.bits((msg >> 16) as u16) });
         Ok(())
@@ -337,6 +346,7 @@ impl JtagMailbox<Mode32> {
         if jmbc.jmbin0fg().bit_is_clear() || jmbc.jmbin1fg().bit_is_clear() {
             return Err(nb::Error::WouldBlock);
         }
+        // SYSJMBI0 and SYSJMBI1 (SLAU445I Table 1-16, p. 69 and SLAU445I Table 1-17, p. 69)
         let low = sys.sysjmbi0().read().bits() as u32;
         let high = sys.sysjmbi1().read().bits() as u32;
         Ok(high << 16 | low)
@@ -348,21 +358,25 @@ impl JtagMailbox<Mode32> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SystemNmi {
-    /// SVS low-power reset entry
+    /// SVS low-power reset entry (SYSSNIV 02h; the low-power reset state: SLAU445I 2.2.5, p. 87)
     SvsLowPowerResetEntry,
     /// The FRAM detected a bit error it couldn't correct, see
     /// [`Fram::set_uncorrectable_bit_error_action()`](crate::fram::Fram::set_uncorrectable_bit_error_action)
+    /// (SYSSNIV 04h; UBDIFG, SLAU445I 6.6, p. 303)
     FramUncorrectableBitError,
-    /// The CPU accessed vacant memory, see [`VacantMemory`]
+    /// The CPU accessed vacant memory, see [`VacantMemory`] (SYSSNIV 12h; SLAU445I 1.9.2, p. 45)
     VacantMemoryAccess,
-    /// A message from the debugger arrived in the JTAG mailbox
+    /// A message from the debugger arrived in the JTAG mailbox (SYSSNIV 14h; JMBINIFG, SLAU445I 1.10.4,
+    /// p. 47)
     JtagMailboxIn,
-    /// The debugger read the outgoing JTAG mailbox message
+    /// The debugger read the outgoing JTAG mailbox message (SYSSNIV 16h; JMBOUTIFG, SLAU445I 1.10.4, p. 46)
     JtagMailboxOut,
     /// The FRAM detected and corrected a bit error, see
     /// [`Fram::enable_correctable_bit_error_interrupts()`](crate::fram::Fram::enable_correctable_bit_error_interrupts)
+    /// (SYSSNIV 18h; CBDIFG, SLAU445I 6.6, p. 303)
     FramCorrectableBitError,
-    /// A value the data sheets list as reserved
+    /// A value the data sheets list as reserved (SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48;
+    /// SLASEO7C Table 9-10, p. 53; SLASEE4C Table 6-10, p. 52)
     Reserved(u16),
 }
 
@@ -371,7 +385,8 @@ pub enum SystemNmi {
 /// `None` if several sources are enabled.
 #[inline]
 pub fn take_system_nmi() -> Option<SystemNmi> {
-    // SYSSNIV values from the data sheet tables cited on `SystemNmi`
+    // SYSSNIV values: SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48; SLASEO7C Table 9-10, p. 53;
+    // SLASEE4C Table 6-10, p. 52
     match sys().syssniv().read().bits() {
         0x00 => None,
         0x02 => Some(SystemNmi::SvsLowPowerResetEntry),

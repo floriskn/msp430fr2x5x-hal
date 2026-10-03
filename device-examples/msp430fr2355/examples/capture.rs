@@ -31,6 +31,7 @@ fn main() -> ! {
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p4 = Batch::new(periph.p4).split(&pmm);
+    // P1.0 drives LED1, red (SLAU680 Figure 18, p. 26)
     let mut p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
@@ -65,6 +66,7 @@ fn main() -> ! {
             Ok(cap) => {
                 let diff = cap.wrapping_sub(last_cap);
                 last_cap = cap;
+                // LED1 on P1.0 (SLAU680 Figure 18, p. 26)
                 p1.pin0.set_high().unwrap();
                 print_num(&mut tx, diff);
             }

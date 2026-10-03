@@ -34,6 +34,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -46,12 +47,16 @@ fn main() -> ! {
     let mut led1 = p1.pin0;
     let mut led2_red = p5.pin1;
 
+    // MCLK = SMCLK = DCOCLKDIV in the 1 MHz range and ACLK from REFO (SELMS = 000b, SELA = 01b:
+    // SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
         .aclk_refoclk()
         .freeze(&mut fram);
 
+    // TA0 counts ACLK (TASSEL = 01b) and TA1 its INCLK (TASSEL = 11b) (SLASEO7C Table 9-8, p. 50;
+    // SLAU445I Table 13-4, p. 384)
     let ta0 = TimerParts3::new(periph.ta0, TimerConfig::aclk(&aclk));
     // CCR2 of TA0 now pulses once per period, to clock TA1
     // (Reset/Set output mode: SLAU445I Table 13-2, p. 376)
@@ -64,6 +69,7 @@ fn main() -> ! {
     ta1.start(PERIODS - 1);
     ta0.start(ACLK_CYCLES - 1);
 
+    // Each timer sets its TAIFG "when the timer counts from TAxCCR0 to zero" (SLAU445I 13.2.3.1, p. 371)
     loop {
         if ta0.wait().is_ok() {
             led1.toggle().unwrap();

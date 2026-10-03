@@ -18,10 +18,12 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
+    // (WDTHOLD = 1 stops it: SLAU445I Table 12-2, p. 366; after a PUC it runs: SLAU445I 12.2.2, p. 363)
     let periph = msp430fr247x::Peripherals::take().unwrap();
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     // Configure GPIO
+    // (Pin settings take effect once LOCKLPM5 is cleared, which Pmm::new does: SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
     let mut led = port1.pin0.to_output();
@@ -30,6 +32,9 @@ fn main() -> ! {
     let mut adc_pin = port1.pin1.to_alternate3();
 
     // ADC setup
+    // (ADCDIVx: SLAU445I Table 21-4, p. 563; ADCSSELx = 00b is MODCLK: SLAU445I Table 21-4, p. 564;
+    // ADCPDIVx, ADCRES = 00b for 8 bits and ADCSR = 1 for up to about 50 ksps: SLAU445I Table 21-5,
+    // p. 565; ADCSHTx = 0000b for 4 ADCCLK cycles: SLAU445I Table 21-3, p. 561)
     let mut adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,

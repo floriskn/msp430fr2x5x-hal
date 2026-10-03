@@ -35,12 +35,14 @@ pub trait RtcClockSrc: sealed::SealedRtcClockSrc {
     #[doc(hidden)]
     const CLK_SRC: Rtcss;
 
-    /// Optional hook for clock-specific hardware configuration (e.g., SYSCFG muxes)
+    /// Optional hook for clock-specific hardware configuration (e.g., SYSCFG muxes: RTCCKSEL in
+    /// SYSCFG2, SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
     #[doc(hidden)]
     fn apply_sys_config() {}
 }
 
-/// Typestate representing the SMCLK clock source for RTC
+/// Typestate representing the SMCLK clock source for RTC, which only runs in active mode and LPM0
+/// (SLAU445I 15.1, p. 416: "SMCLK is functional in AM and LPM0 only")
 pub struct RtcSmclk;
 
 impl RtcClockSrc for RtcSmclk {
@@ -56,7 +58,7 @@ impl RtcClockSrc for RtcSmclk {
     }
 }
 
-/// Typestate representing the VLOCLK clock source for RTC
+/// Typestate representing the VLOCLK clock source for RTC, about 10 kHz (SLAU445I 15.1, p. 416)
 pub struct RtcVloclk;
 
 impl RtcClockSrc for RtcVloclk {
@@ -64,7 +66,8 @@ impl RtcClockSrc for RtcVloclk {
     const CLK_SRC: Rtcss = Rtcss::Vloclk;
 }
 
-/// Typestate representing the ACLK clock source for RTC
+/// Typestate representing the ACLK clock source for RTC, which runs from active mode to LPM3
+/// (SLAU445I 15.1, p. 416: "ACLK is functional in AM to LPM3")
 #[cfg(feature = "rtc_aclk")]
 pub struct RtcAclk;
 
@@ -81,7 +84,7 @@ impl RtcClockSrc for RtcAclk {
     }
 }
 
-/// Typestate representing the XT1CLK clock source for RTC
+/// Typestate representing the XT1CLK clock source for RTC, about 32 kHz (SLAU445I 15.1, p. 416)
 pub struct RtcXt1clk;
 
 impl RtcClockSrc for RtcXt1clk {
@@ -103,24 +106,27 @@ pub struct Rtc<SRC: RtcClockSrc> {
 }
 
 impl Rtc<RtcVloclk> {
-    /// Convert into RTC object with VLOCLK as clock source
+    /// Convert into RTC object with VLOCLK as clock source. The clock source (RTCSS, SLAU445I
+    /// Table 15-2, p. 420) is written when the RTC is started.
     pub fn new(rtc: _pac::Rtc) -> Self {
         Rtc { periph: rtc, _src: PhantomData }
     }
 }
 
+// RTCPS predivider settings (SLAU445I Table 15-2, p. 420)
 pub use crate::_pac::rtc::rtcctl::Rtcps as RtcDiv;
 
 impl<SRC: RtcClockSrc> Rtc<SRC> {
     /// Configure the RTC to use SMCLK as clock source. Setting comes in effect the next time RTC
-    /// is started.
+    /// is started (RTCSS, SLAU445I Table 15-2, p. 420).
     #[inline]
     pub fn use_smclk(self, _smclk: &Smclk) -> Rtc<RtcSmclk> {
         Rtc { periph: self.periph, _src: PhantomData }
     }
 
     /// Configure the RTC to use ACLK as clock source. Setting comes in effect the next time RTC
-    /// is started.
+    /// is started (RTCSS, SLAU445I Table 15-2, p. 420; RTCCKSEL, SLAU445I Table 1-26, p. 77;
+    /// SLAU445I Table 1-31, p. 82).
     #[inline]
     #[cfg(feature = "rtc_aclk")]
     pub fn use_aclk(self, _aclk: &Aclk) -> Rtc<RtcAclk> {
@@ -131,14 +137,14 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     }
 
     /// Configure the RTC to use VLOCLK as clock source. Setting comes in effect the next time RTC
-    /// is started.
+    /// is started (RTCSS, SLAU445I Table 15-2, p. 420).
     #[inline]
     pub fn use_vloclk(self) -> Rtc<RtcVloclk> {
         Rtc { periph: self.periph, _src: PhantomData }
     }
 
     /// Configure the RTC to use XT1CLK as clock source. Setting comes in effect the next time RTC
-    /// is started.
+    /// is started (RTCSS, SLAU445I Table 15-2, p. 420).
     ///
     /// XT1 must run in low-frequency mode: the RTC's XT1CLK input only carries a 32 kHz XT1
     /// (SLAU445I 15.1, p. 416: "XT1CLK (approximately 32 kHz)"; device data sheets, clock distribution:
@@ -166,25 +172,27 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
         unsafe { self.periph.rtcctl().set_bits(|w| w.rtcie().set_bit()) };
     }
 
-    /// Disable RTC timer interrupts
+    /// Disable RTC timer interrupts (RTCIE: SLAU445I Table 15-2, p. 420)
     #[inline]
     pub fn disable_interrupts(&mut self) {
         unsafe { self.periph.rtcctl().clear_bits(|w| w.rtcie().clear_bit()) };
     }
 
-    /// Clear interrupt flag (reading RTCIV clears RTCIFG: SLAU445I 15.2.4, p. 418)
+    /// Clear interrupt flag (reading RTCIV clears RTCIFG: SLAU445I 15.2.4, p. 418; RTCIV: SLAU445I
+    /// Table 15-3, p. 421)
     #[inline]
     pub fn clear_interrupt(&mut self) { self.periph.rtciv().read(); }
 
     /// Read current timer count, which goes up from 0 to the `count` given to `start()`, at most 2^16-1
-    /// (SLAU445I 15.2.1, p. 417)
+    /// (SLAU445I 15.2.1, p. 417; RTCCNT: SLAU445I Table 15-5, p. 422)
     #[inline]
     pub fn get_count(&self) -> u16 { self.periph.rtccnt().read().bits() }
 
     #[inline]
     /// Clear the timer contents and start the timer counting up to `count`. The counter wraps to
     /// zero after reaching `count`, so a period lasts `count + 1` ticks of the divided clock (SLAU445I
-    /// 15.2.1, p. 417; SLAU445I Figure 15-2, p. 418).
+    /// 15.2.1, p. 417; SLAU445I Figure 15-2, p. 418). `count` goes to RTCMOD (SLAU445I Table 15-4,
+    /// p. 422), and RTCSR resets the counter (SLAU445I Table 15-2, p. 420).
     pub fn start(&mut self, count: u16) {
         self.periph.rtcmod().write(|w| unsafe { w.bits(count) });
         SRC::apply_sys_config();
@@ -208,6 +216,7 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
 
     #[inline]
     /// Checks if the timer has reached the target value, returns `Ok(())` if so, otherwise `WouldBlock`.
+    /// The overflow sets RTCIFG (SLAU445I Table 15-2, p. 420; SLAU445I 15.2.4, p. 418).
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         // RTCIFG is set on each overflow, and reading RTCIV clears it (SLAU445I 15.2.4, p. 418)
         if self.periph.rtcctl().read().rtcifg().bit() {
@@ -219,7 +228,7 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     }
 
     #[inline]
-    /// Pauses the timer.
+    /// Pauses the timer by selecting no clock (RTCSS = 00b: SLAU445I Table 15-2, p. 420).
     pub fn pause(&mut self) {
         // Bit pattern is all 0s, so we can use clear instead of modify (RTCSS = 00b, "No clock (Stop)":
         // SLAU445I Table 15-2, p. 420)

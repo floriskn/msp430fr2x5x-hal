@@ -101,6 +101,7 @@ fn main() -> ! {
         }
 
         // Enable the LED if the echoed value matches what was sent.
+        // (LED2, green, on P6.6 and LED1, red, on P1.0: SLAU680 Figure 18, p. 26)
         green_led.set_state((echo_rx == ECHO_TX).into()).ok();
         red_led.toggle().ok();
         delay.delay_ms(100);

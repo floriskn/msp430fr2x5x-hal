@@ -102,6 +102,7 @@ fn main() -> ! {
         value = (value + 1) % 10;
 
         // Enable the green LED if the value at index 0 is 0.
+        // (LED2, green, on P6.6 and LED1, red, on P1.0: SLAU680 Figure 18, p. 26)
         green_led.set_state((ARR[0].load() == 0).into()).ok();
 
         // Toggle the red LED after each
@@ -123,6 +124,8 @@ fn EUSCI_B1() {
         match i2c_slave.interrupt_source() {
             I2cVector::RxBufFull => {
                 // Safety: Rx interrupt triggered, so Rx buffer is ready.
+                // ("After the first data byte is received, the receive interrupt flag UCRXIFG0 is set":
+                // SLAU445I 24.3.5.1.2, p. 634)
                 let val = unsafe { i2c_slave.read_rx_buf_unchecked() };
                 // If this is the first byte treat the I2C byte as the array index
                 if *BYTE_COUNT == 0 {
@@ -137,6 +140,8 @@ fn EUSCI_B1() {
                 // Safety: ARR_INDEX is always less than ARR_LEN.
                 let val = unsafe { ARR.get_unchecked(*ARR_INDEX) }.load();
                 // Safety: Tx interrupt triggered, so Tx buffer is ready.
+                // (When the master reads, "UCTR and UCTXIFG0 become set" and SCL is held low until data is
+                // written to UCBxTXBUF: SLAU445I 24.3.5.1.1, p. 633)
                 unsafe { i2c_slave.write_tx_buf_unchecked(val) };
                 *ARR_INDEX = (*ARR_INDEX + 1) % ARR_LEN; // Autoincrement index
             }

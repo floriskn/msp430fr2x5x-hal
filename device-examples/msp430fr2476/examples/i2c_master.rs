@@ -15,6 +15,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -30,12 +31,17 @@ fn main() -> ! {
     let scl = p3.pin6.pullup().to_alternate1(); // You may need stronger external pullup resistors
     let sda = p3.pin2.pullup().to_alternate1();
 
+    // MCLK = SMCLK = DCOCLKDIV in the 8 MHz range (SELMS = 000b: SLAU445I Table 3-8, p. 117; DIVM,
+    // DIVS: SLAU445I Table 3-9, p. 118). ACLK from the VLO: SLASEO7C 9.10.2, p. 49; SLAU445I
+    // Table 3-1, p. 98 lists that for the enhanced clock system only, and the HAL follows the data sheet.
     let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)
         .aclk_vloclk()
         .freeze(&mut fram);
 
+    // UCGLITx = 00b filters pulses of up to 50 ns (SLAU445I 24.3.6, p. 642). SMCLK is UCSSEL = 10b
+    // (SLASEO7C Table 9-8, p. 50), and fBitClock = fBRCLK/UCBRx (SLAU445I 24.3.7, p. 642).
     let mut i2c: I2cSingleMaster<_, DefaultMapping> = I2cConfig::new(periph.e_usci_b1, GlitchFilter::Max50ns)
         .as_single_master()
         .use_smclk(&smclk, 80) // 8MHz / 80 = 100kHz

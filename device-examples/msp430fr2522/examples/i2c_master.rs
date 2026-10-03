@@ -26,11 +26,14 @@ fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
-    // No board document covers the LEDs on P1.0 and P2.0: there is none for the MSP430FR25x2.
+    // No board document covers the LEDs on P1.0 and P2.0: there is none for the MSP430FR25x2. Both pins
+    // are GPIO outputs, PxSELx = 00 and PxDIR = 1 (SLASEE4C Table 6-15, p. 58; SLASEE4C Table 6-16, p. 60).
     let mut red_led = p1.pin0.to_output();
     let mut green_led = Batch::new(periph.p2).split(&pmm).pin0.to_output();
 

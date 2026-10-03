@@ -11,9 +11,12 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    // P2.3 is an input with the internal pullup as well (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I
+    // Table 8-1, p. 313), so it reads high until S2 is pressed
     let p2 = Batch::new(periph.p2)
         .config_pin3(|p| p.pullup())
         .split(&pmm);

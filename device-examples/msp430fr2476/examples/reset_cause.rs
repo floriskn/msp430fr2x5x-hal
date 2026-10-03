@@ -31,6 +31,7 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -43,6 +44,8 @@ fn main() -> ! {
     let p1 = Batch::new(periph.p1)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
+    // S1 and S2 inputs with their internal pullups (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1,
+    // p. 313), on top of R9 and R10 (SLAU802 Figure 19, p. 25)
     let p2 = Batch::new(periph.p2)
         .config_pin3(|p| p.pullup())
         .split(&pmm);
@@ -74,6 +77,7 @@ fn main() -> ! {
     green.set_state(g.into()).ok();
     blue.set_state(b.into()).ok();
 
+    // PMMSWBOR triggers a BOR and PMMSWPOR a POR (SLAU445I Table 2-2, p. 91)
     loop {
         if s1.is_low().unwrap() {
             while s1.is_low().unwrap() {}

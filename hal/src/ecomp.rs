@@ -328,8 +328,9 @@ impl From<PowerMode> for bool {
 ///
 /// (CPFLT and CPFLTDLY: SLAU445I 18.2.3, p. 505, and SLAU445I Table 18-3, p. 510, which gives the typical
 /// delays below and says they are only valid in high speed mode.) The data sheets give the propagation
-/// delay with the filter instead, tFDLY: 0.7, 1.1, 1.9 and 3.4 us for eCOMP0 (SLASEC4D Table 5-23, p. 53;
-/// SLASEO7C 8.12.9.1, p. 42) and 150, 350, 1000 and 1900 ns for eCOMP1 (SLASEC4D Table 5-24, p. 54).
+/// delay with the filter instead, tFDLY: 0.7 us, 1.1 us, 1.9 us and 3.4 us for eCOMP0 (SLASEC4D
+/// Table 5-23, p. 53; SLASEO7C 8.12.9.1, p. 42) and 150 ns, 350 ns, 1000 ns and 1900 ns for eCOMP1
+/// (SLASEC4D Table 5-24, p. 54).
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FilterStrength {
     /// Typical delay of 450 ns (in high speed mode).

@@ -16,9 +16,11 @@ use panic_msp430 as _;
 fn main() -> ! {
     // Take peripherals
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     // Configure GPIO
+    // (Pin settings take effect once LOCKLPM5 is cleared, which Pmm::new does: SLAU445I 8.3.1, p. 316)
     let (pmm, mut nv_mem) = Pmm::new(periph.pmm, periph.sys);
     let mut led = Batch::new(periph.p1).split(&pmm).pin0.to_output();
 
@@ -28,7 +30,8 @@ fn main() -> ! {
     }
 
     // The write method provides a mutable reference to the memory, automatically managing write protection.
-    // (The DFWP bit in SYSCFG0: SLAU445I 1.9.3, p. 45; SLASEO7C Table 9-31, p. 73)
+    // (The DFWP bit in SYSCFG0: SLAU445I 1.9.3, p. 45; SLASEO7C Table 9-31, p. 73. SYSCFG0 of this
+    // device family, with its FRWPPW password: SLAU445I Table 1-29, p. 80)
     nv_mem.write(|mem| 
         // Toggle the first byte between 1 and 0
         mem[0] = (mem[0].wrapping_add(1)) & 1

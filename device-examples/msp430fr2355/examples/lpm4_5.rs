@@ -17,6 +17,9 @@ fn main() -> ! {
     let periph = msp430fr2355::Peripherals::take().unwrap();
 
     let wdt = Wdt::constrain(periph.wdt_a);
+    // Pmm::new clears LOCKLPM5 here. After a wake-up from LPM4.5, SLAU445I 1.4.3.4, p. 42 initializes the
+    // port registers "exactly the same way" as before LPM4.5 first and only then clears LOCKLPM5 (step 2),
+    // which Pmm::new_locked allows; this example does it the other way round.
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     // The HAL uses some of the SYS registers internally, but we need a copy as well. We promise not to modify any control bits used by the HAL.
@@ -32,6 +35,7 @@ fn main() -> ! {
         .split(&pmm);
     let mut red_led = port1.pin0;
 
+    // S2 connects P2.3 to GND and the board has no pull-up for it (SLAU680 Figure 18, p. 26)
     let port2 = Batch::new(periph.p2)
         .pulldown_all()
         .config_pin3(|p| p.pullup())

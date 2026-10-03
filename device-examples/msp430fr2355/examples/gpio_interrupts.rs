@@ -22,8 +22,8 @@ use panic_msp430 as _;
 static RED_LED: Mutex<RefCell<Option<Pin<P1, Pin0, Output>>>> = Mutex::new(RefCell::new(None));
 static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
-// Red LED should blink about 3.3 seconds on, 3.3 seconds off: the WDT interval is 2^15 cycles of ACLK,
-// which is VLOCLK, 10 kHz typical (SLASEC4D Table 5-8, p. 40)
+// Red LED should blink about 3.3 seconds on, 3.3 seconds off: the WDT interval is 2^15 cycles of ACLK
+// (WDTIS = 100b, SLAU445I Table 12-2, p. 366), which is VLOCLK, 10 kHz typical (SLASEC4D Table 5-8, p. 40)
 // Both green and red LEDs should blink when P2.3 button (S2) is pressed
 // (LED1, red, on P1.0; LED2, green, on P6.6; S2 on P2.3: SLAU680 Figure 18, p. 26)
 #[entry]

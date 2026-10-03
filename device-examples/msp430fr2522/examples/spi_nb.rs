@@ -2,6 +2,8 @@
 #![no_std]
 
 // This example uses the non-blocking interface from embedded-hal-nb, with a software controlled CS pin.
+// The CS pin is a GPIO output, as the user's guide suggests for slave selects the eUSCI's STE can't make
+// (SLAU445I 23.3.3.2, p. 608: "use general-purpose I/O pins instead to generate STE signals").
 
 use embedded_hal::{delay::DelayNs, digital::OutputPin, spi::MODE_0};
 use msp430_rt::entry;
@@ -22,8 +24,10 @@ fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
     let p2 = Batch::new(periph.p2).split(&pmm);
@@ -33,6 +37,7 @@ fn main() -> ! {
     let mosi = p2.pin0.to_alternate1();
     let miso = p2.pin1.to_alternate1();
     let sck = p1.pin6.to_alternate1();
+    // CS on P1.3 as a GPIO output, P1SELx = 00 and P1DIR = 1 (SLASEE4C Table 6-15, p. 58)
     let mut cs = p1.pin3.to_output();
     cs.set_high().ok();
 

@@ -13,6 +13,7 @@ fn main() -> ! {
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
+    // LED1, red, on P1.0 (SLAU680 Figure 18, p. 26)
     let mut led = p1.pin0.to_output();
 
     // Some random data to create a signature over. Can be modified.
@@ -55,6 +56,7 @@ fn calculate_software_sig(seed: u16, data: &[u16]) -> u16 {
 
 // Software algorithm - CCITT CRC16 code. Derived from msp430fr235x_CRC.c, at:
 // https://dev.ti.com/tirex/explore/node?node=A__AIgIaFR0j9SeqBvdp6wD2w__msp430ware__IOGqZri__LATEST
+// It computes the polynomial of the CRC module, x^16 + x^12 + x^5 + 1 (SLAU445I 11.1, p. 353).
 fn ccitt_update(sig: &mut u16, input: u8) {
     let mut new = *sig;
     new = new.rotate_right(8);

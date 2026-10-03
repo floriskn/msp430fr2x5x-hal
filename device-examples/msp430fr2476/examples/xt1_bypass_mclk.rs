@@ -42,6 +42,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -61,6 +62,8 @@ fn main() -> ! {
     let _smclk_out = p1.pin7.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 
+    // XT1 in bypass mode (XT1BYPASS = 1: SLAU445I Table 3-10, p. 120) sources MCLK and SMCLK
+    // (SELMS = 010b: SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
     let (_smclk, _aclk, mut xt1clk, mut delay) = ClockConfig::new(periph.cs)
         .xt1clk_on(Xt1Config::bypass(XT1_FREQ_HZ, xin))
         .mclk_xt1clk(MclkDiv::_1)
@@ -72,7 +75,8 @@ fn main() -> ! {
         delay.delay_ms(500);
         // The fault flag is sticky and the fail-safe stays engaged until it is cleared, so
         // clear it and see whether it comes straight back
-        // (The fault bits "remain set until software resets them": SLAU445I 3.2.13, p. 109)
+        // (The fault bits "remain set until software resets them": SLAU445I 3.2.13, p. 109. XT1OFFG:
+        // SLAU445I Table 3-11, p. 122; OFIFG: SLAU445I Table 1-10, p. 63.)
         xt1clk.clear_fault();
         led2_red.set_state(xt1clk.is_faulted().into()).ok();
     }

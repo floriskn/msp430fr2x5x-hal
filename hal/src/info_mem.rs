@@ -49,7 +49,8 @@ impl InfoMemory {
         })
     }
 
-    /// Disable write protection and directly return the info memory as an array.
+    /// Disable write protection and directly return the info memory as an array (clears SYSCFG0.DFWP:
+    /// SLAU445I Table 1-24, p. 75; SLAU445I Table 1-29, p. 80).
     #[inline]
     pub fn into_unprotected(self) -> &'static mut [u8; INFO_MEM_SIZE] {
         Self::disable_write_protect();

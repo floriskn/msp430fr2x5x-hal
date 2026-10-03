@@ -26,9 +26,13 @@ static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 // Both green and red LEDs should blink when P2.3 LED is pressed
 // No board document covers the LEDs (the red one on P1.0 here) or the button: there is none for the
 // MSP430FR25x2. P2.3 and P2.6 only exist on the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
+// All three pins are GPIO, PxSELx = 00 (SLASEE4C Table 6-15, p. 58; SLASEE4C Table 6-16, p. 60): P1.0 an
+// output, P2.3 an input with its pullup and P2.6 one with its pulldown (SLAU445I Table 8-1, p. 313).
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363), then use it as an
+    // interval timer (WDTTMSEL = 1: SLAU445I Table 12-2, p. 366)
     let mut wdt = Wdt::constrain(periph.wdt_a).to_interval();
 
     let (_smclk, aclk, _delay) = ClockConfig::new(periph.cs)
@@ -37,6 +41,7 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut Fram::new(periph.frctl));
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
     let p2 = Batch::new(periph.p2)
@@ -58,12 +63,16 @@ fn main() -> ! {
     wdt.set_aclk(&aclk)
         .enable_interrupts()
         .set_interval_and_start(WdtClkPeriods::_32k);
+    // P2IES = 0 sets P2IFG on a rising edge, 1 on a falling edge (SLAU445I 8.2.6.2, p. 316); P2IE lets the
+    // flag request the interrupt (SLAU445I 8.2.6.3, p. 316)
     pin.select_rising_edge_trigger().enable_interrupts();
     button.select_falling_edge_trigger();
 
     unsafe { enable_int() };
 
     loop {
+        // Poll the button's P2IFG; software can also set a PxIFG flag to request the interrupt
+        // (SLAU445I 8.2.6, p. 315: "a software-initiated interrupt")
         block!(button.wait_for_ifg()).ok();
         pin.set_ifg();
     }
@@ -80,6 +89,7 @@ fn PORT2() {
             return;
         };
 
+        // Reading P2IV clears the highest-priority pending flag (SLAU445I 8.2.6, p. 315)
         if let GpioVector::Pin6Isr = p2iv.get_interrupt_vector() {
             red_led.toggle().ok();
         }

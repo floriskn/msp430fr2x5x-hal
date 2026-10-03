@@ -7,14 +7,16 @@ use msp430_hal::{gpio::Batch, pmm::Pmm};
 use panic_msp430 as _;
 
 // The LED on P1.0 should flash rapidly
-// No board document covers the LED: there is none for the MSP430FR25x2.
+// No board document covers the LED: there is none for the MSP430FR25x2. P1.0 is a GPIO output,
+// P1SELx = 00 and P1DIR = 1 (SLASEE4C Table 6-15, p. 58).
 
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
 
-    // DON'T pause the watchdog
+    // DON'T pause the watchdog: it runs from every PUC until halted (SLAU445I 12.2.2, p. 363)
     //let _wdt = Wdt::constrain(periph.WDT_A);
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
     let mut red_led = Batch::new(periph.p1).split(&pmm).pin0.to_output();

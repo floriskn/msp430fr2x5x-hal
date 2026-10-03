@@ -133,11 +133,12 @@ pub enum SampleTime {
     _256 = 0b1000,
     /// Sample for 384 ADCCLK cycles
     _384 = 0b1001,
-    /// Sample for 512 ADCCLK cycles
+    /// Sample for 512 ADCCLK cycles (ADCSHTx = 1010b: SLAU445I Table 21-3, p. 561)
     _512 = 0b1010,
-    /// Sample for 768 ADCCLK cycles
+    /// Sample for 768 ADCCLK cycles (ADCSHTx = 1011b: SLAU445I Table 21-3, p. 561)
     _768 = 0b1011,
-    /// Sample for 1024 ADCCLK cycles
+    /// Sample for 1024 ADCCLK cycles (ADCSHTx = 1100b; 1101b to 1111b give 1024 cycles too: SLAU445I
+    /// Table 21-3, p. 561)
     _1024 = 0b1100,
 }
 

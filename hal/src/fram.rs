@@ -92,7 +92,8 @@ impl Fram {
             .nwaits().bits(wait as u8) }));
     }
 
-    /// Select what happens when the FRAM detects a bit error it can't correct.
+    /// Select what happens when the FRAM detects a bit error it can't correct (UBDRSTEN, UBDIE:
+    /// SLAU445I Table 6-3, p. 307).
     #[inline]
     pub fn set_uncorrectable_bit_error_action(&mut self, action: UncorrectableBitError) {
         self.unlocked(|fram| {

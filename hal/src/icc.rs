@@ -51,51 +51,51 @@ impl Priority {
 /// Table 6-13, p. 71 to p. 72)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IccSource {
-    /// Port 4 (`PORT4`)
+    /// Port 4 (`PORT4`; ILSR0, SLASEC4D Table 6-13, p. 71)
     Port4 = 0,
-    /// Port 3 (`PORT3`)
+    /// Port 3 (`PORT3`; ILSR1, SLASEC4D Table 6-13, p. 71)
     Port3 = 1,
-    /// Port 2 (`PORT2`)
+    /// Port 2 (`PORT2`; ILSR2, SLASEC4D Table 6-13, p. 71)
     Port2 = 2,
-    /// Port 1 (`PORT1`)
+    /// Port 1 (`PORT1`; ILSR3, SLASEC4D Table 6-13, p. 71)
     Port1 = 3,
-    /// The DACs of SAC1 and SAC3 (`SAC1_SAC3`), MSP430FR235x only
+    /// The DACs of SAC1 and SAC3 (`SAC1_SAC3`), MSP430FR235x only (ILSR4, SLASEC4D Table 6-13, note 1, p. 71)
     #[cfg(feature = "sac")]
     Sac1Sac3 = 4,
-    /// The DACs of SAC0 and SAC2 (`SAC0_SAC2`), MSP430FR235x only
+    /// The DACs of SAC0 and SAC2 (`SAC0_SAC2`), MSP430FR235x only (ILSR5, SLASEC4D Table 6-13, note 1, p. 71)
     #[cfg(feature = "sac")]
     Sac0Sac2 = 5,
-    /// eCOMP0 and eCOMP1 (`ECOMP0_ECOMP1`)
+    /// eCOMP0 and eCOMP1 (`ECOMP0_ECOMP1`; ILSR6, SLASEC4D Table 6-13, p. 71)
     EComp = 6,
-    /// The ADC (`ADC`)
+    /// The ADC (`ADC`; ILSR7, SLASEC4D Table 6-13, p. 71)
     Adc = 7,
-    /// eUSCI_B1 (`EUSCI_B1`)
+    /// eUSCI_B1 (`EUSCI_B1`; ILSR8, SLASEC4D Table 6-13, p. 71)
     EUsciB1 = 8,
-    /// eUSCI_B0 (`EUSCI_B0`)
+    /// eUSCI_B0 (`EUSCI_B0`; ILSR9, SLASEC4D Table 6-13, p. 71)
     EUsciB0 = 9,
-    /// eUSCI_A1 (`EUSCI_A1`)
+    /// eUSCI_A1 (`EUSCI_A1`; ILSR10, SLASEC4D Table 6-13, p. 71)
     EUsciA1 = 10,
-    /// eUSCI_A0 (`EUSCI_A0`)
+    /// eUSCI_A0 (`EUSCI_A0`; ILSR11, SLASEC4D Table 6-13, p. 71)
     EUsciA0 = 11,
-    /// The watchdog in interval mode (`WDT`)
+    /// The watchdog in interval mode (`WDT`; ILSR12, SLASEC4D Table 6-13, p. 71)
     Watchdog = 12,
-    /// The RTC (`RTC`)
+    /// The RTC (`RTC`; ILSR13, SLASEC4D Table 6-13, p. 71)
     Rtc = 13,
-    /// TB3's CCR1 to CCR6 and overflow (`TIMER3_B1`)
+    /// TB3's CCR1 to CCR6 and overflow (`TIMER3_B1`; ILSR14, SLASEC4D Table 6-13, p. 71)
     Timer3B1 = 14,
-    /// TB3's CCR0 (`TIMER3_B0`)
+    /// TB3's CCR0 (`TIMER3_B0`; ILSR15, SLASEC4D Table 6-13, p. 71)
     Timer3B0 = 15,
-    /// TB2's CCR1, CCR2 and overflow (`TIMER2_B1`)
+    /// TB2's CCR1, CCR2 and overflow (`TIMER2_B1`; ILSR16, SLASEC4D Table 6-13, p. 72)
     Timer2B1 = 16,
-    /// TB2's CCR0 (`TIMER2_B0`)
+    /// TB2's CCR0 (`TIMER2_B0`; ILSR17, SLASEC4D Table 6-13, p. 72)
     Timer2B0 = 17,
-    /// TB1's CCR1, CCR2 and overflow (`TIMER1_B1`)
+    /// TB1's CCR1, CCR2 and overflow (`TIMER1_B1`; ILSR18, SLASEC4D Table 6-13, p. 72)
     Timer1B1 = 18,
-    /// TB1's CCR0 (`TIMER1_B0`)
+    /// TB1's CCR0 (`TIMER1_B0`; ILSR19, SLASEC4D Table 6-13, p. 72)
     Timer1B0 = 19,
-    /// TB0's CCR1, CCR2 and overflow (`TIMER0_B1`)
+    /// TB0's CCR1, CCR2 and overflow (`TIMER0_B1`; ILSR20, SLASEC4D Table 6-13, p. 72)
     Timer0B1 = 20,
-    /// TB0's CCR0 (`TIMER0_B0`)
+    /// TB0's CCR0 (`TIMER0_B0`; ILSR21, SLASEC4D Table 6-13, p. 72)
     Timer0B0 = 21,
 }
 
@@ -103,7 +103,7 @@ pub enum IccSource {
 const ICCEN: u16 = 1 << 7;
 const VSEFLG: u16 = 1 << 5;
 
-/// The Interrupt Compare Controller
+/// The Interrupt Compare Controller (SLAU445I chapter 5, p. 280; its registers: SLAU445I Table 5-1, p. 292)
 pub struct Icc(_pac::Icc);
 
 impl Icc {
@@ -131,7 +131,7 @@ impl Icc {
         });
     }
 
-    /// The priority of an interrupt source.
+    /// The priority of an interrupt source (its ILSRx field, SLAU445I Table 5-4, p. 294).
     #[inline]
     pub fn priority(&self, source: IccSource) -> Priority {
         let (reg, shift) = self.ilsr_ptr(source);

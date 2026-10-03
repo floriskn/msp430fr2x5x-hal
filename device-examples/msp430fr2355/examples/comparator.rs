@@ -42,6 +42,8 @@ fn main() -> ! {
         ).no_output_pin();
 
     // If P1.1 is less than 1.2V then LED turns on
+    // (CPOUT is high when V+ is higher than V-: SLAU445I 18.2.1, p. 505; LED1 on P1.0: SLAU680 Figure 18,
+    // p. 26)
     loop {
         led.set_state(comparator.value().into()).ok();
     }

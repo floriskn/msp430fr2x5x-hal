@@ -96,7 +96,8 @@ mod ehal1 {
 
     impl DelayNs for SysDelay {
         /// Pauses execution for at least `ns` nanoseconds, rounded up to whole microseconds. The call
-        /// itself takes about 60 MCLK cycles, see the [module documentation](crate::delay).
+        /// itself takes about 60 MCLK cycles (measured on an MSP430FR2476), see the
+        /// [module documentation](crate::delay).
         #[inline]
         fn delay_ns(&mut self, ns: u32) {
             if ns <= 1000 {
@@ -107,11 +108,12 @@ mod ehal1 {
         }
 
         /// Pauses execution for at least `us` microseconds. The call itself takes about 60 MCLK
-        /// cycles, see the [module documentation](crate::delay).
+        /// cycles (measured on an MSP430FR2476), see the [module documentation](crate::delay).
         #[inline]
         fn delay_us(&mut self, us: u32) { self.us(us) }
 
-        /// Pauses execution for at least `ms` milliseconds.
+        /// Pauses execution for at least `ms` milliseconds (3 MCLK cycles per loop iteration, see
+        /// `CYCLES_PER_ITER`: SLAU445I 4.5.1.5, p. 154 to p. 155).
         #[inline]
         fn delay_ms(&mut self, ms: u32) { self.ms(ms) }
     }
@@ -134,8 +136,8 @@ mod ehal02 {
             }
 
             impl DelayUs<$typ> for SysDelay {
-                /// The call itself takes about 60 MCLK cycles, see the
-                /// [module documentation](crate::delay).
+                /// The call itself takes about 60 MCLK cycles (measured on an MSP430FR2476), see
+                /// the [module documentation](crate::delay).
                 #[inline]
                 fn delay_us(&mut self, us: $typ) {
                     if us > 0 {

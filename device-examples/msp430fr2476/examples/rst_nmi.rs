@@ -31,6 +31,7 @@ static PRESSED: AtomicBool = AtomicBool::new(false);
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -41,6 +42,9 @@ fn main() -> ! {
 
     // S3 pulls the pin low, so a press is a falling edge
     // (S3 connects RST to GND, R11 pulls it up: SLAU802 Figure 19, p. 25)
+    // SYSNMI = 1 makes the pin an NMI input, SYSNMIIES = 1 selects the falling edge, and SYSRSTUP = 1
+    // with SYSRSTRE = 1 enables the pullup (SLAU445I Table 1-11, p. 64). NMIIE enables the interrupt
+    // (SLAU445I Table 1-9, p. 62).
     let sys = SysParts::new(periph.sfr);
     let mut rst = sys.rst_nmi_pin.into_nmi(NmiEdge::Falling, RstPull::Up);
     rst.enable_interrupts();
@@ -53,6 +57,8 @@ fn main() -> ! {
     }
 }
 
+// The user NMI vector: the NMI pin (NMIIFG) and oscillator faults (OFIFG) (FFFAh: SLASEO7C Table 9-2,
+// p. 46; NMIIFG: SLAU445I Table 1-10, p. 63)
 #[interrupt]
 fn UNMI() {
     if sys::take_nmi_pin_interrupt() {

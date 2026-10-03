@@ -10,6 +10,9 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
+/// LSB first, 8 data bits and two stop bits (UCMSB, UC7BIT, UCSPB), the given parity (UCPEN, UCPAR)
+/// and loopback (UCLISTEN), clocked by SMCLK (UCSSEL = 10b) (SLAU445I Table 22-8, p. 593; SLAU445I
+/// 22.4.5, p. 596; SLASEO7C Table 9-8, p. 50)
 fn setup_uart<USCI, M>(
     usci: USCI,
     tx: USCI::TxPin,
@@ -47,9 +50,12 @@ where
 #[entry]
 fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
     let mut fram = Fram::new(periph.frctl);
+    // MCLK from DCOCLKDIV in the 4 MHz range, SMCLK = MCLK / 2, ACLK from REFO (SELMS = 000b, SELA =
+    // 01b: SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
     let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_4MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_2)

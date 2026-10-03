@@ -9,8 +9,12 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     let periph = msp430fr2433::Peripherals::take().unwrap();
+    // Hold the watchdog (WDTHOLD, SLAU445I Table 12-2, p. 366: after a PUC the WDT runs, SLAU445I 12.2.2,
+    // p. 363)
     let _wdt = Wdt::constrain(periph.watchdog_timer);
 
+    // Pmm::new clears LOCKLPM5 (SLAU445I Table 2-7, p. 97). SLASE59F 6.10.3, p. 46 sets the ports up before
+    // that; clearing it first leaves the pins inputs until they are set up (SLAU445I 8.3.1, p. 316).
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
     let mut led = p1.pin0.to_output(); // Red LED1 (SLAU739 Figure 18, p. 23)

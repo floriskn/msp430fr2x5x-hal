@@ -52,6 +52,7 @@ fn main() -> ! {
     let periph = msp430fr247x::Peripherals::take().unwrap();
 
     let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
@@ -66,9 +67,13 @@ fn main() -> ! {
     let _aclk_out = p2.pin2.to_output().to_alternate2();
     let xin = p2.pin1.to_alternate1();
 
+    // XT1 in bypass mode (XT1BYPASS = 1: SLAU445I Table 3-10, p. 120), optionally with the start
+    // counter (ENSTFCNT1 = 1: SLAU445I Table 3-11, p. 121)
     let xt1 = Xt1Config::bypass(XT1_FREQ_HZ, xin);
     let xt1 = if START_COUNTER { xt1.enable_start_counter() } else { xt1 };
 
+    // MCLK = SMCLK = DCOCLKDIV (SELMS = 000b) and ACLK from XT1CLK (SELA = 00b) (SLAU445I Table 3-8,
+    // p. 117)
     let (_smclk, _aclk, _xt1clk, _delay) = ClockConfig::new(periph.cs)
         .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
         .smclk_on(SmclkDiv::_1)

@@ -40,6 +40,10 @@ pub use crate::timer::{
 
 // Sealed by CapCmp
 /// Associates PWM pins with specific GPIO pins, for pin mapping `M`
+///
+/// The pins are the timer outputs TAx.n and TBx.n in the device's timer signal connection tables (SLASEC4D
+/// Tables 6-16 to 6-19, p. 73 to p. 75; SLASE59F Tables 6-11 and 6-12, p. 50 to p. 51; SLASEO7C Tables 9-12
+/// to 9-16, p. 55 to p. 60; SLASEE4C Figure 6-2, p. 54).
 pub trait PwmPeriph<C, M: PinMap = DefaultMapping>: CapCmp<C> + CapCmp<CCR0> + TimerBase {
     /// GPIO type, in the alternate function that outputs the PWM signal
     type Gpio: AlternatePin;
@@ -87,12 +91,20 @@ fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
 }
 
 /// Collection of uninitialized PWM pins derived from timer peripheral with 3 capture-compare registers
+///
+/// The timers with 3 capture/compare registers, by device: TB0 to TB2 on the MSP430FR2x5x (SLASEC4D
+/// Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74), TA0 and TA1 on the
+/// MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), TA0 to TA3 on the MSP430FR247x
+/// (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58), and TA0 and TA1
+/// on the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54).
 pub struct PwmParts3<T: CapCmpTimer3<M>, M: PinMap = DefaultMapping> {
     /// Square wave output of capture-compare register 0, see [`PeriodOutputUninit`]
     pub period_output: PeriodOutputUninit<T, M>,
-    /// PWM pin 1 (derived from capture-compare register 1)
+    /// PWM pin 1 (derived from capture-compare register 1: SLAU445I Table 13-7, p. 388; SLAU445I
+    /// Table 14-9, p. 413)
     pub pwm1: PwmUninit<T, CCR1, M>,
-    /// PWM pin 2 (derived from capture-compare register 2)
+    /// PWM pin 2 (derived from capture-compare register 2: SLAU445I Table 13-7, p. 388; SLAU445I
+    /// Table 14-9, p. 413)
     pub pwm2: PwmUninit<T, CCR2, M>,
     _pin_map: PhantomData<M>,
 }
@@ -105,7 +117,8 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Edge);
         setup_channel::<T, CCR2>(&timer, Alignment::Edge);
-        // Start the timer to run PWM
+        // Start the timer to run PWM (up mode, MC = 01b: SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1,
+        // p. 394)
         timer.upmode();
         Self::parts()
     }
@@ -120,6 +133,7 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Center);
         setup_channel::<T, CCR2>(&timer, Alignment::Center);
+        // Up/down mode, MC = 11b (SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394)
         timer.updown_mode();
         Self::parts()
     }
@@ -135,20 +149,23 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
 }
 
 /// Collection of uninitialized PWM pins derived from timer peripheral with 7 capture-compare registers
+///
+/// The timers with 7 capture/compare registers are TB3 on the MSP430FR2x5x (SLASEC4D Table 6-19, p. 75)
+/// and TB0 on the MSP430FR247x (SLASEO7C Table 9-15, p. 59). Both are Timer_B.
 pub struct PwmParts7<T: CapCmpTimer7<M>, M: PinMap = DefaultMapping> {
     /// Square wave output of capture-compare register 0, see [`PeriodOutputUninit`]
     pub period_output: PeriodOutputUninit<T, M>,
-    /// PWM pin 1 (derived from capture-compare register 1)
+    /// PWM pin 1 (derived from capture-compare register 1, TBxCCR1: SLAU445I Table 14-9, p. 413)
     pub pwm1: PwmUninit<T, CCR1, M>,
-    /// PWM pin 2 (derived from capture-compare register 2)
+    /// PWM pin 2 (derived from capture-compare register 2, TBxCCR2: SLAU445I Table 14-9, p. 413)
     pub pwm2: PwmUninit<T, CCR2, M>,
-    /// PWM pin 3 (derived from capture-compare register 3)
+    /// PWM pin 3 (derived from capture-compare register 3, TBxCCR3: SLAU445I Table 14-9, p. 413)
     pub pwm3: PwmUninit<T, CCR3, M>,
-    /// PWM pin 4 (derived from capture-compare register 4)
+    /// PWM pin 4 (derived from capture-compare register 4, TBxCCR4: SLAU445I Table 14-9, p. 413)
     pub pwm4: PwmUninit<T, CCR4, M>,
-    /// PWM pin 5 (derived from capture-compare register 5)
+    /// PWM pin 5 (derived from capture-compare register 5, TBxCCR5: SLAU445I Table 14-9, p. 413)
     pub pwm5: PwmUninit<T, CCR5, M>,
-    /// PWM pin 6 (derived from capture-compare register 6)
+    /// PWM pin 6 (derived from capture-compare register 6, TBxCCR6: SLAU445I Table 14-9, p. 413)
     pub pwm6: PwmUninit<T, CCR6, M>,
     _pin_map: PhantomData<M>,
 }
@@ -160,6 +177,7 @@ impl<T: CapCmpTimer7<M>, M: PinMap> PwmParts7<T, M> {
     pub fn new(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         Self::setup_channels(&timer, Alignment::Edge);
+        // Up mode, MC = 01b (SLAU445I Table 14-1, p. 394)
         timer.upmode();
         Self::parts()
     }
@@ -169,6 +187,7 @@ impl<T: CapCmpTimer7<M>, M: PinMap> PwmParts7<T, M> {
     pub fn new_center_aligned(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         Self::setup_channels(&timer, Alignment::Center);
+        // Up/down mode, MC = 11b (SLAU445I Table 14-1, p. 394)
         timer.updown_mode();
         Self::parts()
     }
@@ -224,12 +243,14 @@ impl<T: PwmPeriph<CCR0, M>, M: PinMap> PeriodOutput<T, M> {
     #[inline]
     pub fn disable(&mut self) { self.pin.set_function_gpio(); }
 
-    /// Connect the pin to the timer again.
+    /// Connect the pin to the timer again (PxSEL: SLAU445I 8.2.5, p. 314).
     #[inline]
     pub fn enable(&mut self) { self.pin.set_function_from_type(); }
 }
 
-/// The active level of a PWM output: the level it has for the duty cycle
+/// The active level of a PWM output: the level it has for the duty cycle. Active high uses the output modes
+/// reset/set or toggle/reset, active low set/reset or toggle/set (SLAU445I Table 13-2, p. 376; SLAU445I
+/// Table 14-4, p. 401).
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Polarity {
     /// High for the duty cycle, as set up by `PwmParts`
@@ -257,7 +278,9 @@ impl<T, C, M> PwmUninit<T, C, M> {
 
 impl<T: CapCmp<CCR2>, M> PwmUninit<T, CCR2, M> {
     /// Use this PWM output to clock a cascaded timer instead of a pin, see
-    /// [`TimerConfig::cascade`]. The cascaded timer then counts PWM periods.
+    /// [`TimerConfig::cascade`]. The cascaded timer then counts PWM periods. The CCR2 output drives the
+    /// cascaded timer's INCLK (SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14,
+    /// p. 58; SLASEE4C Figure 6-2, p. 54).
     #[inline]
     pub fn into_cascade_output(self) -> CascadeOutput<T> { CascadeOutput::new() }
 }
@@ -297,7 +320,9 @@ impl<T: CapCmp<CCR2> + crate::ir::IrInputTimer, M> PwmUninit<T, CCR2, M> {
 pub struct AdcTriggerOutput<T>(PhantomData<T>);
 
 impl<T: CapCmp<CCR1>> AdcTriggerOutput<T> {
-    /// Change how many timer cycles the output stays high at the start of each period.
+    /// Change how many timer cycles the output stays high at the start of each period. It writes CCR1
+    /// (TAxCCR1/TBxCCR1: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) while the timer runs,
+    /// as [`Pwm`] duty cycle changes do.
     #[inline]
     pub fn set_high_cycles(&mut self, high_cycles: u16) {
         let timer = unsafe { T::steal() };
@@ -332,7 +357,8 @@ pub struct Pwm<T: PwmPeriph<C, M>, C, M: PinMap = DefaultMapping> {
 impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
     /// The duty cycle in timer clock cycles: the output is high for this many cycles of each period, or
     /// twice as many with center-aligned PWM, where the timer passes each count twice per period (SLAU445I
-    /// 13.2.3.4, p. 373; SLAU445I Figure 13-14, p. 379).
+    /// 13.2.3.4, p. 373; SLAU445I Figure 13-14, p. 379). It reads CCRn (TAxCCRn/TBxCCRn: SLAU445I
+    /// Table 13-7, p. 388; SLAU445I Table 14-9, p. 413).
     #[inline]
     pub fn duty(&self) -> u16 {
         let timer = unsafe { T::steal() };
@@ -345,7 +371,7 @@ impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
     #[inline]
     pub fn disable(&mut self) { self.pin.set_function_gpio(); }
 
-    /// Connect the pin to the timer again.
+    /// Connect the pin to the timer again (PxSEL: SLAU445I 8.2.5, p. 314).
     #[inline]
     pub fn enable(&mut self) { self.pin.set_function_from_type(); }
 
@@ -385,6 +411,13 @@ mod ehal1 {
         /// as reported by `max_duty_cycle`.
         ///
         /// As the error type is `Infallible` this can be safely unwrapped.
+        ///
+        /// It writes CCRn (TAxCCRn/TBxCCRn: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) while
+        /// the timer runs. For Timer_A the user's guide says the timer "should be stopped" before new data is
+        /// written to TAxCCRn in compare mode (SLAU445I 13.2.4.2, p. 376); a Timer_B buffers the value in its
+        /// compare latch (SLAU445I 14.2.4.2.1, p. 400), but loads it at once in up mode (SLAZ695J TB25,
+        /// p. 11; SLAZ726B TB25, p. 8). The code doesn't stop the timer, so that the PWM output keeps
+        /// running.
         #[inline]
         fn set_duty_cycle(&mut self, duty: u16) -> Result<(), Self::Error> {
             let timer = unsafe { T::steal() };
@@ -403,6 +436,8 @@ mod ehal02 {
         /// Number of cycles
         type Duty = u16;
 
+        /// Writes CCRn while the timer runs, as `set_duty_cycle` does (TAxCCRn/TBxCCRn: SLAU445I Table 13-7,
+        /// p. 388; SLAU445I Table 14-9, p. 413).
         #[inline]
         fn set_duty(&mut self, duty: Self::Duty) {
             let timer = unsafe { T::steal() };

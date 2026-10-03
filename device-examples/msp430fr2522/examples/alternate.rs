@@ -10,8 +10,10 @@ use panic_msp430 as _;
 #[entry]
 fn main() -> ! {
     let periph = msp430fr25x2::Peripherals::take().unwrap();
+    // Halt the watchdog, which runs from every PUC (SLAU445I 12.2.2, p. 363)
     let _wdt = Wdt::constrain(periph.wdt_a);
 
+    // Pmm::new clears LOCKLPM5, so the pins take on their configuration (SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
 
