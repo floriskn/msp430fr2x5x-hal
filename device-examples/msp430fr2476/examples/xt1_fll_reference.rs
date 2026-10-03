@@ -30,7 +30,7 @@
 use embedded_hal::digital::*;
 use msp430_rt::entry;
 use msp430_hal::{
-    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv, Xt1Config},
+    clock::{fll_status, ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv, Xt1Config},
     fram::Fram,
     gpio::Batch,
     pmm::Pmm,
@@ -84,16 +84,10 @@ fn main() -> ! {
         // healthy again (SLAU445I 3.2.13, p. 110)
         xt1clk.clear_fault();
         led1.set_state(xt1clk.is_faulted().into()).ok();
-        led2_blue.set_state(fll_unlocked().into()).ok();
+        // The FLL reports the DCO as too fast, too slow or out of range (CSCTL7.FLLUNLOCK: SLAU445I
+        // Table 3-11, p. 121)
+        led2_blue.set_state((!fll_status().is_locked()).into()).ok();
     }
-}
-
-/// Whether the FLL currently reports the DCO as too fast, too slow or out of range
-/// (CSCTL7.FLLUNLOCK: SLAU445I Table 3-11, p. 121). The HAL has no API for this, so it goes
-/// through the PAC.
-fn fll_unlocked() -> bool {
-    let cs = unsafe { &*msp430fr247x::Cs::ptr() };
-    !cs.csctl7().read().fllunlock().is_fllunlock_0()
 }
 
 // The compiler will emit calls to the abort() compiler intrinsic if debug assertions are

@@ -43,7 +43,7 @@ use embedded_io::Write;
 use msp430_rt::entry;
 use msp430_hal::{
     capture::{CapTrigger, Capture, CaptureParts3, OverCapture, TimerConfig, CCR1},
-    clock::{ClockConfig, MclkDiv, SmclkDiv, Xt1Config},
+    clock::{fll_status, ClockConfig, MclkDiv, SmclkDiv, Xt1Config},
     delay::SysDelay,
     fram::Fram,
     gpio::Batch,
@@ -198,7 +198,8 @@ fn main() -> ! {
     // The FLL keeps MCLK within about 1 % of its target (SLASEO7C 8.12.3.2, p. 28: fDCO,FLL is within
     // ±1.0 % at 25°C with REFO as the reference, ±3.0 % from –40°C to 105°C)
     let ratio_ok = mclk_cycles.abs_diff(expected) * 100 <= expected;
-    let locked = fll_locked();
+    // CSCTL7.FLLUNLOCK = 00b (SLAU445I Table 3-11, p. 121)
+    let locked = fll_status().is_locked();
     print(&mut tx, "MCLK / ACLK measured: ");
     print_num(&mut tx, mclk_cycles * 100 / (8 * 64), 2);
     print(&mut tx, if locked { ", FLL locked" } else { ", FLL NOT locked" });
@@ -303,13 +304,6 @@ where
 /// MCLK cycles in `ns` nanoseconds, rounded up
 fn ns_to_cycles(ns: u32, mclk_hz: u32) -> u32 {
     (ns as u64 * mclk_hz as u64).div_ceil(1_000_000_000) as u32
-}
-
-/// Whether the FLL reports the DCO as locked (CSCTL7.FLLUNLOCK = 00b: SLAU445I Table 3-11, p. 121).
-/// The HAL has no API for this, so it goes through the PAC.
-fn fll_locked() -> bool {
-    let cs = unsafe { &*msp430fr247x::Cs::ptr() };
-    cs.csctl7().read().fllunlock().is_fllunlock_0()
 }
 
 fn pass_fail(ok: bool) -> &'static str {

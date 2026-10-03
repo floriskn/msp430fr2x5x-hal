@@ -1780,6 +1780,42 @@ impl<RANGE> Xt1clk<RANGE> {
     }
 }
 
+/// The FLL's lock status, as CSCTL7.FLLUNLOCK reports it (SLAU445I Table 3-11, p. 121), see [`fll_status`]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FllStatus {
+    /// The DCO runs at the frequency the FLL locks it to (FLLUNLOCK = 00b)
+    Locked,
+    /// The DCO is too slow (01b)
+    TooSlow,
+    /// The DCO is too fast (10b). With [`ClockConfig::reset_on_fll_unlock`] this resets the device.
+    TooFast,
+    /// The DCO is out of its range (11b, "DCOERROR"). FLLUNLOCK also reads 11b "as long as the DCOFFG flag
+    /// is set" (SLAU445I Table 3-11, p. 121).
+    OutOfRange,
+}
+
+impl FllStatus {
+    /// Whether the FLL is locked
+    #[inline]
+    pub fn is_locked(self) -> bool { self == FllStatus::Locked }
+}
+
+/// The FLL's current lock status (CSCTL7.FLLUNLOCK, SLAU445I Table 3-11, p. 121), for example to watch the
+/// FLL follow an external XT1 reference. It's only meaningful while the FLL runs: "When the FLL is enabled,
+/// the FLLUNLOCK bits reflect the DCO status if it is locked, too slow, too fast, or out of DCO range"
+/// (SLAU445I 3.2.9, p. 105).
+#[inline]
+pub fn fll_status() -> FllStatus {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    match cs.csctl7().read().fllunlock().bits() {
+        0b00 => FllStatus::Locked,
+        0b01 => FllStatus::TooSlow,
+        0b10 => FllStatus::TooFast,
+        _ => FllStatus::OutOfRange,
+    }
+}
+
 /// For the `UNMI` interrupt handler: whether an oscillator fault requested the interrupt, see
 /// [`Xt1clk::enable_fault_interrupt`].
 ///

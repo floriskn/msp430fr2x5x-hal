@@ -59,22 +59,22 @@ fn main() -> ! {
 
     let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
 
-    // "Make sure there are no floating inputs/outputs" (SLAU802 2.4, p. 11): every pin gets its pulldown,
-    // except S1 (P4.0) and S2 (P2.3), which external resistors pull up (R9, R10: SLAU802 Figure 19,
-    // p. 25), so they get the pullup instead. A pulldown would draw current through those resistors.
-    // (Pullup and pulldown: PxDIR = 0, PxREN = 1, PxOUT = 1 or 0: SLAU445I Table 8-1, p. 313)
-    let p1 = Batch::new(periph.p1).pulldown_all().split(&pmm);
+    // "Make sure there are no floating inputs/outputs" (SLAU802 2.4, p. 11): S1 (P4.0) and S2 (P2.3) get
+    // their pullup, as external resistors pull them up (R9, R10: SLAU802 Figure 19, p. 25) and a pulldown
+    // would draw current through those, and `pulldown_unused` gives every other pin its pulldown (SLAU445I
+    // 8.3.2, p. 317; pullup and pulldown: PxDIR = 0, PxREN = 1, PxOUT = 1 or 0: SLAU445I Table 8-1, p. 313)
+    let p1 = Batch::new(periph.p1).pulldown_unused().split(&pmm);
     let p2 = Batch::new(periph.p2)
-        .pulldown_all()
         .config_pin3(|p| p.pullup())
+        .pulldown_unused()
         .split(&pmm);
-    let _p3 = Batch::new(periph.p3).pulldown_all().split(&pmm);
+    let _p3 = Batch::new(periph.p3).pulldown_unused().split(&pmm);
     let p4 = Batch::new(periph.p4)
-        .pulldown_all()
         .config_pin0(|p| p.pullup())
+        .pulldown_unused()
         .split(&pmm);
-    let p5 = Batch::new(periph.p5).pulldown_all().split(&pmm);
-    let _p6 = Batch::new(periph.p6).pulldown_all().split(&pmm);
+    let p5 = Batch::new(periph.p5).pulldown_unused().split(&pmm);
+    let _p6 = Batch::new(periph.p6).pulldown_unused().split(&pmm);
 
     // LED1 is P1.0 and the red part of LED2 is P5.1 (SLAU802 Figure 19, p. 25)
     let mut led1 = p1.pin0.to_output_low();

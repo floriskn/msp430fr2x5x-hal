@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add `Capture::interrupt_capture()` for CCR0, whose capture flag is cleared when its own interrupt is serviced. Captures arriving while a capture is read are now reported as overcaptures instead of being lost.
 - GPIO batches now turn pin interrupts off while reconfiguring a port, and switch pins whose two function select bits both change through PxSELC. Pins a device doesn't have start out `Unavailable` and can't be used.
 - Add `to_output_low()` and `to_output_high()` for GPIO pins, since PxOUT is undefined after a reset.
+- Add `Batch::pulldown_unused()`, which gives every pin that is still a floating input its pulldown and keeps the configuration of the others, to terminate unused pins as the user's guide recommends. `Batch::pulldown_all()` and `pullup_all()` no longer turn the slots of pins a device doesn't have into usable pins.
+- Add `clock::fll_status()`, which reports whether the FLL is locked or the DCO is too slow, too fast or out of range.
 - PWM `max_duty_cycle()` and `get_max_duty()` now return the period (CCR0 + 1), so the maximum duty cycle is 100 %.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - The PMM is unlocked and locked again around each register write, and `enable_internal_reference()` waits until the reference has settled.

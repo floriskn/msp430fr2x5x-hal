@@ -288,6 +288,66 @@ impl<P: IntrPeriph> InterruptOperations for P {
     fn maybe_write_pxie(&self, b: u8) { self.pxie_wr(b); }
 }
 
+/// What the terminating methods of [`Batch`] make of a pin's typestate: [`pulldown_all`](Batch::pulldown_all),
+/// [`pullup_all`](Batch::pullup_all) and [`pulldown_unused`](Batch::pulldown_unused). The slots of pins the
+/// device doesn't have stay [`Unavailable`].
+#[doc(hidden)]
+pub trait Termination {
+    /// After `pulldown_all`
+    type Pulldown;
+    /// After `pullup_all`
+    type Pullup;
+    /// After `pulldown_unused`: floating inputs get their pulldown, everything else stays
+    type UnusedPulldown;
+}
+
+impl Termination for Input<Floating> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Pd;
+}
+impl Termination for Input<Pulldown> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Pd;
+}
+impl Termination for Input<Pullup> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Pu;
+}
+impl Termination for Output {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Output;
+}
+impl<DIR> Termination for Alternate1<DIR> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Alternate1<DIR>;
+}
+impl<DIR> Termination for Alternate2<DIR> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Alternate2<DIR>;
+}
+impl<DIR> Termination for Alternate3<DIR> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = Alternate3<DIR>;
+}
+#[cfg(feature = "adcpctl")]
+impl<DIR> Termination for AdcMode<DIR> {
+    type Pulldown = Pd;
+    type Pullup = Pu;
+    type UnusedPulldown = AdcMode<DIR>;
+}
+impl Termination for Unavailable {
+    type Pulldown = Unavailable;
+    type Pullup = Unavailable;
+    type UnusedPulldown = Unavailable;
+}
+
 impl<P: PortNum + PortPins>
     Batch<P, P::Init0, P::Init1, P::Init2, P::Init3, P::Init4, P::Init5, P::Init6, P::Init7>
 {
@@ -581,37 +641,66 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         }
     }
 
-    /// Set all pins to inputs with pulldowns (PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I Table 8-1,
-    /// p. 313). Leaving unused pins as floating massively increases power
-    /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
+    /// Set all pins the device has to inputs with pulldowns (PxDIR = 0, PxREN = 1, PxOUT = 0: SLAU445I
+    /// Table 8-1, p. 313), whatever they were configured as. Leaving unused pins as floating massively
+    /// increases power usage (relatively speaking) (SLAU445I 8.3.2, p. 317). To keep the pins you have
+    /// configured, use [`pulldown_unused`](Batch::pulldown_unused) instead.
     #[inline(always)]
-    pub fn pulldown_all(self) -> Batch<PORT, Pd, Pd, Pd, Pd, Pd, Pd, Pd, Pd> {
-        Batch {
-            pin0: make_proxy!(),
-            pin1: make_proxy!(),
-            pin2: make_proxy!(),
-            pin3: make_proxy!(),
-            pin4: make_proxy!(),
-            pin5: make_proxy!(),
-            pin6: make_proxy!(),
-            pin7: make_proxy!(),
-        }
+    pub fn pulldown_all(
+        self,
+    ) -> Batch<PORT, DIR0::Pulldown, DIR1::Pulldown, DIR2::Pulldown, DIR3::Pulldown, DIR4::Pulldown, DIR5::Pulldown, DIR6::Pulldown, DIR7::Pulldown>
+    where
+        DIR0: Termination, DIR1: Termination, DIR2: Termination, DIR3: Termination,
+        DIR4: Termination, DIR5: Termination, DIR6: Termination, DIR7: Termination,
+    {
+        Batch::create()
     }
 
-    /// Set all pins to inputs with pullups (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I Table 8-1, p. 313).
-    /// Leaving unused pins as floating massively increases power
-    /// usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
+    /// Set all pins the device has to inputs with pullups (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I
+    /// Table 8-1, p. 313), whatever they were configured as. Leaving unused pins as floating massively
+    /// increases power usage (relatively speaking) (SLAU445I 8.3.2, p. 317).
     #[inline(always)]
-    pub fn pullup_all(self) -> Batch<PORT, Pu, Pu, Pu, Pu, Pu, Pu, Pu, Pu> {
-        Batch {
-            pin0: make_proxy!(),
-            pin1: make_proxy!(),
-            pin2: make_proxy!(),
-            pin3: make_proxy!(),
-            pin4: make_proxy!(),
-            pin5: make_proxy!(),
-            pin6: make_proxy!(),
-            pin7: make_proxy!(),
-        }
+    pub fn pullup_all(
+        self,
+    ) -> Batch<PORT, DIR0::Pullup, DIR1::Pullup, DIR2::Pullup, DIR3::Pullup, DIR4::Pullup, DIR5::Pullup, DIR6::Pullup, DIR7::Pullup>
+    where
+        DIR0: Termination, DIR1: Termination, DIR2: Termination, DIR3: Termination,
+        DIR4: Termination, DIR5: Termination, DIR6: Termination, DIR7: Termination,
+    {
+        Batch::create()
+    }
+
+    /// Give every pin that is still a floating input its pulldown resistor, so it doesn't float, and leave
+    /// every other pin as configured. Call it after configuring the pins you use, before
+    /// [`split`](Batch::split): an unused pin that floats draws extra current. The user's guide recommends
+    /// terminating unused pins this way, or as outputs (SLAU445I
+    /// 8.3.2, p. 317: "To prevent a floating input and to reduce power consumption, unused I/O pins should be
+    /// configured as I/O function, output direction, and left unconnected on the PC board ... Alternatively,
+    /// the integrated pullup or pulldown resistor can be enabled by setting the PxREN bit of the unused pin
+    /// to prevent a floating input").
+    ///
+    /// A pin that should float, an input driven from outside, say, gets its pulldown too: configure it with
+    /// `floating()` after this call. Pins in a module function keep their configuration, and so do pins
+    /// that something on the board pulls up, such as a button: give those their pullup, or the pulldown
+    /// draws current through the outside resistor.
+    #[inline(always)]
+    pub fn pulldown_unused(
+        self,
+    ) -> Batch<
+        PORT,
+        DIR0::UnusedPulldown,
+        DIR1::UnusedPulldown,
+        DIR2::UnusedPulldown,
+        DIR3::UnusedPulldown,
+        DIR4::UnusedPulldown,
+        DIR5::UnusedPulldown,
+        DIR6::UnusedPulldown,
+        DIR7::UnusedPulldown,
+    >
+    where
+        DIR0: Termination, DIR1: Termination, DIR2: Termination, DIR3: Termination,
+        DIR4: Termination, DIR5: Termination, DIR6: Termination, DIR7: Termination,
+    {
+        Batch::create()
     }
 }
