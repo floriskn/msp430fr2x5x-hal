@@ -52,7 +52,7 @@ fn main() -> ! {
         // I/O registers have their values reset coming out of LPMx.5,
         // so we have to store state in the backup memory.
         // (In LPMx.5 "The register content of all modules and the CPU is lost": SLAU445I 1.4.3, p. 40.)
-        let bak_mem = BackupMemory::as_u8s(periph.bkmem);
+        let bak_mem = BackupMemory::as_u8s(periph.bakmem);
 
         let old_value = bak_mem[0] == 1;
         red_led.set_state(old_value.into()).ok();
