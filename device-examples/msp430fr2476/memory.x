@@ -1,3 +1,7 @@
+/* Cargo doesn't notice changes to this file. After a change, clean the examples so they are linked
+   again: cargo clean -p msp430fr247x-hal-examples --target msp430-none-elf
+*/
+
 /* DEVICE SELECTION:
    To use MSP430FR2475: 
    - Change RAM LENGTH to 0x1800

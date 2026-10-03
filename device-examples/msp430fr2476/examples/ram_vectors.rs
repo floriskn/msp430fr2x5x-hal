@@ -9,9 +9,12 @@
 //! Before building this example, change `RAM LENGTH` in `memory.x` from 0x2000 to 0x1F80. The RAM table
 //! takes the top 128 bytes of RAM, 3F80h to 3FFFh, and the stack starts at the end of RAM, so RAM must
 //! leave them out, or the table and the stack overwrite each other. The other examples work either way.
+//! Cargo doesn't notice changes to `memory.x`, so clean the examples after the change, or they keep the old
+//! RAM length: `cargo clean -p msp430fr247x-hal-examples --target msp430-none-elf`.
 //!
 //! How to test:
-//! 1. Change `memory.x` as above, then flash this example. LED1 (green) blinks twice a second.
+//! 1. Change `memory.x` and clean the examples as above, then flash this example. LED1 (green) blinks twice
+//!    a second.
 //! 2. Press S1: LED1 stops, and LED2 blinks red instead.
 //! 3. Press S1 again: LED1 blinks again.
 //!
