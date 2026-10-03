@@ -572,6 +572,11 @@ pub struct Alternate2<DIR>(PhantomData<DIR>);
 
 /// Typestate for GPIO alternate function 3: PxSEL1/PxSEL0 = 11, the tertiary module function (SLAU445I
 /// Table 8-3, p. 314)
+///
+/// On the MSP430FR247x this function disconnects the pull resistor, whatever PxREN says: the port diagram
+/// enables the resistor only while "PxSEL.x = 11" is false (SLASEO7C Figure 9-4, p. 64). Measured on an
+/// MSP430FR2476: with its pullup on, an eCOMP input in this function stayed below 1.2 V. So a pull setting
+/// from before has no effect here.
 pub struct Alternate3<DIR>(PhantomData<DIR>);
 
 // Only used as a bound inside the HAL, so keep it hidden

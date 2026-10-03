@@ -187,10 +187,14 @@ pub trait CCRn<C>: Steal {
     /// 13.2.4.1.1, p. 376; 14.2.4.1.1, p. 399)
     fn toggle_ccis_low_bit(&self);
     /// Set when the compare latch loads (Timer_B CLLD: 0 = at once, 1 = when the timer counts to 0,
-    /// 2 = also when it counts to the top in up/down mode). Timer_A has no compare latch (SLAU445I
-    /// Table 14-2, p. 400; SLAU445I Table 14-8, p. 411; SLAU445I 14.1.1, p. 391). In up mode 1 and 2 load
-    /// at once on the MSP430FR2x5x and MSP430FR247x (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
+    /// 2 = also when it counts to the top in up/down mode, 3 = when it counts to the old latch value).
+    /// Timer_A has no compare latch (SLAU445I Table 14-2, p. 400; SLAU445I Table 14-8, p. 411; SLAU445I
+    /// 14.1.1, p. 391). In up mode 1 and 2 load at once on the MSP430FR2x5x and MSP430FR247x (SLAZ695J
+    /// TB25, p. 11; SLAZ726B TB25, p. 8).
     fn set_clld(&self, clld: u8);
+    /// When the compare latch loads, see [`CCRn::set_clld`]. 0 on a Timer_A, which has no compare latch
+    /// (SLAU445I 14.1.1, p. 391).
+    fn clld_rd(&self) -> u8;
 }
 
 // The capture/compare registers TAxCCR0 to TAxCCR6 and TBxCCR0 to TBxCCR6 (SLAU445I Table 13-3, p. 383;
@@ -219,6 +223,13 @@ macro_rules! timer_b_field {
     };
 }
 pub(crate) use timer_b_field;
+
+// Read a Timer_B-only field, or 0 for Timer_A, which lacks it
+macro_rules! timer_b_read {
+    (A, $value:expr) => { 0 };
+    (B, $value:expr) => { $value };
+}
+pub(crate) use timer_b_read;
 
 // Run `$body` with the timer stopped (MC = 0) and its mode set back afterwards. The user's guide lists
 // OUTMOD among the controls "designed not to be dynamically updated while the timer is running", to be
@@ -372,6 +383,12 @@ macro_rules! ccrn_impl {
             #[inline(always)]
             fn set_clld(&self, clld: u8) {
                 $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxcctln(), clld, clld);
+            }
+
+            // CLLD is bits 10-9 of TBxCCTLn (SLAU445I Table 14-8, p. 411)
+            #[inline(always)]
+            fn clld_rd(&self) -> u8 {
+                $crate::hw_traits::timer_base::timer_b_read!($kind, (self.$tbxcctln().read().bits() >> 9) as u8 & 0b11)
             }
         }
     };

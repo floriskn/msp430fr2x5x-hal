@@ -76,9 +76,10 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
 
 // Trait effectively sealed by TimerBase
 /// Trait indicating a Timer_B. Its counter length can be changed, see [`TimerConfig::counter_length`], and its
-/// compare registers are buffered, which PWM uses to change duty cycles at the start of a period
-/// (SLAU445I 14.1.1, p. 391; 14.2.4.2.1, p. 400). In up mode the MSP430FR2x5x and MSP430FR247x load
-/// them at once instead (erratum TB25: SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
+/// compare registers are buffered, which PWM uses so that a duty cycle change never spoils a period
+/// (SLAU445I 14.1.1, p. 391; 14.2.4.2.1, p. 400). Erratum TB25 makes two of the load modes load at once in up
+/// mode on the MSP430FR2x5x and MSP430FR247x, so edge-aligned PWM uses one it doesn't list (SLAZ695J TB25,
+/// p. 11; SLAZ726B TB25, p. 8; see [`crate::pwm`]).
 pub trait TimerB: TimerBase {}
 
 /// The number of bits a Timer_B counts with (CNTL), which sets its highest count in continuous mode
