@@ -280,6 +280,11 @@ impl<PORT: IntrPortNum, PIN: PinNum, PULL> Pin<PORT, PIN, Input<PULL>> {
     /// The trigger edge (PxIES) is undefined after a reset (SLAU445I Table 8-16, p. 336), so select
     /// it first with [`select_rising_edge_trigger`](Self::select_rising_edge_trigger) or
     /// [`select_falling_edge_trigger`](Self::select_falling_edge_trigger).
+    ///
+    /// After a reset, enable interrupts once LOCKLPM5 is cleared, and clear the flag with
+    /// [`clear_ifg`](Self::clear_ifg) first: "After clearing LOCKLPM5, all interrupt flags should be
+    /// cleared (...). Then port interrupts can be enabled by setting the corresponding PxIE bits"
+    /// (SLAU445I 8.3.1, p. 316).
     #[inline]
     pub fn enable_interrupts(&mut self) -> &mut Self {
         let p = unsafe { PORT::steal() };

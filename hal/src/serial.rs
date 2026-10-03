@@ -60,8 +60,8 @@
 use crate::clock::Aclk;
 use crate::clock::{Clock, Smclk};
 use crate::hw_traits::eusci::{
-    EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel, UCADDR_UCIDLE, UCDORM, UCSTTIFG, UCTXADDR, UCTXBRK,
-    UCTXCPTIFG,
+    EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel, UCADDR_UCIDLE, UCDORM, UCRXIFG, UCSTTIFG, UCTXADDR,
+    UCTXBRK, UCTXCPTIFG, UCTXIFG,
 };
 use crate::pin_mapping::*;
 use core::convert::Infallible;
@@ -254,7 +254,7 @@ impl UartMode {
 pub enum IrdaClock {
     /// The baud-rate clock, BRCLK (UCIRTXCLK = 0). The user's guide then requires the prescaler UCBRx to be
     /// at least 5 (SLAU445I 22.3.5.1, p. 581: "the prescaler UCBRx must be set to a value greater or equal to
-    /// 5"); the baud-rate calculation doesn't check this.
+    /// 5"), which the configuration asserts.
     Brclk,
     /// 16 times the baud rate (BITCLK16). This needs oversampling, which the baud-rate calculation uses when
     /// the clock is at least 16 times the baud rate; otherwise BRCLK is used (SLAU445I 22.3.9.2, p. 585;
@@ -302,16 +302,19 @@ impl IrdaConfig {
     }
 }
 
-/// The highest-priority pending UART interrupt among the enabled ones, as read from UCAxIV by
-/// `interrupt_source()` (SLAU445I 22.3.15.4, p. 591 and SLAU445I Table 22-19, p. 602)
+/// The highest-priority pending UART interrupt among the enabled ones, in the order of UCAxIV, as
+/// returned by `interrupt_source()` (SLAU445I 22.3.15.4, p. 591 and SLAU445I Table 22-19, p. 602)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UartVector {
     /// No interrupt pending
     None,
-    /// A character was received (UCRXIFG). Reading it clears the flag (SLAU445I 22.3.15.2, p. 591).
+    /// A character was received (UCRXIFG). Reading it clears the flag (SLAU445I 22.3.15.2, p. 591:
+    /// "UCRXIFG is automatically reset when UCAxRXBUF is read").
     RxBufFull,
-    /// The Tx buffer is empty (UCTXIFG). Writing to it clears the flag (SLAU445I 22.3.15.1, p. 590).
+    /// The Tx buffer is empty (UCTXIFG). Writing to it clears the flag (SLAU445I 22.3.15.1, p. 590:
+    /// "UCTXIFG is automatically reset if a character is written to UCAxTXBUF"), so the interrupt keeps
+    /// firing until a character is written or Tx interrupts are disabled.
     TxBufEmpty,
     /// A start bit was received (UCSTTIFG, SLAU445I Table 22-6, p. 591)
     StartBit,
@@ -319,15 +322,29 @@ pub enum UartVector {
     TxComplete,
 }
 
-// UCAxIV values (SLAU445I Table 22-19, p. 602)
+// The highest-priority pending interrupt among the enabled ones, in the priority order of UCAxIV:
+// UCRXIFG, UCTXIFG, UCSTTIFG, UCTXCPTIFG (SLAU445I Table 22-19, p. 602; "Disabled interrupts do not affect
+// the UCAxIV value", SLAU445I 22.3.15.4, p. 591). It's worked out from UCAxIFG and UCAxIE (SLAU445I
+// Table 22-18, p. 601; SLAU445I Table 22-17, p. 600) instead of read from UCAxIV, because a UCAxIV read
+// "automatically resets the highest-pending Interrupt condition and flag" (SLAU445I 22.3.15.4, p. 591):
+// UCRXIFG and UCTXIFG would then be clear, and read() and write(), which test them, would block. Reading
+// UCAxRXBUF and writing UCAxTXBUF clear those two flags (SLAU445I 22.3.15.2, p. 591; SLAU445I 22.3.15.1,
+// p. 590). UCSTTIFG and UCTXCPTIFG have no such access, so they're cleared here, as a UCAxIV read would.
 #[inline(always)]
-fn read_uart_iv<USCI: EUsciUart>(usci: &USCI) -> UartVector {
-    match usci.iv_rd() {
-        0x02 => UartVector::RxBufFull,
-        0x04 => UartVector::TxBufEmpty,
-        0x06 => UartVector::StartBit,
-        0x08 => UartVector::TxComplete,
-        _ => UartVector::None,
+fn uart_vector<USCI: EUsciUart>(usci: &USCI) -> UartVector {
+    let pending = usci.ifg_bits() & usci.ie_bits();
+    if pending & UCRXIFG != 0 {
+        UartVector::RxBufFull
+    } else if pending & UCTXIFG != 0 {
+        UartVector::TxBufEmpty
+    } else if pending & UCSTTIFG != 0 {
+        usci.ifg_clr_bits(UCSTTIFG);
+        UartVector::StartBit
+    } else if pending & UCTXCPTIFG != 0 {
+        usci.ifg_clr_bits(UCTXCPTIFG);
+        UartVector::TxComplete
+    } else {
+        UartVector::None
     }
 }
 
@@ -684,11 +701,14 @@ where
         let ClockSet { baud_config, clksel } = self.state;
         let usci = self.usci;
 
-        // Step 3 of SLAU445I 22.3.1, p. 577, "Configure ports", comes before step 1 here: the caller passes
-        // the pins already in their eUSCI function, and the remapping bits are set first. After a PUC,
-        // UCSWRST is already set (SLAU445I 22.3.1, p. 577), so the first configuration still happens in
-        // reset; only a reconfiguration differs from the user's guide order.
-        USCI::configure_pin_mapping();
+        // With UCBRx counting BRCLK, the IrDA encoder needs UCBRx of at least 5 (SLAU445I 22.3.5.1, p. 581:
+        // "When UCIRTXCLK = 0, the prescaler UCBRx must be set to a value greater or equal to 5")
+        if let Some(irda) = self.irda {
+            assert!(
+                irda.pulse_clock != IrdaClock::Brclk || baud_config.br >= 5,
+                "IrDA with IrdaClock::Brclk needs a baud-rate prescaler UCBRx of at least 5"
+            );
+        }
 
         // Set UCSWRST, then initialize the registers (SLAU445I 22.3.1, p. 577, steps 1 and 2)
         usci.ctl0_reset();
@@ -721,6 +741,9 @@ where
             ucrxeie: true,
             ucbrkie: self.break_interrupts,
         });
+        // Configure the ports (SLAU445I 22.3.1, p. 577, step 3): the caller passes the pins already in
+        // their eUSCI function, and the remapping bits are set here
+        USCI::configure_pin_mapping();
         // Everything is configured while UCSWRST is set, then the eUSCI is released (SLAU445I 22.3.1,
         // p. 577, step 4). Step 5, enabling interrupts, is left to Tx::enable_tx_interrupts and
         // Rx::enable_rx_interrupts.
@@ -797,16 +820,15 @@ where
         usci.ie_clr_bits(UCTXCPTIFG);
     }
 
-    /// The highest-priority pending interrupt of this eUSCI among the enabled ones (UCAxIV), shared with
-    /// [`Rx::interrupt_source`]. Reading it clears the flag of the interrupt it returns, whichever that is
-    /// (SLAU445I 22.3.15.4, p. 591: "Read access of the UCAxIV register automatically resets the
-    /// highest-pending Interrupt condition and flag"). After it returns `TxBufEmpty` or `RxBufFull`, UCTXIFG
-    /// or UCRXIFG is therefore clear, and the write and read methods, which test those flags, return
-    /// `WouldBlock` until the flag is set again.
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
+    /// (SLAU445I Table 22-19, p. 602), shared with [`Rx::interrupt_source`]. It clears `StartBit` and
+    /// `TxComplete`, as a UCAxIV read does (SLAU445I 22.3.15.4, p. 591), but leaves the flags of `RxBufFull`
+    /// and `TxBufEmpty` for reading or writing the character to clear, so the read and write methods work
+    /// after it.
     #[inline(always)]
     pub fn interrupt_source(&mut self) -> UartVector {
         let usci = unsafe { USCI::steal() };
-        read_uart_iv(&usci)
+        uart_vector(&usci)
     }
 
     /// Send an address character, in the multiprocessor modes (UCTXADDR): preceded by an idle line in the
@@ -928,16 +950,15 @@ where
         usci.ie_clr_bits(UCSTTIFG);
     }
 
-    /// The highest-priority pending interrupt of this eUSCI among the enabled ones (UCAxIV), shared with
-    /// [`Tx::interrupt_source`]. Reading it clears the flag of the interrupt it returns, whichever that is
-    /// (SLAU445I 22.3.15.4, p. 591: "Read access of the UCAxIV register automatically resets the
-    /// highest-pending Interrupt condition and flag"). After it returns `RxBufFull` or `TxBufEmpty`, UCRXIFG
-    /// or UCTXIFG is therefore clear, and the read and write methods, which test those flags, return
-    /// `WouldBlock` until the flag is set again.
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
+    /// (SLAU445I Table 22-19, p. 602), shared with [`Tx::interrupt_source`]. It clears `StartBit` and
+    /// `TxComplete`, as a UCAxIV read does (SLAU445I 22.3.15.4, p. 591), but leaves the flags of `RxBufFull`
+    /// and `TxBufEmpty` for reading or writing the character to clear, so the read and write methods work
+    /// after it.
     #[inline(always)]
     pub fn interrupt_source(&mut self) -> UartVector {
         let usci = unsafe { USCI::steal() };
-        read_uart_iv(&usci)
+        uart_vector(&usci)
     }
 
     /// In the multiprocessor and automatic baud-rate modes, receive only address characters, or the character
@@ -991,11 +1012,13 @@ where
         let usci = unsafe { USCI::steal() };
 
         if usci.rxifg_rd() {
-            // UCAxSTATW first: reading UCAxRXBUF clears the error flags (SLAU445I 22.3.6, p. 582). The user's
-            // guide also recommends checking UCOE again after reading UCAxRXBUF, to catch an overrun between
-            // the two reads (SLAU445I 22.3.6, p. 582); this function does not.
+            // UCAxSTATW first: reading UCAxRXBUF clears the error flags (SLAU445I 22.3.6, p. 582)
             let statw = usci.statw_rd();
             let data = usci.rx_rd();
+            // Reading UCAxRXBUF "clears all error flags except UCOE, if UCAxRXBUF was overwritten between
+            // the read access to UCAxSTATW and to UCAxRXBUF. Therefore, the UCOE flag should be checked
+            // after reading UCAxRXBUF to detect this condition" (SLAU445I 22.3.6, p. 582)
+            let overrun_between_reads = usci.statw_rd().ucoe();
 
             // UCBRK, UCFE, UCPE and UCOE in UCAxSTATW (SLAU445I Table 22-12, p. 596)
             if statw.ucbrk() {
@@ -1004,7 +1027,7 @@ where
                 Err(nb::Error::Other(RecvError::Framing))
             } else if statw.ucpe() {
                 Err(nb::Error::Other(RecvError::Parity))
-            } else if statw.ucoe() {
+            } else if statw.ucoe() || overrun_between_reads {
                 Err(nb::Error::Other(RecvError::Overrun(data)))
             } else {
                 Ok(data)

@@ -76,7 +76,7 @@ fn main() -> ! {
             }
         }
 
-        // Blocking write. Write two bytes (length of buffer) to address 0x12.
+        // Blocking write. Write two bytes (length of buffer) to SLAVE_ADDR.
         // If a NACK is recieved the transmission is aborted.
         // (UCNACKIFG, after which "The master must react with either a STOP condition or a repeated START
         // condition": SLAU445I 24.3.5.2.1, p. 637)
@@ -85,7 +85,7 @@ fn main() -> ! {
             is_ok = false;
         }
 
-        // Blocking read. Read one byte from address 0x12.
+        // Blocking read. Read one byte from SLAVE_ADDR.
         // Each byte recieved is automatically ACKed, except for the last one which is NACKed.
         // (SLAU445I 24.3.5.2.2, p. 639: "The next byte received from the slave is followed by a NACK and
         // a STOP condition")

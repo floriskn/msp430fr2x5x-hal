@@ -174,7 +174,7 @@ pub const BAK_MEM_SIZE: usize = 32;
 
 /* Capture */
 mod capture {
-    use crate::{capture::CapturePeriph, gpio::*, pac::*, pin_mapping::*};
+    use crate::{capture::{CapturePeriph, NoCapturePin}, gpio::*, pac::*, pin_mapping::*};
 
     // The capture input A (CCIxA) pin of each capture/compare register, from the timer signal
     // connections (SLASEO7C Tables 9-12 to 9-16, p. 55 to p. 60) and the pin function tables
@@ -195,9 +195,9 @@ mod capture {
     }
 
     // TA1 (SLASEO7C Table 9-13, p. 56, titled Timer0_A1; pins: SLASEO7C Table 9-23, p. 65): CCI0A isn't
-    // connected (N/A)
+    // connected (N/A), so input A of capture pin 0 is `NoCapturePin`, which can't be selected
     impl CapturePeriph for Ta1 {
-        type Gpio0 = ();
+        type Gpio0 = NoCapturePin;
         type Gpio1 = Pin<P1, Pin5, Alternate2<Input<Floating>>>; // P1.5 TA1.CCI1A, P1SELx = 10
         type Gpio2 = Pin<P1, Pin4, Alternate2<Input<Floating>>>; // P1.4 TA1.CCI2A, P1SELx = 10
         type Gpio3 = ();

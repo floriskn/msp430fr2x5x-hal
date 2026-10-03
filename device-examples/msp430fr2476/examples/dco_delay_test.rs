@@ -86,12 +86,12 @@ fn main() -> ! {
     let p5 = Batch::new(periph.p5)
         .config_pin0(|p| p.to_output())
         .split(&pmm);
-    // LED1 on P1.0 is green, whatever the variable name says; P5.0 is the green part of LED2
+    // LED1 on P1.0 is green; P5.0 is the green part of LED2
     // (SLAU802 Figure 19, p. 25). P1.6 is J1 pin 2 (SLAU802 Figure 10, p. 13).
-    let mut red_led1 = p1.pin0;
+    let mut led1 = p1.pin0;
     let mut green_led2 = p5.pin0;
     let mut square_wave = p1.pin6;
-    red_led1.set_low().ok();
+    led1.set_low().ok();
     green_led2.set_low().ok();
     square_wave.set_low().ok();
 
@@ -268,7 +268,7 @@ fn main() -> ! {
     if pass {
         green_led2.set_high().ok();
     } else {
-        red_led1.set_high().ok();
+        led1.set_high().ok();
     }
 
     loop {

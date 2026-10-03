@@ -12,9 +12,10 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// If pin 1.1 is between 1V and 2V, the LED on pin 1.0 should light up.
-// LED1 is on P1.0 (SLAU802 Figure 19, p. 25). P1.1 is J3 pin 28 (SLAU802 Figure 10, p. 13), and on the
-// LaunchPad it is also wired to the output of the TMP235 temperature sensor (SLAU802 2.2.5.1, p. 10).
+// If pin 4.3 is between 1V and 2V, the LED on pin 1.0 should light up.
+// LED1 is on P1.0 (SLAU802 Figure 19, p. 25). P4.3 is J3 pin 24 (SLAU802 Figure 10, p. 13), an analog
+// header pin wired to nothing else on the LaunchPad (net P4.3_A8: SLAU802 Figure 18, p. 24). P1.1 is
+// not used, because the TMP235 temperature sensor drives it (SLAU802 2.2.5.1, p. 10).
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
@@ -26,10 +27,11 @@ fn main() -> ! {
     // (Pin settings take effect once LOCKLPM5 is cleared, which Pmm::new does: SLAU445I 8.3.1, p. 316)
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let port1 = Batch::new(periph.p1).split(&pmm);
+    let port4 = Batch::new(periph.p4).split(&pmm);
     let mut led = port1.pin0.to_output();
-    // P1.1 = analog input A1 with P1SEL = 11 (SLASEO7C Table 9-23, p. 65), ADC channel 1
+    // P4.3 = analog input A8 with P4SEL = 11 (SLASEO7C Table 9-26, p. 68), ADC channel 8
     // (SLASEO7C Table 9-19, p. 62)
-    let mut adc_pin = port1.pin1.to_alternate3();
+    let mut adc_pin = port4.pin3.to_alternate3();
 
     // ADC setup
     // (ADCDIVx: SLAU445I Table 21-4, p. 563; ADCSSELx = 00b is MODCLK: SLAU445I Table 21-4, p. 564;

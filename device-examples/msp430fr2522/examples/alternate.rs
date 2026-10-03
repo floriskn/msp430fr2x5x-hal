@@ -5,7 +5,7 @@ use msp430_rt::entry;
 use msp430_hal::{gpio::Batch, pmm::Pmm, watchdog::Wdt};
 use panic_msp430 as _;
 
-// Alternate GPIO mode demonstration
+// Alternate GPIO mode demonstration: SMCLK on P1.2
 
 #[entry]
 fn main() -> ! {
@@ -17,11 +17,11 @@ fn main() -> ! {
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     let p1 = Batch::new(periph.p1).split(&pmm);
 
-    // Convert P1.7 to its alternate function 1. On this device that is UCA0STE, not SMCLK (P1SELx = 01,
-    // SLASEE4C Table 6-15, p. 58). SMCLK is output on P1.2, with P1SELx = 10 and P1DIR = 1
-    // (SLASEE4C Table 6-15, p. 58).
-    // Expect red LED to light up (no board document covers this LED: there is none for the MSP430FR25x2)
-    p1.pin7.to_output().to_alternate1();
+    // Output SMCLK on P1.2: P1SELx = 10 with P1DIR = 1 (SLASEE4C Table 6-15, p. 58). (P1.7 has no SMCLK
+    // function on this device: its alternate function 1 is UCA0STE, same table.) After a reset "The FLL
+    // stabilizes MCLK and SMCLK to 1 MHz" (SLAU445I 3.2, p. 102), so expect a 1 MHz square wave on P1.2,
+    // or an LED there to light up (no board document covers one: there is none for the MSP430FR25x2).
+    p1.pin2.to_output().to_alternate2();
 
     loop {
         msp430::asm::nop();

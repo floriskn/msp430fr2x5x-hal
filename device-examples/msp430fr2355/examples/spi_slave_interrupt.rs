@@ -65,23 +65,26 @@ fn main() -> ! {
         .aclk_vloclk()
         .freeze(&mut fram);
 
+    // Configure another peripheral as an SPI master to drive the bus. It is configured before the slave:
+    // MODE_0 is UCCKPH = 1, "Data is captured on the first UCLK edge" (SLAU445I 23.4.1, p. 613), and an
+    // SPI slave with UCCKPH = 1 goes wrong if its clock pin isn't at the idle level when it leaves reset
+    // (SLAZ695J USCI47). The erratum's workaround: "The SPI master must set the clock pin at the
+    // appropriate idle level (low for UCCKPL = 0, high for UCCKPL = 1) before SPI slave is reset (UCSWRST
+    // bit is cleared)". With the master running, SCLK idles low (UCCKPL = 0 in MODE_0).
+    let mut spi = SpiConfig::new(periph.e_usci_b1, MODE_0, true)
+        // fBitClock = fBRCLK / UCBRx (SLAU445I 23.3.6, Equation 15, p. 609)
+        .to_master_using_smclk(&smclk, 800) // 8MHz / 800 = 10kHz
+        .single_master_bus(miso, mosi, sclk);
+
     // Configure a peripheral as an SPI slave.
     // It can be configured for either a shared or exclusive bus depending on whether
     // there are other slaves on the bus. On an exclusive bus MISO is always an output.
     // On a shared bus the STE pin is used to control whether this slave's MISO is an output or high impedance pin.
     // (SLAU445I 23.3.4.1, p. 609: with UCxSTE slave-inactive "UCxSOMI is set to the input direction", and
     // "The UCxSTE input signal is not used in 3-pin slave mode".)
-    // MODE_0 is UCCKPH = 1, "Data is captured on the first UCLK edge" (SLAU445I 23.4.1, p. 613), so the
-    // slave is subject to SLAZ695J USCI47: its clock pin must be at the idle level when it leaves reset.
     let mut spi_slave = SpiConfig::new(periph.e_usci_a0, MODE_0, true)
         .to_slave()
         .shared_bus(sl_miso, sl_mosi, sl_sclk, sl_ste, StePolarity::EnabledWhenLow);
-
-    // Configure another as an SPI master to drive the bus.
-    let mut spi = SpiConfig::new(periph.e_usci_b1, MODE_0, true)
-        // fBitClock = fBRCLK / UCBRx (SLAU445I 23.3.6, Equation 15, p. 609)
-        .to_master_using_smclk(&smclk, 800) // 8MHz / 800 = 10kHz
-        .single_master_bus(miso, mosi, sclk);
 
     critical_section::with(|cs| {
         spi_slave.set_rx_interrupt();

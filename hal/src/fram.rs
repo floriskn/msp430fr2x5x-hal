@@ -5,8 +5,15 @@
 //! controller can report those and the errors it can't correct (SLAU445I 6.3, p. 301: the ECC logic
 //! "can correct bit errors and detect multiple bit errors").
 //!
-//! On the MSP430FR2433 the bit error detection can report errors that don't exist (SLAZ664S GC4,
-//! GC5).
+//! On the MSP430FR2433 the bit error detection can report errors that don't exist:
+//! - after a wake-up from LPM1 to LPM4 (SLAZ664S GC5), which the low-power mode functions work around,
+//!   see [`request_lpm3`](crate::lpm::request_lpm3);
+//! - while running from FRAM with MCLK from the DCO at 16 MHz, or from a high-frequency clock above
+//!   12 MHz (SLAZ664S GC4). With [`UncorrectableBitError::Reset`] this resets the device, and SYSRSTIV
+//!   then reads 0, so [`Pmm::take_reset_cause()`](crate::pmm::Pmm::take_reset_cause) returns `None`. The
+//!   erratum's workarounds are to "Check the reset source for SYSRSTIV = 0 and ignore the reset", to
+//!   leave UBDRSTEN at 0 ([`UncorrectableBitError::Ignore`] or [`UncorrectableBitError::Interrupt`]), or
+//!   to "Set the MCLK to maximum 12MHz".
 
 use crate::_pac;
 
@@ -54,7 +61,9 @@ pub enum UncorrectableBitError {
     Ignore,
     /// Reset the device with a PUC (UBDRSTEN, SLAU445I Table 6-3, p. 307).
     /// [`Pmm::take_reset_cause()`](crate::pmm::Pmm::take_reset_cause) then returns
-    /// [`ResetCause::FramBitError`](crate::pmm::ResetCause::FramBitError).
+    /// [`ResetCause::FramBitError`](crate::pmm::ResetCause::FramBitError). On the MSP430FR2433 with MCLK
+    /// above 12 MHz it can also reset the device for errors that don't exist, with no reset cause
+    /// (SLAZ664S GC4), see the [module documentation](crate::fram).
     Reset,
     /// Request the `SYSNMI` interrupt (UBDIE, SLAU445I Table 6-3, p. 307; SLAU445I 1.3.1, p. 33).
     /// [`take_system_nmi()`](crate::sys::take_system_nmi) then returns

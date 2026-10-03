@@ -494,12 +494,12 @@ where
     /// Performs hardware configuration
     #[inline]
     fn configure_regs(&self) {
-        USCI::configure_pin_mapping();
-
         // Initialization procedure of SLAU445I 24.3.1, p. 629: the registers are written with UCSWRST = 1
         // ("Modify only when UCSWRST = 1": SLAU445I 24.4.1 to 24.4.13, p. 649 to p. 659)
+        // 1. Set UCSWRST
         self.usci.ctw0_set_rst();
 
+        // 2. Initialize the registers
         self.usci.ctw0_wr(&self.ctlw0);
         self.usci.ctw1_wr(&self.ctlw1);
         self.usci.i2coa_wr(0, &self.i2coa0);
@@ -513,6 +513,11 @@ where
         self.usci.tbcnt_wr(self.tbcnt as u16);
         self.usci.addmask_wr(self.addmask);
 
+        // 3. Configure ports: the caller passes the pins already in their eUSCI function, and the
+        // remapping bits are set here
+        USCI::configure_pin_mapping();
+
+        // 4. Clear UCSWRST
         self.usci.ctw0_clear_rst();
     }
 }
@@ -535,10 +540,18 @@ where
         self
     }
 
-    /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTP, UCBxTBCNT:
-    /// SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651).
-    /// With `auto_stop`, a master then also sends the STOP condition itself (SLAU445I 24.3.8.2, p. 644); only
-    /// use that with the non-blocking interface and fixed-length transactions, without `schedule_stop()`.
+}
+
+impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, SingleMaster, M>
+where
+    USCI: I2cUsci<M>,
+    M: PinMap,
+{
+    /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTPx = 01b,
+    /// UCBxTBCNT: SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651).
+    /// With `auto_stop`, the master then also sends the STOP condition itself (UCASTPx = 10b, SLAU445I
+    /// 24.3.8.2, p. 644); only use that with the non-blocking interface and fixed-length transactions,
+    /// without `schedule_stop()`.
     /// The count can only change while the eUSCI is configured (UCBxTBCNT: "Modify only when UCSWRST = 1",
     /// SLAU445I Table 24-8, p. 654).
     pub fn byte_counter(mut self, count: u8, auto_stop: bool) -> Self {
@@ -548,6 +561,33 @@ where
         self
     }
 }
+
+// The roles that can be in slave mode: addressed as a slave, or, with UCMM = 1, after losing arbitration
+// ("the UCMST bit is automatically cleared and the module acts as slave", SLAU445I Table 24-4, p. 649). The
+// automatic STOP isn't available to them (UCASTPx: "In slave mode, only settings 00b and 01b are available",
+// SLAU445I Table 24-5, p. 651).
+macro_rules! byte_counter_no_stop {
+    ($($role: ty),+) => {$(
+        impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, $role, M>
+        where
+            USCI: I2cUsci<M>,
+            M: PinMap,
+        {
+            /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTPx = 01b,
+            /// UCBxTBCNT: SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651). The automatic STOP isn't
+            /// offered, because this role can be in slave mode, and "In slave mode, only settings 00b and 01b
+            /// are available" (SLAU445I Table 24-5, p. 651).
+            /// The count can only change while the eUSCI is configured (UCBxTBCNT: "Modify only when UCSWRST = 1",
+            /// SLAU445I Table 24-8, p. 654).
+            pub fn byte_counter(mut self, count: u8) -> Self {
+                self.ctlw1.ucastp = crate::hw_traits::eusci::Ucastp::Ucastp01b;
+                self.tbcnt = count;
+                self
+            }
+        }
+    )+};
+}
+byte_counter_no_stop!(Slave, MultiMaster, MasterSlave);
 
 macro_rules! slave_config {
     ($role: ty) => {
@@ -1005,8 +1045,11 @@ where M: PinMap
     fn schedule_stop(&mut self) {
         self.usci().transmit_stop();
         // For some reason the TXIFG flag needs to be cleared between transactions (the flags aren't cleared
-        // automatically: SLAU445I 24.3.11, p. 645)
-        self.usci().ifg_rst();
+        // automatically: SLAU445I 24.3.11, p. 645). Every flag is cleared except the receive flags
+        // UCRXIFG0 to UCRXIFG3 (bits 0, 8, 10 and 12 of UCBxIFG, SLAU445I Table 24-19, p. 662 to p. 663): a
+        // byte already in UCBxRXBUF, the last one of a master receive say, must stay readable.
+        const RX_FLAGS: u16 = 1 << 0 | 1 << 8 | 1 << 10 | 1 << 12;
+        self.usci().ifg_clr_bits(!RX_FLAGS);
     }
 
     /// Checks whether a slave with the specified address is present on the I2C bus.

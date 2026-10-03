@@ -23,7 +23,8 @@ static RED_LED: Mutex<RefCell<Option<Pin<P1, Pin0, Output>>>> = Mutex::new(RefCe
 static P2IV: Mutex<RefCell<Option<PxIV<P2>>>> = Mutex::new(RefCell::new(None));
 
 // Red LED should blink 1 second on, 1 second off
-// Both green and red LEDs should blink when P2.3 LED is pressed
+// A press of the P2.3 button toggles the red LED too: the main loop sets P2.6's interrupt flag, whose
+// handler toggles it
 // No board document covers the LEDs (the red one on P1.0 here) or the button: there is none for the
 // MSP430FR25x2. P2.3 and P2.6 only exist on the 20-pin RHL package (SLASEE4C Table 4-2, p. 14).
 // All three pins are GPIO, PxSELx = 00 (SLASEE4C Table 6-15, p. 58; SLASEE4C Table 6-16, p. 60): P1.0 an

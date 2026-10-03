@@ -166,9 +166,12 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
             .rtcps().variant(div));
     }
 
-    /// Enable RTC timer interrupts (RTCIE: SLAU445I Table 15-2, p. 420)
+    /// Enable RTC timer interrupts (RTCIE: SLAU445I Table 15-2, p. 420). An overflow from before is
+    /// cleared first, so it doesn't fire at once (SLAU445I 15.2.4, p. 418: "TI recommends clearing the
+    /// RTCIFG bit by reading the RTCIV register before enabling the RTC counter interrupt").
     #[inline]
     pub fn enable_interrupts(&mut self) {
+        self.periph.rtciv().read();
         unsafe { self.periph.rtcctl().set_bits(|w| w.rtcie().set_bit()) };
     }
 
@@ -191,11 +194,24 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     #[inline]
     /// Clear the timer contents and start the timer counting up to `count`. The counter wraps to
     /// zero after reaching `count`, so a period lasts `count + 1` ticks of the divided clock (SLAU445I
-    /// 15.2.1, p. 417; SLAU445I Figure 15-2, p. 418). `count` goes to RTCMOD (SLAU445I Table 15-4,
-    /// p. 422), and RTCSR resets the counter (SLAU445I Table 15-2, p. 420).
+    /// 15.2.1, p. 417; SLAU445I Figure 15-2, p. 418). A `count` of 0 or 1 is the exception: "RTC counter
+    /// always generates an overflow when the RTCMOD is set to either 0x0000 or 0x0001" (SLAU445I 15.2.3,
+    /// p. 418). `count` goes to RTCMOD (SLAU445I Table 15-4, p. 422), and RTCSR resets the counter
+    /// (SLAU445I Table 15-2, p. 420).
     pub fn start(&mut self, count: u16) {
         self.periph.rtcmod().write(|w| unsafe { w.bits(count) });
         SRC::apply_sys_config();
+        // Erratum RTC15: moving the RTC off XT1CLK while XT1 is stopped hangs it (SLAZ695J RTC15, p. 11;
+        // SLAZ664S RTC15; SLAZ705H RTC15). XT1OFFG in CSCTL7 reports the stopped XT1 (SLAU445I
+        // Table 3-11, p. 121); XT1CLK is RTCSS = 10b (SLAU445I Table 15-2, p. 420).
+        #[cfg(feature = "erratum_rtc15")]
+        let leaving_stopped_xt1 = {
+            let xt1clk = u8::from(Rtcss::Xt1clk);
+            let cs = unsafe { _pac::Cs::steal() };
+            self.periph.rtcctl().read().rtcss().bits() == xt1clk
+                && u8::from(SRC::CLK_SRC) != xt1clk
+                && cs.csctl7().read().xt1offg().bit_is_set()
+        };
         // Select the clock first, then reset the counter, which also loads `count` into the
         // shadow register (SLAU445I 15.2.3, p. 417). The reset resynchronizes the count with the new
         // clock (SLAU445I 15.2.2, p. 417, note "Clock Source Selection": "TI recommends a software reset
@@ -204,6 +220,10 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
             unsafe { w.bits(r.bits()) }
             .rtcss().variant(SRC::CLK_SRC)
         });
+        #[cfg(feature = "erratum_rtc15")]
+        if leaving_stopped_xt1 {
+            pulse_xin();
+        }
         self.periph.rtcctl().modify(|r, w| {
             unsafe { w.bits(r.bits()) }
             .rtcsr().set_bit()
@@ -243,6 +263,43 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
     /// SLAU445I 15.2.1, p. 417).
     pub fn resume(&mut self) {
         unsafe { self.periph.rtcctl().set_bits(|w| w.rtcss().variant(SRC::CLK_SRC)) }
+    }
+}
+
+/// The workaround for erratum RTC15, after the RTC was moved off a stopped XT1CLK: "Reconfigure the XIN
+/// pin as a GPIO output, then toggle the GPIO twice with at least 2 rising or falling edges. At this
+/// point the RTC Counter will be able to resume operation" (SLAZ695J RTC15, p. 11; SLAZ664S RTC15;
+/// SLAZ705H RTC15). It toggles four times, for two rising and two falling edges, and then gives the pin
+/// its direction and function back. GPIO output: PxSEL1 = PxSEL0 = 0, PxDIR = 1 (SLAU445I Table 8-1,
+/// p. 313; SLAU445I Table 8-3, p. 314).
+#[cfg(feature = "erratum_rtc15")]
+fn pulse_xin() {
+    use crate::clock::Xt1Xin;
+    use crate::gpio::AlternatePin;
+    use crate::hw_traits::gpio::GpioPeriph;
+
+    let port = unsafe { <Xt1Xin<()> as AlternatePin>::Port::steal() };
+    let mask = <Xt1Xin<()> as AlternatePin>::MASK;
+    let (sel0, sel1, dir) = (port.pxsel0_rd() & mask, port.pxsel1_rd() & mask, port.pxdir_rd() & mask);
+
+    // The _clear methods keep the bits set in their argument
+    port.pxsel0_clear(!mask);
+    port.pxsel1_clear(!mask);
+    port.pxdir_set(mask);
+    for _ in 0..4 {
+        port.pxout_toggle(mask);
+    }
+
+    if dir == 0 {
+        port.pxdir_clear(!mask);
+    }
+    // The XIN function is a single PxSEL bit, PxSEL0 or PxSEL1 (SLASEC4D Table 6-64, p. 98; SLASE59F
+    // Table 6-18, p. 56; SLASEE4C Table 6-16, p. 60), so setting it back passes through no other function
+    if sel0 != 0 {
+        port.pxsel0_set(mask);
+    }
+    if sel1 != 0 {
+        port.pxsel1_set(mask);
     }
 }
 

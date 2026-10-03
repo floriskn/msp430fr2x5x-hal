@@ -54,8 +54,11 @@ impl Default for PinConfig {
     }
 }
 
-/// The capture input A of capture pins that have none, such as those of TA2 and TA3 on the MSP430FR2433
-/// (SLASE59F Table 6-13, p. 51; SLASE59F Table 6-14, p. 52)
+/// The capture input A of capture pins whose input A isn't connected: those of TA2 and TA3 on the
+/// MSP430FR2433 (SLASE59F Table 6-13, p. 51; SLASE59F Table 6-14, p. 52), and capture pin 0 of TA0 and TA1
+/// on the MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), of TA1 on the
+/// MSP430FR247x (SLASEO7C Table 9-13, p. 56) and the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54), and of TB2
+/// and TB3 on the MSP430FR2x5x (SLASEC4D Table 6-18, p. 74; SLASEC4D Table 6-19, p. 75).
 ///
 /// It has no values, so input A can't be selected for these capture pins.
 pub enum NoCapturePin {}

@@ -2,7 +2,7 @@
 #![no_std]
 #![feature(abi_msp430_interrupt)]
 
-// This I2C slave implements reading and writing from a 10-byte array.
+// This I2C slave implements reading and writing from an 8-byte array (ARR_LEN).
 // If a transaction begins with a write, the first byte is treated as the desired array index.
 // A subsequent write provides data to store at the specified index. Additional writes will be stored at the following indices, the index autoincrementing after each.
 // After any number of writes the master may perform a Repeated Start and switch to reading in order to retrieve the value at the specified index.

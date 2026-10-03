@@ -24,7 +24,7 @@ use msp430_hal::{
 use panic_msp430 as _;
 
 static P2IV: Mutex<RefCell<Option< PxIV<P2> >>> = Mutex::new(RefCell::new(None));
-static RED_LED: Mutex<RefCell<Option< Pin<P1, Pin0, Output> >>> = Mutex::new(RefCell::new(None));
+static LED1: Mutex<RefCell<Option< Pin<P1, Pin0, Output> >>> = Mutex::new(RefCell::new(None));
 
 // P1.0 should toggle when P2.3 is pressed
 // (P1.0 drives LED1, which is green; P2.3 is button S2: SLAU802 Figure 19, p. 25)
@@ -43,7 +43,7 @@ fn main() -> ! {
         .pulldown_all()
         .config_pin0(|p| p.to_output())
         .split(&pmm);
-    let red_led = p1.pin0;
+    let led1 = p1.pin0;
 
     let p2 = Batch::new(periph.p2)
         .pulldown_all()
@@ -56,7 +56,7 @@ fn main() -> ! {
 
     with(|cs| {
         P2IV.borrow_ref_mut(cs).replace(p2iv);
-        RED_LED.borrow_ref_mut(cs).replace(red_led);
+        LED1.borrow_ref_mut(cs).replace(led1);
     });
 
     // S2 pulls P2.3 low, so a press is a high-to-low transition (PxIES = 1: SLAU445I Table 8-16, p. 336;
@@ -82,9 +82,9 @@ fn main() -> ! {
 fn PORT2() {
     with(|cs| {
         let Some(ref mut p2iv) = *P2IV.borrow_ref_mut(cs) else {return};
-        let Some(ref mut red_led) = *RED_LED.borrow_ref_mut(cs) else {return};
+        let Some(ref mut led1) = *LED1.borrow_ref_mut(cs) else {return};
         if let GpioVector::Pin3Isr = p2iv.get_interrupt_vector() {
-            red_led.toggle().ok();
+            led1.toggle().ok();
             for _ in 0..15_000 { // Debouncing
                 asm::nop();
             }

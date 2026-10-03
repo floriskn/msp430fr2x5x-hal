@@ -123,6 +123,198 @@ fn sleep<const MASK: u8>() {
     unsafe { asm!("bis.b #{mask}, SR", "nop", mask = const MASK, options(nostack)) };
 }
 
+/// Request LPM3 or LPM4, the status register bits in `MASK`, as the `request_lpm*` functions do.
+///
+/// On the MSP430FR2x5x, "HFXT must be disabled before entering into LPM3, LPM4, or LPMx.5 mode"
+/// (SLASEC4D Table 6-1, note 2, p. 61). While XT1 runs in high-frequency mode, LPM0 is entered
+/// instead, which HFXT may stay on in (SLASEC4D Table 6-1, p. 61), as the device itself does when a
+/// peripheral still needs SMCLK (SLAU445I Table 1-3, p. 39).
+///
+/// On the devices with errata CS13 and PMM32 the entry works around them, see
+/// [`lpm3_4_with_workarounds`].
+#[inline(always)]
+fn request_lpm<const MASK: u8>() {
+    #[cfg(feature = "xt1_high_frequency")]
+    if hfxt_in_use() {
+        if MASK & GIE != 0 {
+            sleep::<{ CPU_OFF | GIE }>();
+        } else {
+            sleep::<CPU_OFF>();
+        }
+        return;
+    }
+    #[cfg(any(feature = "erratum_cs13", feature = "erratum_pmm32"))]
+    lpm3_4_with_workarounds(MASK);
+    #[cfg(not(any(feature = "erratum_cs13", feature = "erratum_pmm32")))]
+    sleep::<MASK>();
+}
+
+/// Whether XT1 runs in high-frequency mode: XTS = 1 (SLAU445I Table 3-10, p. 119), with XIN in its
+/// XT1 function (SLAU445I 3.2.4, p. 103)
+#[cfg(feature = "xt1_high_frequency")]
+#[inline(always)]
+fn hfxt_in_use() -> bool {
+    let cs = unsafe { _pac::Cs::steal() };
+    cs.csctl6().read().xts().bit_is_set() && Xt1Xin::<()>::function_matches_type()
+}
+
+/// Enter LPM3 or LPM4 (the status register bits in `mask`) with the workarounds for the errata that
+/// can lock up the device on the way in, on the MSP430FR2355, MSP430FR2433 and MSP430FR2522:
+///
+/// - CS13, a lock-up when an interrupt arrives during the entry with the DCO above 2 MHz. Workaround
+///   4: "Set DCOCLK to 2MHz or lower before entering LPM3/4, then restore DCOCLK after wake-up"
+///   (SLAZ695J CS13, p. 9; SLAZ664S CS13; SLAZ705H CS13). Interrupt handlers run on the slowed DCO,
+///   with the FLL off, until the function returns, and so do peripherals clocked from it if one keeps
+///   the device in LPM0 (the erratum: "peripherals using clocks derived from DCOCLK might be
+///   affected during this interval").
+/// - PMM32, a lock-up or unintended code execution when an interrupt and a MODCLK request coincide
+///   with the entry. Workaround 2: "Place the FRAM in INACTIVE mode before any entry to LPM3/4 by
+///   clearing the FRPWR bit and FRLPMPWR bit (if exist) in the GCCTL0 register. This must be
+///   performed from RAM" (SLAZ695J PMM32, p. 10 to p. 11; SLAZ664S PMM32; SLAZ705H PMM32).
+/// - GC5 on the MSP430FR2433, bit errors reported after a wake-up although the FRAM has none. The
+///   workaround clears UBDRSTEN, UBDIE and CBDIE before the entry, and after the wake-up clears
+///   UBDIFG and CBDIFG and sets them again "after the first valid FRAM access has been completed"
+///   (SLAZ664S GC5).
+#[cfg(any(feature = "erratum_cs13", feature = "erratum_pmm32"))]
+#[inline(never)]
+fn lpm3_4_with_workarounds(mask: u8) {
+    #[cfg(feature = "erratum_cs13")]
+    let saved_dco = lower_dco();
+
+    #[cfg(feature = "erratum_pmm32")]
+    {
+        let frctl = _pac::Frctl::ptr() as *mut u16;
+        // GCCTL0: FRPWR is bit 2, FRLPMPWR bit 1 (SLAU445I Table 6-3, p. 307)
+        #[allow(unused_mut)]
+        let mut gcctl0_clear: u16 = 1 << 2 | 1 << 1;
+        // GC5: UBDRSTEN is bit 7, UBDIE bit 6, CBDIE bit 5 (SLAU445I Table 6-3, p. 307)
+        #[cfg(feature = "erratum_gc5")]
+        let bit_error_handling = {
+            let gcctl0 = unsafe { _pac::Frctl::steal() }.gcctl0().read().bits();
+            let bits = gcctl0 & (1 << 7 | 1 << 6 | 1 << 5);
+            gcctl0_clear |= bits;
+            bits
+        };
+
+        unsafe { sleep_from_ram(mask as u16, frctl, gcctl0_clear) };
+
+        #[cfg(feature = "erratum_gc5")]
+        if bit_error_handling != 0 {
+            // A FRAM read that the cache can't serve, the reset vector (SLAU445I 6.8, p. 303:
+            // "Accesses to FRAM that can be served from cache do not change the power state")
+            unsafe { core::ptr::read_volatile(0xFFFE as *const u16) };
+            fram_unlocked(|fram| {
+                // UBDIFG is bit 2, CBDIFG bit 1 of GCCTL1, cleared by writing 0 (SLAU445I Table 6-4,
+                // p. 308)
+                unsafe { fram.gcctl1().clear_bits(|w| w.bits(!(1 << 2 | 1 << 1))) };
+                unsafe { fram.gcctl0().set_bits(|w| w.bits(bit_error_handling)) };
+            });
+        }
+    }
+    #[cfg(not(feature = "erratum_pmm32"))]
+    unsafe { asm!("bis {mask}, SR", "nop", mask = in(reg) mask as u16, options(nostack)) };
+
+    #[cfg(feature = "erratum_cs13")]
+    restore_dco(saved_dco);
+}
+
+/// The PMM32 workaround from SLAZ695J PMM32, p. 11, run from RAM: unlock FRCTL, clear `gcctl0_clear`
+/// in GCCTL0 (FRPWR and FRLPMPWR), lock FRCTL, and set the status register bits in `sr_bits`. The
+/// erratum's code writes `FRCTL0 = FRCTLPW`, which would also clear NWAITS; this writes the password
+/// over the current low byte instead (FRCTLPW, NWAITS: SLAU445I Table 6-2, p. 306). A byte write of a
+/// wrong password to the upper byte locks FRCTL again (SLAU445I 6.10, p. 305). An access to the FRAM
+/// after the wake-up powers it up again ("Memory accesses pointing into the FRAM address space
+/// automatically set FRPWR = 1", SLAU445I 6.8, p. 303).
+///
+/// The `.data` section is copied to RAM at start-up (msp430-rt's link.x), so the function runs from
+/// RAM. FRCTL0 is at offset 00h and GCCTL0 at 04h of the FRCTL registers (SLAU445I Table 6-1, p. 305).
+#[cfg(feature = "erratum_pmm32")]
+#[link_section = ".data.lpm_from_ram"]
+#[inline(never)]
+unsafe fn sleep_from_ram(sr_bits: u16, frctl: *mut u16, gcctl0_clear: u16) {
+    asm!(
+        "mov.b 0({frctl}), {tmp}",
+        "bis #0xA500, {tmp}",
+        "mov {tmp}, 0({frctl})",
+        "bic {clear}, 4({frctl})",
+        "mov.b #0, 1({frctl})",
+        "bis {sr}, SR",
+        "nop",
+        frctl = in(reg) frctl,
+        clear = in(reg) gcctl0_clear,
+        sr = in(reg) sr_bits,
+        tmp = out(reg) _,
+        options(nostack),
+    );
+}
+
+/// Run `f` with write access to the FRAM controller registers, as `Fram` does (SLAU445I 6.10,
+/// p. 305; FRCTLPW: SLAU445I Table 6-2, p. 306)
+#[cfg(feature = "erratum_gc5")]
+fn fram_unlocked(f: impl FnOnce(&_pac::Frctl)) {
+    let fram = unsafe { _pac::Frctl::steal() };
+    critical_section::with(|_| {
+        fram.frctl0().modify(|_, w| unsafe { w.frctlpw().bits(0xA5) });
+        f(&fram);
+        let frctl0_h = (fram.frctl0().as_ptr() as *mut u8).wrapping_add(1);
+        unsafe { frctl0_h.write_volatile(0) };
+    });
+}
+
+/// CSCTL0 and CSCTL1 before the DCO was slowed for erratum CS13, and whether the FLL was on
+#[cfg(feature = "erratum_cs13")]
+struct SavedDco {
+    csctl0: u16,
+    csctl1: u16,
+    fll_was_on: bool,
+}
+
+/// Bring the DCO to 2 MHz or lower for erratum CS13 (SLAZ695J CS13, p. 9; SLAZ664S CS13; SLAZ705H
+/// CS13), if it may run faster. DCORSEL is bits 3-1 of CSCTL1 (SLAU445I Table 3-5, p. 114). In the
+/// lowest range, DCORSEL = 000b, with DCOFTRIM = 000b the DCO runs at 0.85 MHz to 0.90 MHz at its
+/// highest tap (SLASEC4D Table 5-6, p. 38; SLASE59F Table 5-6, p. 25; SLASEE4C Table 5-6, p. 27). In
+/// that range already, the FLL keeps it near 1 MHz, and nothing changes.
+#[cfg(feature = "erratum_cs13")]
+#[inline(always)]
+fn lower_dco() -> Option<SavedDco> {
+    let cs = unsafe { _pac::Cs::steal() };
+    let csctl1 = cs.csctl1().read().bits();
+    if csctl1 >> 1 & 0b111 == 0 {
+        return None;
+    }
+    let saved = SavedDco {
+        csctl0: cs.csctl0().read().bits(),
+        csctl1,
+        fll_was_on: !msp430::register::sr::read().scg0(),
+    };
+    // Switch the FLL off first, so it can't move the DCO tap while the range is low (SLAU445I 3.2.8,
+    // p. 105: "The FLL is disabled when the status register bits SCG0 or SCG1 are set"). It stays off
+    // in interrupt handlers: an interrupt "does not clear SCG0" (SLAU445I 3.2.10, p. 106).
+    set_sr_bits::<SCG0>();
+    // DCOFTRIMEN = 1 (bit 7), DCOFTRIM = 000b, DCORSEL = 000b, DISMOD (bit 0) kept (CSCTL1, SLAU445I
+    // Table 3-5, p. 114)
+    cs.csctl1().write(|w| unsafe { w.bits(csctl1 & 1 | 1 << 7) });
+    Some(saved)
+}
+
+/// Undo [`lower_dco`]: with the FLL off, put back the DCO tap (CSCTL0, SLAU445I Table 3-4, p. 113),
+/// which is harmless in the lowest range, then the range and trim (CSCTL1, SLAU445I Table 3-5,
+/// p. 114), which brings the DCO straight back to the frequency it had, and then the FLL's state
+/// (SCG0, SLAU445I Figure 4-9, p. 130).
+#[cfg(feature = "erratum_cs13")]
+#[inline(always)]
+fn restore_dco(saved: Option<SavedDco>) {
+    if let Some(saved) = saved {
+        let cs = unsafe { _pac::Cs::steal() };
+        set_sr_bits::<SCG0>();
+        cs.csctl0().write(|w| unsafe { w.bits(saved.csctl0) });
+        cs.csctl1().write(|w| unsafe { w.bits(saved.csctl1) });
+        if saved.fll_was_on {
+            unsafe { asm!("bic #{scg0}, SR", scg0 = const SCG0 as u16, options(nomem, nostack)) };
+        }
+    }
+}
+
 /// Enter Low Power Mode 0 (LPM0).
 ///
 /// In LPM0 the CPU and MCLK are disabled (SLAU445I Table 1-2, p. 39).
@@ -161,24 +353,31 @@ pub fn enter_lpm0_with_interrupts() {
 ///
 /// Interrupts must be enabled already; see [`request_lpm3_with_interrupts`].
 ///
+/// On the MSP430FR2x5x with XT1 in high-frequency mode this enters LPM0 instead, because "HFXT
+/// must be disabled before entering into LPM3, LPM4, or LPMx.5 mode" (SLASEC4D Table 6-1, note 2,
+/// p. 61).
+///
 /// Errata: on the MSP430FR2355, MSP430FR2433 and MSP430FR2522 the transition to LPM3 or LPM4 can
 /// lock up the device under some conditions (SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32; SLAZ705H
-/// CS13, PMM32).
+/// CS13, PMM32). On those devices the entry applies TI's workarounds: the FRAM is switched to
+/// INACTIVE from RAM, and a DCO above 2 MHz is slowed to below 1 MHz, with the FLL off, until the
+/// CPU returns from this function, so interrupt handlers run slower while it sleeps. On the
+/// MSP430FR2433 the FRAM bit error handling is also paused around the sleep (SLAZ664S GC5).
 #[inline(always)]
 pub fn request_lpm3() {
     const LPM3: u8 = SCG1 | SCG0 | CPU_OFF;
-    sleep::<LPM3>();
+    request_lpm::<LPM3>();
 }
 
 /// Enable interrupts and request Low Power Mode 3 (LPM3) in one instruction, like
 /// [`enter_lpm0_with_interrupts`].
 ///
-/// Errata: see [`request_lpm3`] (SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32; SLAZ705H CS13,
-/// PMM32).
+/// High-frequency XT1 and errata: see [`request_lpm3`] (SLASEC4D Table 6-1, note 2, p. 61;
+/// SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32, GC5; SLAZ705H CS13, PMM32).
 #[inline(always)]
 pub fn request_lpm3_with_interrupts() {
     const LPM3: u8 = SCG1 | SCG0 | CPU_OFF | GIE;
-    sleep::<LPM3>();
+    request_lpm::<LPM3>();
 }
 
 /// Request Low Power Mode 4 (LPM4).
@@ -196,23 +395,23 @@ pub fn request_lpm3_with_interrupts() {
 ///
 /// Interrupts must be enabled already; see [`request_lpm4_with_interrupts`].
 ///
-/// Errata: see [`request_lpm3`] (SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32; SLAZ705H CS13,
-/// PMM32).
+/// High-frequency XT1 and errata: see [`request_lpm3`] (SLASEC4D Table 6-1, note 2, p. 61;
+/// SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32, GC5; SLAZ705H CS13, PMM32).
 #[inline(always)]
 pub fn request_lpm4() {
     const LPM4: u8 = SCG1 | SCG0 | OSC_OFF | CPU_OFF;
-    sleep::<LPM4>();
+    request_lpm::<LPM4>();
 }
 
 /// Enable interrupts and request Low Power Mode 4 (LPM4) in one instruction, like
 /// [`enter_lpm0_with_interrupts`].
 ///
-/// Errata: see [`request_lpm3`] (SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32; SLAZ705H CS13,
-/// PMM32).
+/// High-frequency XT1 and errata: see [`request_lpm3`] (SLASEC4D Table 6-1, note 2, p. 61;
+/// SLAZ695J CS13, PMM32; SLAZ664S CS13, PMM32, GC5; SLAZ705H CS13, PMM32).
 #[inline(always)]
 pub fn request_lpm4_with_interrupts() {
     const LPM4: u8 = SCG1 | SCG0 | OSC_OFF | CPU_OFF | GIE;
-    sleep::<LPM4>();
+    request_lpm::<LPM4>();
 }
 
 /// Enter Low Power Mode 3.5 (LPM3.5).
@@ -225,7 +424,9 @@ pub fn request_lpm4_with_interrupts() {
 /// I/O pins have their state latched while in LPM3.5, but the IO register values are reset on
 /// wake-up (SLAU445I 8.3.3, p. 318).
 /// If XT1 clocks the RTC, use [`Pmm::new_locked`](crate::pmm::Pmm::new_locked) after the wake-up
-/// to keep it running (SLAU445I 1.4.3.3, p. 42).
+/// to keep it running (SLAU445I 1.4.3.3, p. 42). Only a low-frequency XT1 keeps running: on the
+/// MSP430FR2x5x, a high-frequency XT1 is switched off, as "HFXT must be disabled before entering
+/// into LPM3, LPM4, or LPMx.5 mode" (SLASEC4D Table 6-1, note 2, p. 61).
 ///
 /// **Waking up from LPM3.5 requires a full system reset** (SLAU445I 1.4.3.2, p. 42: "Any exit
 /// from LPMx.5 causes a BOR").
@@ -295,8 +496,14 @@ impl KeepXt1Pins {
 
     /// The XT1 pins currently in their XT1 function. XT1 is in use when XIN is selected for it;
     /// XOUT only belongs to XT1 in crystal mode and may be a GPIO in bypass mode
-    /// (SLAU445I 3.2.4, p. 103).
+    /// (SLAU445I 3.2.4, p. 103). A high-frequency XT1 keeps neither, which switches it off: "HFXT
+    /// must be disabled before entering into LPM3, LPM4, or LPMx.5 mode" (SLASEC4D Table 6-1, note 2,
+    /// p. 61).
     fn in_use() -> Self {
+        #[cfg(feature = "xt1_high_frequency")]
+        if unsafe { _pac::Cs::steal() }.csctl6().read().xts().bit_is_set() {
+            return Self::NONE;
+        }
         let xin = Xt1Xin::<()>::function_matches_type();
         Self { xin, xout: xin && Xt1Xout::<()>::function_matches_type() }
     }

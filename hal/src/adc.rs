@@ -437,6 +437,12 @@ impl AdcConfig<NoClockSet> {
         }
     }
     /// Configure the ADC to use ACLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
+    ///
+    /// On the MSP430FR2433 and MSP430FR25x2, temperature sensor readings taken in LPM3 with ACLK as the
+    /// ADC clock may be wrong: "When ACLK is used as ADC clock source and device is in LPM3 mode while
+    /// sampling the on-chip temperature sensor, the ADC may generate erroneous conversion results". The
+    /// erratum's workarounds are SMCLK or MODCLK as the ADC clock, with "A 100us sampling time" if the
+    /// conversion is triggered from LPM3, or LPM0 or active mode (SLAZ664S ADC50; SLAZ705H ADC50).
     pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::AClk),

@@ -126,11 +126,13 @@ mod capture {
 
     // Capture input A (CCIxA) of each capture/compare register, on its pin in the timer function: PxSELx = 10
     // with PxDIR = 0 (SLASE59F Table 6-11, p. 50, and SLASE59F Table 6-12, p. 51; SLASE59F Table 6-17,
-    // p. 55). Both signal connection tables leave the device input of CCI0A empty. Gpio3 to Gpio6 are
-    // unused: these timers have CCR0 to CCR2 only (SLASE59F 6.10.8, p. 50). CCIS in TAxCCTLn selects
-    // 00b = CCIxA, 01b = CCIxB, 10b = GND, 11b = VCC (SLAU445I Table 13-6, p. 386).
+    // p. 55). Both signal connection tables leave the device input of CCI0A empty, and "The CCR0 registers
+    // on Timer0_A3 and Timer1_A3 are not externally connected" (SLASE59F 6.10.8, p. 50), so input A of
+    // capture pin 0 is `NoCapturePin`, which can't be selected. Gpio3 to Gpio6 are unused: these timers
+    // have CCR0 to CCR2 only (SLASE59F 6.10.8, p. 50). CCIS in TAxCCTLn selects 00b = CCIxA, 01b = CCIxB,
+    // 10b = GND, 11b = VCC (SLAU445I Table 13-6, p. 386).
     impl CapturePeriph for Timer0A3 {
-        type Gpio0 = ();
+        type Gpio0 = NoCapturePin;
         type Gpio1 = Pin<P1, Pin1, Alternate2<Input<Floating>>>; // TA0.CCI1A on P1.1: P1SELx = 10, P1DIR = 0
         type Gpio2 = Pin<P1, Pin2, Alternate2<Input<Floating>>>; // TA0.CCI2A on P1.2: P1SELx = 10, P1DIR = 0
         type Gpio3 = ();
@@ -140,7 +142,7 @@ mod capture {
     }
 
     impl CapturePeriph for Timer1A3 {
-        type Gpio0 = ();
+        type Gpio0 = NoCapturePin;
         type Gpio1 = Pin<P1, Pin5, Alternate2<Input<Floating>>>; // TA1.CCI1A on P1.5: P1SELx = 10, P1DIR = 0
         type Gpio2 = Pin<P1, Pin4, Alternate2<Input<Floating>>>; // TA1.CCI2A on P1.4: P1SELx = 10, P1DIR = 0
         type Gpio3 = ();

@@ -31,16 +31,16 @@ fn main() -> ! {
     // ADC setup
     // ADCCLK = MODCLK undivided (ADCSSELx = 00b, ADCDIVx = 000b: SLAU445I Table 21-4, p. 563 to p. 564;
     // ADCPDIVx = 00b: SLAU445I Table 21-5, p. 565), 8-bit results (ADCRES = 00b) with the 50-ksps buffer
-    // (ADCSR = 1) (SLAU445I Table 21-5, p. 565), 4-cycle samples (ADCSHTx = 0000b, SLAU445I Table 21-3,
-    // p. 561). 4 MODCLK cycles last 0.69 us to 1.05 us (SLASE59F Table 5-9, p. 26). SLASE59F Table 5-21,
-    // p. 35 gives a tSample of 1.5 us at 2 V and 2.0 us at 3 V for 10 bits from a 1-kOhm source; its note 2
-    // makes that about 0.8 us for 8 bits, so 4 cycles of a fast MODCLK are short even for a 1-kOhm source.
+    // (ADCSR = 1) (SLAU445I Table 21-5, p. 565), 16-cycle samples (ADCSHTx = 0010b, SLAU445I Table 21-3,
+    // p. 561). MODCLK runs at up to 5.8 MHz (SLASE59F Table 5-9, p. 26), so a sample lasts at least
+    // 16 / 5.8 MHz = 2.76 us, more than the tSample of 1.5 us at 2 V and 2.0 us at 3 V that SLASE59F
+    // Table 5-21, p. 35 gives for a 1-kOhm source (10 bits; its note 2 needs less for 8 bits).
     let mut adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
         Resolution::_8BIT,
         SamplingRate::_50KSPS,
-        SampleTime::_4,
+        SampleTime::_16,
     )
     .use_modclk()
     .configure(periph.adc);

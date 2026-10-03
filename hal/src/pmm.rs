@@ -106,14 +106,28 @@ pub enum ResetCause {
 impl Pmm {
     /// Clears the LOCKLPM5 bit, so the I/O pins take on their configured state (SLAU445I 8.3.1,
     /// p. 316), and returns a `Pmm` (and an `InfoMemory`).
+    ///
+    /// The data sheets ask for the ports to be configured before LOCKLPM5 is cleared: "To enable the I/O
+    /// functions after a BOR reset, the ports must be configured first and then the LOCKLPM5 bit must be
+    /// cleared" (SLASE59F 6.10.3, p. 46; SLASEO7C 9.10.3, p. 51; SLASEE4C 6.10.3, p. 51; SLASEC4D 6.10.3,
+    /// p. 69). To follow that order, use [`Pmm::new_locked`], configure the ports, then call
+    /// [`Pmm::unlock_lpm5`]. With `Pmm::new` the pins are released first, in their reset state.
     pub fn new(pmm: _pac::Pmm, sys: _pac::Sys) -> (Pmm, InfoMemory) {
         let mut pmm = Pmm(pmm);
         pmm.unlock_lpm5();
         (pmm, InfoMemory::new(sys))
     }
 
-    /// Like [`Pmm::new`], but leaves the LOCKLPM5 bit set. Use this after a wake-up from
-    /// LPM3.5, and call [`Pmm::unlock_lpm5`] once the GPIO pins and clocks are configured.
+    /// Like [`Pmm::new`], but leaves the LOCKLPM5 bit set. Configure the GPIO pins, then call
+    /// [`Pmm::unlock_lpm5`]: "the ports must be configured first and then the LOCKLPM5 bit must be
+    /// cleared" (SLASE59F 6.10.3, p. 46; SLASEO7C 9.10.3, p. 51; SLASEE4C 6.10.3, p. 51; SLASEC4D 6.10.3,
+    /// p. 69). After LOCKLPM5 is cleared, "all interrupt flags should be cleared", and only then port
+    /// interrupts enabled (SLAU445I 8.3.1, p. 316).
+    ///
+    /// The order is right after any reset, so the reset cause needn't be checked first: where the pins
+    /// aren't locked, `unlock_lpm5` changes nothing. LOCKLPM5 resets to 1 and is "reset by a power cycle"
+    /// (SLAU445I Table 2-7, p. 97). Measured on an MSP430FR2476: a software BOR sets it again, while a
+    /// software POR and a watchdog PUC leave it as software left it.
     ///
     /// After a wake-up from LPMx.5 the I/O pins, and XT1 if it clocked the RTC, keep the
     /// configuration they had while asleep until LOCKLPM5 is cleared, while their registers
@@ -125,8 +139,8 @@ impl Pmm {
     /// "reconfiguration is required after wakeup from LPM3.5 and before clearing LOCKLPM5").
     ///
     /// After a cold start the locked pins are held in their power-on state, so XT1 cannot
-    /// start before LOCKLPM5 is cleared (SLAU445I 8.3.1, p. 316 and SLAU445I 1.4.3.4, p. 42). Use
-    /// [`Pmm::new`] then.
+    /// start before LOCKLPM5 is cleared (SLAU445I 8.3.1, p. 316 and SLAU445I 1.4.3.4, p. 42): call
+    /// [`Pmm::unlock_lpm5`] before configuring a clock with XT1 then.
     pub fn new_locked(pmm: _pac::Pmm, sys: _pac::Sys) -> (Pmm, InfoMemory) {
         (Pmm(pmm), InfoMemory::new(sys))
     }
@@ -148,7 +162,9 @@ impl Pmm {
     /// Table 2-6, p. 96).
     ///
     /// A debugger can start the program without a reset, after flashing it for example, and then
-    /// there may be no reason at all.
+    /// there may be no reason at all. On the MSP430FR2433, a PUC for a FRAM bit error that doesn't
+    /// exist leaves no reason either: "This PUC will not be recognized by the SYSRSTIV register
+    /// (SYSRSTIV = 0x00)" (SLAZ664S GC4), see [`fram`](crate::fram).
     pub fn take_reset_cause(&mut self) -> Option<ResetCause> {
         let sys = unsafe { &*_pac::Sys::ptr() };
         // SYSRSTIV values: SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48; SLASEO7C Table 9-10,
@@ -272,17 +288,28 @@ impl Pmm {
     /// Table 5-12, p. 31). The 1.5 V, 2.0 V and 2.5 V internal shared reference can't be output (SLAU445I
     /// 2.2.8, p. 88; SLASEC4D Table 5-10, p. 41; SLASEO7C 8.12.5.1, p. 33).
     ///
-    /// Waits until the buffered reference is ready (REFBGRDY, SLAU445I Table 2-4, p. 93).
+    /// The output is the buffered bandgap: "A 1.2-V reference voltage can be buffered, when EXTREFEN = 1
+    /// on PMMCTL2 register, and it can be output to" the VREF+ pin (SLASEO7C 9.10.1, p. 49; SLASEE4C
+    /// 6.10.1, p. 49). Setting REFBGEN starts it ("If written with a 1, the generation of the buffered bandgap
+    /// voltage is started"), and the function waits until it is ready (REFBGRDY, "Buffered bandgap voltage
+    /// ready status"; SLAU445I Table 2-4, p. 93). Measured on an MSP430FR2476: with EXTREFEN alone neither
+    /// REFBGACT nor REFBGRDY is set, while with REFBGEN both are within a few register reads; REFGENRDY
+    /// stays clear until REFGEN starts the variable reference, which isn't the output's.
     pub fn enable_vref_output<PIN: VrefOutputPin>(&mut self, pin: PIN) -> VrefOutput<PIN> {
-        self.unlocked(|pmm| unsafe { pmm.pmmctl2().set_bits(|w| w.extrefen().set_bit()) });
+        self.unlocked(|pmm| unsafe {
+            pmm.pmmctl2().set_bits(|w| w.extrefen().set_bit().refbgen().set_bit())
+        });
         while self.0.pmmctl2().read().refbgrdy().bit_is_clear() {}
         VrefOutput(pin)
     }
 
     /// Stop outputting the 1.2 V reference, and return the pin (clears PMMCTL2.EXTREFEN, SLAU445I
-    /// Table 2-4, p. 94).
+    /// Table 2-4, p. 94, and REFBGEN, which the hardware may have cleared already: "this bit is cleared by
+    /// hardware or writing 0", SLAU445I Table 2-4, p. 93).
     pub fn disable_vref_output<PIN>(&mut self, output: VrefOutput<PIN>) -> PIN {
-        self.unlocked(|pmm| unsafe { pmm.pmmctl2().clear_bits(|w| w.extrefen().clear_bit()) });
+        self.unlocked(|pmm| unsafe {
+            pmm.pmmctl2().clear_bits(|w| w.extrefen().clear_bit().refbgen().clear_bit())
+        });
         output.0
     }
 }

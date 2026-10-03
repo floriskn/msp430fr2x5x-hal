@@ -32,13 +32,15 @@ fn main() -> ! {
     // ADCPCTL1 = 1 (SLASEE4C Table 6-15, p. 58; SLASEE4C Table 6-13, p. 55).
     let mut adc_pin = port1.pin1.to_adc_mode();
 
-    // ADC setup
+    // ADC setup: 16-cycle samples (ADCSHTx = 0010b, SLAU445I Table 21-3, p. 561). MODCLK runs at up to
+    // 5.8 MHz (SLASEE4C Table 5-9, p. 28), so a sample lasts at least 16 / 5.8 MHz = 2.76 us, more than the
+    // 2.0 us tSample at 3 V for a 1-kOhm source (SLASEE4C Table 5-21, p. 38). 4 cycles would be 0.69 us.
     let mut adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
         Resolution::_8BIT,
         SamplingRate::_50KSPS,
-        SampleTime::_4,
+        SampleTime::_16,
     )
     .use_modclk()
     .configure(periph.adc);

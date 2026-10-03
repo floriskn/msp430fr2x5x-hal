@@ -160,7 +160,11 @@ where
     ///
     /// On the MSP430FR2x5x, MSP430FR2433 and MSP430FR25x2, a slave with UCCKPH = 1
     /// (`CaptureOnFirstTransition`) sends wrong data, and an eUSCI_A receives nothing, if SCLK isn't at its
-    /// idle level when the eUSCI leaves reset (SLAZ695J USCI47, SLAZ664S USCI47, SLAZ705H USCI47).
+    /// idle level when the eUSCI leaves reset (SLAZ695J USCI47, SLAZ664S USCI47, SLAZ705H USCI47). The
+    /// erratum's workarounds: "Use clock phase mode UCCKPH = 0 for MSP SPI slave if allowed by the
+    /// application", or "The SPI master must set the clock pin at the appropriate idle level (low for
+    /// UCCKPL = 0, high for UCCKPL = 1) before SPI slave is reset (UCSWRST bit is cleared)", that is,
+    /// before this slave is configured.
     pub fn to_slave(mut self) -> SpiConfig<USCI, Slave, M> {
         self.ctlw0.ucmst = false;
         // UCSSEL is 'don't care' in slave mode (SLAU445I 23.3.6, p. 609)
@@ -370,17 +374,22 @@ where
 
     #[inline]
     fn configure_hw(&self) {
-        USCI::configure_pin_mapping();
-
         // Initialization procedure of SLAU445I 23.3.1, p. 606: UCxCTLW0, UCxBRW and UCLISTEN are
         // "Modify only when UCSWRST = 1" (SLAU445I 23.4.1 to 23.4.3, p. 613 to p. 615;
         // SLAU445I 23.5.1 to 23.5.3, p. 620 to p. 622)
+        // 1. Set UCSWRST
         self.usci.ctw0_set_rst();
 
+        // 2. Initialize the registers
         self.usci.ctw0_wr(&self.ctlw0);
         self.usci.brw_wr(self.prescaler);
         self.usci.uclisten_clear();
 
+        // 3. Configure ports: the caller passes the pins already in their eUSCI function, and the
+        // remapping bits are set here
+        USCI::configure_pin_mapping();
+
+        // 4. Clear UCSWRST
         self.usci.ctw0_clear_rst();
 
         self.usci.clear_transmit_interrupt();
@@ -484,15 +493,27 @@ macro_rules! spi_common {
             }
         }
 
-        /// Get the source of the interrupt currently being serviced.
+        /// Get the source of the interrupt currently being serviced: the highest-priority pending interrupt
+        /// among the enabled ones, in the order of UCxIV, UCRXIFG before UCTXIFG (SLAU445I Table 23-10,
+        /// p. 618; SLAU445I Table 23-19, p. 625; "Disabled interrupts do not affect the UCxIV value",
+        /// SLAU445I 23.3.8.3, p. 611).
+        ///
+        /// It's worked out from UCxIFG and UCxIE instead of read from UCxIV, because "any access, read or
+        /// write, of the UCxIV register automatically resets the highest-pending interrupt flag" (SLAU445I
+        /// 23.3.8.3, p. 611), after which the checked read and write methods would block. The flags stay set
+        /// until UCxRXBUF is read or UCxTXBUF written (SLAU445I 23.3.8.2 and 23.3.8.1, p. 611), so the
+        /// Tx interrupt keeps firing until a byte is written or Tx interrupts are disabled.
         #[inline]
         pub fn interrupt_source(&mut self) -> SpiVector {
-            // UCxIV values (SLAU445I Table 23-10, p. 618; SLAU445I Table 23-19, p. 625)
-            match self.usci.iv_rd() {
-                0 => SpiVector::None,
-                2 => SpiVector::RxBufferFull,
-                4 => SpiVector::TxBufferEmpty,
-                _ => unsafe { core::hint::unreachable_unchecked() },
+            // UCRXIE is bit 0 and UCTXIE bit 1 of UCxIE (SLAU445I Table 23-8, p. 617; SLAU445I Table 23-17,
+            // p. 624)
+            let ie = self.usci.ie_rd();
+            if ie & 1 << 0 != 0 && self.usci.receive_flag() {
+                SpiVector::RxBufferFull
+            } else if ie & 1 << 1 != 0 && self.usci.transmit_flag() {
+                SpiVector::TxBufferEmpty
+            } else {
+                SpiVector::None
             }
         }
     };

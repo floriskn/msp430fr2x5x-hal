@@ -73,7 +73,7 @@ fn main() -> ! {
         .pulldown_all()
         .config_pin0(|p| p.to_output())
         .split(&pmm);
-    let mut red_led = port1.pin0;
+    let mut led1 = port1.pin0;
     let port2 = Batch::new(periph.p2)
         .pulldown_all()
         .config_pin1(|p| p.floating())
@@ -103,7 +103,7 @@ fn main() -> ! {
         let bak_mem = BackupMemory::as_u8s(periph.bkmem);
 
         let old_value = bak_mem[0] == 1;
-        red_led.set_state(old_value.into()).ok();
+        led1.set_state(old_value.into()).ok();
 
         let new_value = if old_value { 0 } else { 1 };
         bak_mem[0] = new_value;

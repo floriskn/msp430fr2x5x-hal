@@ -139,12 +139,23 @@ impl Icc {
     }
 
     /// Serve interrupts by priority, with nesting (ICCEN, SLAU445I Table 5-2, p. 293).
+    ///
+    /// Interrupts are disabled while ICCEN changes, as the user's guide recommends ("It is recommended to
+    /// disable the GIE bit before enabling or disabling the ICC", SLAU445I 5.2.6.3, p. 288 and note "ICC
+    /// Bypass", p. 291). Call it from the main loop, not from an interrupt handler ("It is recommended to
+    /// enable or disable the ICC module only in the main loop of the software code", same note).
     #[inline]
-    pub fn enable(&mut self) { unsafe { self.0.iccsc().set_bits(|w| w.bits(ICCEN)) } }
+    pub fn enable(&mut self) {
+        critical_section::with(|_| unsafe { self.0.iccsc().set_bits(|w| w.bits(ICCEN)) })
+    }
 
-    /// Serve interrupts in vector table order again (ICCEN, SLAU445I 5.2, p. 282).
+    /// Serve interrupts in vector table order again (ICCEN, SLAU445I 5.2, p. 282). Like [`Icc::enable`], it
+    /// changes ICCEN with interrupts disabled, and is for the main loop only (SLAU445I 5.2.6.3, p. 288 and
+    /// note "ICC Bypass", p. 291).
     #[inline]
-    pub fn disable(&mut self) { unsafe { self.0.iccsc().clear_bits(|w| w.bits(!ICCEN)) } }
+    pub fn disable(&mut self) {
+        critical_section::with(|_| unsafe { self.0.iccsc().clear_bits(|w| w.bits(!ICCEN)) })
+    }
 
     /// The priority of the interrupt being served (ICMC), or `None` if no interrupt is (VSEFLG). In a nested
     /// handler, this is the priority of the innermost one (SLAU445I 5.2.4, p. 284 and SLAU445I Table 5-2,

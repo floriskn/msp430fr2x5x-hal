@@ -220,6 +220,42 @@ macro_rules! timer_b_field {
 }
 pub(crate) use timer_b_field;
 
+// Run `$body` with the timer stopped (MC = 0) and its mode set back afterwards. The user's guide lists
+// OUTMOD among the controls "designed not to be dynamically updated while the timer is running", to be
+// changed after "Write zero to the mode control bits (MC = 0)" (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7,
+// p. 407), and "TI recommends stopping the timer (MC = 0) before changing the OUTMOD bits" (SLAU445I
+// 13.2.5.1.3, p. 379). "Switching to Stop mode can be performed at any time" (SLAU445I 13.2.7, p. 382). In
+// stop mode "The timer is halted" (SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394), and set back
+// to up mode "the timer starts counting up from the value in TAxR" (SLAU445I 13.2.3.1.1, p. 371), so it
+// only loses the counts of the few cycles it was stopped. MC is bits 5-4 of TAxCTL/TBxCTL (SLAU445I
+// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409).
+macro_rules! timer_stopped {
+    ($ctl:expr, $body:expr) => {{
+        let ctl = $ctl;
+        let mc = ctl.read().mc().bits();
+        let stop = $crate::hw_traits::timer_base::Mode::Stop as u8;
+        if mc != stop {
+            unsafe { ctl.clear_bits(|w| w.mc().bits(stop)) };
+        }
+        let ret = $body;
+        if mc != stop {
+            unsafe { ctl.set_bits(|w| w.mc().bits(mc)) };
+        }
+        ret
+    }};
+}
+pub(crate) use timer_stopped;
+
+// Run `$body` with a Timer_A stopped, as `timer_stopped`; a Timer_B runs it as it is. For Timer_A "In
+// Compare mode, the timer should be stopped by writing the MC bits to zero (MC = 0) before writing new data
+// to TAxCCRn" (SLAU445I 13.2.4.2, p. 376). A Timer_B buffers new TBxCCRn values in its compare latches
+// instead (SLAU445I 14.2.4.2.1, p. 400), and its chapter has no such note.
+macro_rules! timer_a_stopped {
+    (B, $ctl:expr, $body:expr) => { $body };
+    (A, $ctl:expr, $body:expr) => { $crate::hw_traits::timer_base::timer_stopped!($ctl, $body) };
+}
+pub(crate) use timer_a_stopped;
+
 // Mark Timer_B peripherals
 macro_rules! timer_b_marker {
     (A, $TBx:ident) => {};
@@ -228,21 +264,29 @@ macro_rules! timer_b_marker {
 pub(crate) use timer_b_marker;
 
 macro_rules! ccrn_impl {
-    ($kind:ident, $TBx:ident, $CCRn:ident, $tbxcctln:ident, $tbxccrn:ident) => {
+    ($kind:ident, $TBx:ident, $tbxctl:ident, $CCRn:ident, $tbxcctln:ident, $tbxccrn:ident) => {
         impl CCRn<$CCRn> for $TBx {
-            // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
+            // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413), written with a
+            // Timer_A stopped (SLAU445I 13.2.4.2, p. 376)
             #[inline(always)]
-            fn set_ccrn(&self, count: u16) { self.$tbxccrn().write(|w| unsafe { w.bits(count) }); }
+            fn set_ccrn(&self, count: u16) {
+                $crate::hw_traits::timer_base::timer_a_stopped!($kind, self.$tbxctl(), {
+                    self.$tbxccrn().write(|w| unsafe { w.bits(count) })
+                });
+            }
 
             // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
             #[inline(always)]
             fn get_ccrn(&self) -> u16 { self.$tbxccrn().read().bits() }
 
             // A write: OUTMOD, with CAP = 0 (compare mode) and every other field cleared (SLAU445I
-            // Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
+            // Table 13-6, p. 386; SLAU445I Table 14-8, p. 411), with the timer stopped (SLAU445I 13.2.7,
+            // p. 382; SLAU445I 14.2.7, p. 407)
             #[inline(always)]
             fn config_outmod(&self, outmod: Outmod) {
-                self.$tbxcctln().write(|w| unsafe { w.outmod().bits(outmod as u8) });
+                $crate::hw_traits::timer_base::timer_stopped!(self.$tbxctl(), {
+                    self.$tbxcctln().write(|w| unsafe { w.outmod().bits(outmod as u8) })
+                });
             }
 
             #[inline(always)]
@@ -307,12 +351,15 @@ macro_rules! ccrn_impl {
 
             #[inline(always)]
             fn set_outmod_high_bit(&self, set: bool) {
-                // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
-                if set {
-                    unsafe { self.$tbxcctln().set_bits(|w| w.bits(1 << 7)) };
-                } else {
-                    unsafe { self.$tbxcctln().clear_bits(|w| w.bits(!(1 << 7))) };
-                }
+                // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411), changed
+                // with the timer stopped (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7, p. 407)
+                $crate::hw_traits::timer_base::timer_stopped!(self.$tbxctl(), {
+                    if set {
+                        unsafe { self.$tbxcctln().set_bits(|w| w.bits(1 << 7)) };
+                    } else {
+                        unsafe { self.$tbxcctln().clear_bits(|w| w.bits(!(1 << 7))) };
+                    }
+                });
             }
 
             #[inline(always)]
@@ -492,7 +539,7 @@ macro_rules! timer_base_impl {
         // Timer_B only: CLLD and CNTL (SLAU445I 14.1.1, p. 391)
         $crate::hw_traits::timer_base::timer_b_marker!($kind, $TBx);
 
-        $($crate::hw_traits::timer_base::ccrn_impl!($kind, $TBx, $CCRn, $tbxcctln, $tbxccrn);)*
+        $($crate::hw_traits::timer_base::ccrn_impl!($kind, $TBx, $tbxctl, $CCRn, $tbxcctln, $tbxccrn);)*
     };
 }
 pub(crate) use timer_base_impl;

@@ -169,11 +169,14 @@ pub const BAK_MEM_SIZE: usize = 32;
 
 /* Capture */
 mod capture {
-    use crate::{capture::CapturePeriph, gpio::*, pac::*};
+    use crate::{capture::{CapturePeriph, NoCapturePin}, gpio::*, pac::*};
 
     // Capture inputs CCInA (SLASEC4D Tables 6-16 to 6-19, p. 73 to p. 75), on the pins with PxDIR = 0
     // in the pin function tables. CCR0 has no pin: "The CCR0 registers on all timers are not
-    // externally connected" (SLASEC4D 6.10.9, p. 73).
+    // externally connected" (SLASEC4D 6.10.9, p. 73). Inside the device, CCI0A of TB0 is "From RTC
+    // (internal)" and of TB1 "Timer3_B7 CCR0B output (internal)", selected with `()`; on TB2 and TB3 it is
+    // "Not used", so it is `NoCapturePin`, which can't be selected (SLASEC4D Table 6-16, p. 73; SLASEC4D
+    // Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74; SLASEC4D Table 6-19, p. 75).
 
     // TB0: P1SELx = 10 (SLASEC4D Table 6-16, p. 73; SLASEC4D Table 6-63, p. 96)
     impl CapturePeriph for Tb0 {
@@ -199,7 +202,7 @@ mod capture {
 
     // TB2: P5SELx = 01 (SLASEC4D Table 6-18, p. 74; SLASEC4D Table 6-67, p. 104)
     impl CapturePeriph for Tb2 {
-        type Gpio0 = ();
+        type Gpio0 = NoCapturePin;
         type Gpio1 = Pin<P5, Pin0, Alternate1<Input<Floating>>>; // TB2.CCI1A, P5SELx = 01
         type Gpio2 = Pin<P5, Pin1, Alternate1<Input<Floating>>>; // TB2.CCI2A, P5SELx = 01
         type Gpio3 = ();
@@ -210,7 +213,7 @@ mod capture {
 
     // TB3: P6SELx = 01 (SLASEC4D Table 6-19, p. 75; SLASEC4D Table 6-68, p. 106)
     impl CapturePeriph for Tb3 {
-        type Gpio0 = ();
+        type Gpio0 = NoCapturePin;
         type Gpio1 = Pin<P6, Pin0, Alternate1<Input<Floating>>>; // TB3.CCI1A, P6SELx = 01
         type Gpio2 = Pin<P6, Pin1, Alternate1<Input<Floating>>>; // TB3.CCI2A, P6SELx = 01
         type Gpio3 = Pin<P6, Pin2, Alternate1<Input<Floating>>>; // TB3.CCI3A, P6SELx = 01

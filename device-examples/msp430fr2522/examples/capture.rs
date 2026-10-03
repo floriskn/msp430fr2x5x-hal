@@ -61,9 +61,10 @@ fn main() -> ! {
     // SLASEE4C Figure 6-2, p. 54)
     let captures = CaptureParts3::config(periph.ta0, TimerConfig::aclk(&aclk))
         .config_cap2_input_A(p1.pin5.to_alternate2())
-        .config_cap1_trigger(CapTrigger::FallingEdge)
+        .config_cap2_trigger(CapTrigger::FallingEdge)
         .commit();
-    let mut capture = captures.cap1;
+    // CCR2 captures falling edges on its input A, P1.5
+    let mut capture = captures.cap2;
 
     let mut last_cap = 0;
     loop {

@@ -34,7 +34,12 @@ fn main() -> ! {
     // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
     Wdt::constrain(periph.wdt_a);
 
-    let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    // After a BOR the pins stay locked in their reset state until LOCKLPM5 is cleared, and the data
+    // sheet asks for the ports to be configured first (SLASEO7C 9.10.3, p. 51: "the ports must be
+    // configured first and then the LOCKLPM5 bit must be cleared"), so the LEDs are set below before
+    // the pins are released. Measured on an MSP430FR2476: a software BOR sets LOCKLPM5 again, a
+    // software POR and a watchdog PUC leave it clear, and then unlock_lpm5() changes nothing.
+    let (mut pmm, _) = Pmm::new_locked(periph.pmm, periph.sys);
 
     // Read the first reason, then the rest, which also clears them for the next reset
     // (reading SYSRSTIV clears the highest pending flag: SLAU445I 1.3.7, p. 36)
@@ -76,6 +81,9 @@ fn main() -> ! {
     red.set_state(r.into()).ok();
     green.set_state(g.into()).ok();
     blue.set_state(b.into()).ok();
+
+    // The ports are configured: release them
+    pmm.unlock_lpm5();
 
     // PMMSWBOR triggers a BOR and PMMSWPOR a POR (SLAU445I Table 2-2, p. 91)
     loop {

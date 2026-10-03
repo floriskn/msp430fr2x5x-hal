@@ -143,6 +143,8 @@ pub const UCTXBRK: u16 = 1 << 1;
 // UCAxIE and UCAxIFG bits (SLAU445I Table 22-17, p. 600 and SLAU445I Table 22-18, p. 601)
 pub const UCTXCPTIFG: u16 = 1 << 3;
 pub const UCSTTIFG: u16 = 1 << 2;
+pub const UCTXIFG: u16 = 1 << 1;
+pub const UCRXIFG: u16 = 1 << 0;
 // UCAxSTATW bits (SLAU445I Table 22-12, p. 596)
 pub const UCADDR_UCIDLE: u16 = 1 << 1;
 
@@ -276,6 +278,7 @@ pub trait EUsciUart: Steal {
     fn statw_bits(&self) -> u16;
     // UCAxIE (SLAU445I Table 22-17, p. 600) and UCAxIFG (SLAU445I Table 22-18, p. 601). The _clr_bits
     // methods clear the bits set in `mask`.
+    fn ie_bits(&self) -> u16;
     fn ie_set_bits(&self, mask: u16);
     fn ie_clr_bits(&self, mask: u16);
     fn ifg_bits(&self) -> u16;
@@ -382,10 +385,12 @@ pub trait EUsciI2C: Steal {
     fn ie_clr(&self, mask: u16);
 
     // UCBxIFG (SLAU445I Table 24-19, p. 662 to p. 663). ifg_rst writes the PAC's reset value, 0, which
-    // clears every flag; SLAU445I Table 24-3, p. 648 gives 2A02h as the reset value.
+    // clears every flag; SLAU445I Table 24-3, p. 648 gives 2A02h as the reset value. ifg_clr_bits clears
+    // the bits set in `mask`.
     fn ifg_rd(&self) -> Self::IfgOut;
     fn ifg_wr(&self, reg: u16);
     fn ifg_rst(&self);
+    fn ifg_clr_bits(&self, mask: u16);
 
     // UCBxIV (SLAU445I Table 24-20, p. 664)
     fn iv_rd(&self) -> u16;
@@ -760,6 +765,9 @@ macro_rules! eusci_uart_impl {
 
             // UCAxIE (SLAU445I Table 22-17, p. 600), mask inverted for clear_bits as above
             #[inline(always)]
+            fn ie_bits(&self) -> u16 { self.$ucaxie().read().bits() }
+
+            #[inline(always)]
             fn ie_set_bits(&self, mask: u16) { unsafe { self.$ucaxie().set_bits(|w| w.bits(mask)) }; }
 
             #[inline(always)]
@@ -1075,6 +1083,11 @@ macro_rules! eusci_i2c_impl {
             // cleared.
             #[inline(always)]
             fn ifg_rst(&self) { self.$ucbxifg().reset(); }
+
+            // UCBxIFG (SLAU445I Table 24-19, p. 662 to p. 663), mask inverted for clear_bits as in the UART
+            // ifg_clr_bits
+            #[inline(always)]
+            fn ifg_clr_bits(&self, mask: u16) { unsafe { self.$ucbxifg().clear_bits(|w| w.bits(!mask)) }; }
 
             // UCBxIV (SLAU445I Table 24-20, p. 664)
             #[inline(always)]

@@ -10,12 +10,22 @@
 //! The outputs go high at the start of each period with [`PwmParts3::new`] (output mode reset/set,
 //! SLAU445I Figure 13-12, p. 377), or are centered on the timer's return to 0 with
 //! [`PwmParts3::new_center_aligned`] (output mode toggle/reset in up/down mode, SLAU445I Figure 13-14,
-//! p. 379). [`Pwm::set_polarity`] makes an output active low. On a Timer_B the compare latches are set up
-//! so that a new duty cycle takes effect at the start of the next period, so no period is cut short
-//! (SLAU445I 14.2.4.2.1, p. 400), and with center-aligned PWM when the timer next counts to the top or to
-//! 0 (SLAU445I Table 14-2, p. 400). In up mode, which edge-aligned PWM uses, the MSP430FR2x5x and
-//! MSP430FR247x load a new duty cycle at once instead (erratum TB25: SLAZ695J TB25, p. 11; SLAZ726B TB25,
-//! p. 8).
+//! p. 379). [`Pwm::set_polarity`] makes an output active low.
+//!
+//! A new duty cycle takes effect as follows:
+//! - With center-aligned PWM on a Timer_B, when the timer next counts to the top or to 0 (the compare
+//!   latch, CLLD = 10b: SLAU445I 14.2.4.2.1, p. 400; SLAU445I Table 14-2, p. 400).
+//! - With edge-aligned PWM on a Timer_B, at once: the compare latch would load at the start of the next
+//!   period, but erratum TB25 makes it load at once in up mode on the MSP430FR2x5x and MSP430FR247x, so the
+//!   HAL sets CLLD = 00b, as the erratum's workaround does (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
+//!   For a clean change, set the duty cycle in the interrupt at the start of each period, as the rest of
+//!   the workaround does: see [`Pwm::enable_period_interrupt`].
+//! - On a Timer_A, at once. The timer is stopped for the write, as the user's guide says (SLAU445I
+//!   13.2.4.2, p. 376).
+//!
+//! A duty cycle written below the timer's current count takes effect in the next period, as the count
+//! has passed it: in reset/set mode "The output is reset when the timer counts to the TAxCCRn value"
+//! (SLAU445I Table 13-2, p. 376), so that period's output stays high to the end.
 //!
 //! # Timer_B outputs and the comparators
 //!
@@ -73,10 +83,12 @@ fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
             // Set as the timer wraps to 0, reset when it reaches CCRn (SLAU445I Table 13-2, p. 376;
             // SLAU445I Figure 13-12, p. 377)
             CCRn::<C>::config_outmod(timer, Outmod::ResetSet);
-            // Load when the timer counts to 0 (CLLD = 01b, SLAU445I Table 14-2, p. 400). In up mode the
-            // MSP430FR2x5x and MSP430FR247x load at once instead: "TBxCCRn will update immediately instead
-            // of the described condition" (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
-            CCRn::<C>::set_clld(timer, 0b01);
+            // Load at once (CLLD = 00b, SLAU445I Table 14-2, p. 400). Loading when the timer counts to 0
+            // (CLLD = 01b) doesn't work in up mode on the MSP430FR2x5x and MSP430FR247x, the devices with a
+            // Timer_B: "TBxCCRn will update immediately instead of the described condition". The workaround
+            // starts with "1. Set TBxCCTLn. CLLD = 0x00", then updates TBxCCRn in the TBIFG interrupt
+            // (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8), see `Pwm::enable_period_interrupt`.
+            CCRn::<C>::set_clld(timer, 0b00);
         }
         Alignment::Center => {
             // In up/down mode: high from CCRn on the way down to CCRn on the way up, reset at the top
@@ -321,8 +333,8 @@ pub struct AdcTriggerOutput<T>(PhantomData<T>);
 
 impl<T: CapCmp<CCR1>> AdcTriggerOutput<T> {
     /// Change how many timer cycles the output stays high at the start of each period. It writes CCR1
-    /// (TAxCCR1/TBxCCR1: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) while the timer runs,
-    /// as [`Pwm`] duty cycle changes do.
+    /// (TAxCCR1/TBxCCR1: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) as [`Pwm`] duty cycle
+    /// changes do, with a Timer_A stopped for the write (SLAU445I 13.2.4.2, p. 376).
     #[inline]
     pub fn set_high_cycles(&mut self, high_cycles: u16) {
         let timer = unsafe { T::steal() };
@@ -375,9 +387,11 @@ impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
     #[inline]
     pub fn enable(&mut self) { self.pin.set_function_from_type(); }
 
-    /// Select the level the output has for the duty cycle. The change takes effect at once, without
-    /// passing through other output modes (SLAU445I 13.2.5.1.3, p. 379; 14.2.5.1.3, p. 404, note
-    /// "Switching between output modes": "one of the OUTMOD bits should remain set during the transition").
+    /// Select the level the output has for the duty cycle. Only the top OUTMOD bit changes, so the mode
+    /// doesn't pass through other output modes (SLAU445I 13.2.5.1.3, p. 379; 14.2.5.1.3, p. 404, note
+    /// "Switching between output modes": "one of the OUTMOD bits should remain set during the transition"),
+    /// and the timer is stopped for the change (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7, p. 407). The
+    /// output takes its new level at its next set or reset event (SLAU445I Table 13-2, p. 376).
     #[inline]
     pub fn set_polarity(&mut self, polarity: Polarity) {
         let timer = unsafe { T::steal() };
@@ -386,6 +400,47 @@ impl<T: PwmPeriph<C, M>, C, M: PinMap> Pwm<T, C, M> {
         let center = CCRn::<C>::outmod_rd(&timer) & 0b011 == 0b010;
         let high_bit = (polarity == Polarity::ActiveHigh) != center;
         CCRn::<C>::set_outmod_high_bit(&timer, high_bit);
+    }
+
+    /// Request the timer's overflow interrupt at the start of each period, shared by all PWM outputs of the
+    /// timer (TAIE/TBIE, SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 410). Its flag is set when
+    /// the timer counts from CCR0 to zero, with edge-aligned PWM ("The TBIFG interrupt flag is set when the
+    /// timer counts from TBxCL0 to zero", SLAU445I 14.2.3.1, p. 394; SLAU445I 13.2.3.1, p. 371), and when
+    /// it "completes counting down from 0001h to 0000h" with center-aligned PWM (SLAU445I 14.2.3.4,
+    /// p. 396; SLAU445I 13.2.3.4, p. 373). It is served by the timer's second interrupt vector, with
+    /// CCR1 and up (TAxIV/TBxIV, SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414); clear it
+    /// there with [`Pwm::take_period_flag`].
+    ///
+    /// This is the workaround for erratum TB25 on a Timer_B in up mode: "2. Enable the Timer B interrupt
+    /// (TBIE) in TBxCTL 3. Update TBxCCRn value within interrupt routine. Timer B Interrupt would need to
+    /// be serviced in a timely manner to mitigate disruption or unintended timer output if an output mode
+    /// is used" (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8). A duty cycle set in that interrupt, while the
+    /// count is still low, takes effect in the period that has just started.
+    #[inline]
+    pub fn enable_period_interrupt(&mut self) {
+        let timer = unsafe { T::steal() };
+        timer.tbie_set();
+    }
+
+    /// Stop requesting the overflow interrupt (TAIE/TBIE, SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    /// p. 410)
+    #[inline]
+    pub fn disable_period_interrupt(&mut self) {
+        let timer = unsafe { T::steal() };
+        timer.tbie_clr();
+    }
+
+    /// Whether a new period started since the flag was last cleared, and clear it (TAIFG/TBIFG, SLAU445I
+    /// Table 13-4, p. 384; SLAU445I Table 14-6, p. 410). Call it in the interrupt handler, as the flag
+    /// keeps requesting the interrupt while it is set.
+    #[inline]
+    pub fn take_period_flag(&mut self) -> bool {
+        let timer = unsafe { T::steal() };
+        let set = timer.tbifg_rd();
+        if set {
+            timer.tbifg_clr();
+        }
+        set
     }
 }
 
@@ -412,12 +467,12 @@ mod ehal1 {
         ///
         /// As the error type is `Infallible` this can be safely unwrapped.
         ///
-        /// It writes CCRn (TAxCCRn/TBxCCRn: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) while
-        /// the timer runs. For Timer_A the user's guide says the timer "should be stopped" before new data is
-        /// written to TAxCCRn in compare mode (SLAU445I 13.2.4.2, p. 376); a Timer_B buffers the value in its
-        /// compare latch (SLAU445I 14.2.4.2.1, p. 400), but loads it at once in up mode (SLAZ695J TB25,
-        /// p. 11; SLAZ726B TB25, p. 8). The code doesn't stop the timer, so that the PWM output keeps
-        /// running.
+        /// It writes CCRn (TAxCCRn/TBxCCRn: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413). A
+        /// Timer_A is stopped for the write, as the user's guide says it "should be stopped" before new data
+        /// is written to TAxCCRn in compare mode (SLAU445I 13.2.4.2, p. 376), so it misses the few timer
+        /// clocks that takes, and that period is longer by as much. A Timer_B keeps running: it buffers the
+        /// value in its compare latch (SLAU445I 14.2.4.2.1, p. 400), but in up mode loads it at once (SLAZ695J
+        /// TB25, p. 11; SLAZ726B TB25, p. 8); see [`Pwm::enable_period_interrupt`] for the workaround.
         #[inline]
         fn set_duty_cycle(&mut self, duty: u16) -> Result<(), Self::Error> {
             let timer = unsafe { T::steal() };
@@ -436,8 +491,8 @@ mod ehal02 {
         /// Number of cycles
         type Duty = u16;
 
-        /// Writes CCRn while the timer runs, as `set_duty_cycle` does (TAxCCRn/TBxCCRn: SLAU445I Table 13-7,
-        /// p. 388; SLAU445I Table 14-9, p. 413).
+        /// Writes CCRn as `set_duty_cycle` does, with a Timer_A stopped for the write (TAxCCRn/TBxCCRn:
+        /// SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413; SLAU445I 13.2.4.2, p. 376).
         #[inline]
         fn set_duty(&mut self, duty: Self::Duty) {
             let timer = unsafe { T::steal() };

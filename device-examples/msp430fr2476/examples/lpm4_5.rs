@@ -35,7 +35,7 @@ fn main() -> ! {
         .pulldown_all()
         .config_pin0(|p| p.to_output())
         .split(&pmm);
-    let mut red_led = port1.pin0;
+    let mut led1 = port1.pin0;
 
     let port2 = Batch::new(periph.p2)
         .pulldown_all()
@@ -51,7 +51,7 @@ fn main() -> ! {
             for _ in 0..10_000 {
                 nop();
             }
-            red_led.toggle().ok();
+            led1.toggle().ok();
         }
     }
     // Otherwise it was a regular reset. Prepare to enter LPM4.5.

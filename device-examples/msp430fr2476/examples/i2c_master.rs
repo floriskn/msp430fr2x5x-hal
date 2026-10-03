@@ -21,7 +21,7 @@ fn main() -> ! {
     let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
     // LED1 on P1.0, which toggles every second, is green whatever the variable name says; P5.0 is the
     // green part of LED2, on while every transaction succeeds (SLAU802 Figure 19, p. 25)
-    let mut red_led = Batch::new(periph.p1).split(&pmm).pin0.to_output();
+    let mut led1 = Batch::new(periph.p1).split(&pmm).pin0.to_output();
     let mut green_led = Batch::new(periph.p5).split(&pmm).pin0.to_output();
     let p3 = Batch::new(periph.p3).split(&pmm);
 
@@ -104,7 +104,7 @@ fn main() -> ! {
         }
 
         green_led.set_state(is_ok.into()).ok();
-        red_led.toggle().ok();
+        led1.toggle().ok();
         delay.delay_ms(1000);
     }
 }
