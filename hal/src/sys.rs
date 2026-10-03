@@ -1,5 +1,6 @@
-//! System control: the RST/NMI pin, the vacant memory access interrupt, the JTAG mailbox and the
-//! non-maskable interrupts (NMIs)
+//! System control: the RST/NMI pin, the vacant memory access interrupt, the JTAG mailbox, the
+//! non-maskable interrupts (NMIs), the interrupt vectors in RAM, the bootloader (BSL) settings, and the
+//! JTAG pin and PMM register protection
 //!
 //! Begin with [`SysParts::new()`], which splits the special function registers (SFR, SLAU445I 1.14,
 //! p. 61) into these functions. The reset cause and software resets are on [`Pmm`](crate::pmm::Pmm), FRAM
@@ -24,6 +25,7 @@
 //! SLAU445I 1.3.7, p. 36).
 
 use crate::_pac;
+use crate::gpio::{Pin, Pin4, Pin5, Pin6, Pin7, P1};
 use core::{convert::Infallible, marker::PhantomData};
 
 /// The system control functions of the special function registers (SFR, SLAU445I Table 1-8, p. 61)
@@ -34,6 +36,15 @@ pub struct SysParts {
     pub vacant_memory: VacantMemory,
     /// The JTAG mailbox, in 16-bit mode as after reset (JMBMODE, SLAU445I Table 1-15, p. 68)
     pub jtag_mailbox: JtagMailbox<Mode16>,
+    /// Where the CPU takes the interrupt vectors from (SYSRIVECT, SLAU445I 1.3.6.1, p. 36)
+    pub interrupt_vectors: InterruptVectors,
+    /// The bootloader (BSL) settings (SYSBSLC, SLAU445I Table 1-14, p. 67)
+    pub bsl: Bsl,
+    /// The JTAG pins, which can be dedicated to JTAG until the next BOR (SYSJTAGPIN, SLAU445I Table 1-13,
+    /// p. 66)
+    pub jtag_pins: JtagPins,
+    /// The protection of the PMM registers, until the next BOR (SYSPMMPE, SLAU445I Table 1-13, p. 66)
+    pub pmm_protection: PmmProtection,
 }
 
 impl SysParts {
@@ -45,6 +56,10 @@ impl SysParts {
             rst_nmi_pin: RstNmiPin(PhantomData),
             vacant_memory: VacantMemory(()),
             jtag_mailbox: JtagMailbox(PhantomData),
+            interrupt_vectors: InterruptVectors(()),
+            bsl: Bsl(()),
+            jtag_pins: JtagPins(()),
+            pmm_protection: PmmProtection(()),
         }
     }
 }
@@ -331,6 +346,178 @@ impl JtagMailbox<Mode32> {
         let low = sys.sysjmbi0().read().bits() as u32;
         let high = sys.sysjmbi1().read().bits() as u32;
         Ok(high << 16 | low)
+    }
+}
+
+// One past the last byte of RAM (SLASEC4D Table 6-4, p. 65, with the MSP430FR215x RAM sizes in SLASEC4D 1.1,
+// p. 2; SLASE59F Table 6-23, p. 61; SLASEO7C Table 9-31, p. 73; SLASEE4C Table 6-19, p. 62)
+#[cfg(any(feature = "msp430fr2355", feature = "msp430fr2155", feature = "msp430fr2433"))]
+const RAM_END: usize = 0x3000;
+#[cfg(any(feature = "msp430fr2353", feature = "msp430fr2153", feature = "msp430fr2512", feature = "msp430fr2522"))]
+const RAM_END: usize = 0x2800;
+#[cfg(feature = "msp430fr2475")]
+const RAM_END: usize = 0x3800;
+#[cfg(feature = "msp430fr2476")]
+const RAM_END: usize = 0x4000;
+
+/// Where the CPU takes the interrupt vectors from (SYSCTL.SYSRIVECT, SLAU445I 1.3.6.1, p. 36; SLAU445I
+/// Table 1-13, p. 66): the table in program FRAM, FF80h to FFFFh, as after a BOR, or a copy in the top 128
+/// bytes of RAM, whose handlers the program can change while it runs. (The FRAM table: "interrupt vectors
+/// and signatures" in SLASEC4D Table 6-4, p. 65, SLASE59F Table 6-23, p. 61, SLASEO7C Table 9-31, p. 73,
+/// SLASEE4C Table 6-19, p. 62.)
+///
+/// The RAM table needs the top 128 bytes of RAM to itself: shorten RAM in `memory.x` by 0x80, as the stack
+/// starts at the end of RAM.
+///
+/// Only a BOR switches back to the FRAM table (SYSRIVECT `rw-[0]`, SLAU445I Table 1-13, p. 66, with the key
+/// in SLAU445I Table 0-1, p. 28): a power cycle, a low level on the RST/NMI pin in reset mode, or
+/// [`Pmm::software_bor`], among others (SLAU445I 1.2, p. 30). After other resets the RAM table stays in use,
+/// with its handlers from before the reset, until the program calls [`InterruptVectors::use_fram`] or
+/// [`InterruptVectors::use_ram`] again. Measured on an MSP430FR2476, a watchdog PUC with the RAM table in use
+/// restarted the program at the reset vector in FRAM, not at the one in the RAM table; the user's guide
+/// requires the one in FRAM to stay valid for the BOR (SLAU445I 1.3.6.1, p. 36). SYSRIVECT also stayed set
+/// when mspdebug flashed a new program, so the new program's interrupts go to the old program's handlers
+/// until it switches tables or a BOR happens.
+///
+/// [`Pmm::software_bor`]: crate::pmm::Pmm::software_bor
+pub struct InterruptVectors(());
+
+impl InterruptVectors {
+    /// Copy the interrupt vectors from FRAM to the RAM table, and take them from there (SYSRIVECT = 1:
+    /// "Interrupt vectors generated with end address TOP of RAM", SLAU445I Table 1-13, p. 66). Then change
+    /// handlers with [`InterruptVectors::set_handler`].
+    ///
+    /// # Safety
+    ///
+    /// Nothing else may use the top 128 bytes of RAM: shorten RAM in `memory.x` by 0x80. The table stays in
+    /// use through every reset but a BOR, see [`InterruptVectors`].
+    #[inline]
+    pub unsafe fn use_ram(&mut self) {
+        // The FRAM table, FF80h to FFFFh, 64 words
+        core::ptr::copy_nonoverlapping(0xFF80 as *const u16, ram_table(), 64);
+        sys().sysctl().set_bits(|w| w.sysrivect().ram());
+    }
+
+    /// Take the interrupt vectors from the FRAM table again (SYSRIVECT = 0), as after a BOR (SLAU445I
+    /// Table 1-13, p. 66).
+    #[inline]
+    pub fn use_fram(&mut self) {
+        unsafe { sys().sysctl().clear_bits(|w| w.sysrivect().fram()) };
+    }
+
+    /// Point `interrupt`'s vector in the RAM table at `handler`. The PAC numbers each interrupt by its place
+    /// in the table: vector `n` is at FF80h + 2n in FRAM, and at the same place below the top of RAM in the
+    /// RAM table (SLAU445I 1.3.6.1, p. 36). It takes effect while the RAM table is in use, see
+    /// [`InterruptVectors::use_ram`], which overwrites it with the FRAM table, so call it afterwards. One
+    /// word is written, so an interrupt can't see half a vector.
+    ///
+    /// # Safety
+    ///
+    /// As for [`InterruptVectors::use_ram`]. `handler` must be an interrupt handler.
+    #[inline]
+    pub unsafe fn set_handler(&mut self, interrupt: _pac::Interrupt, handler: unsafe extern "msp430-interrupt" fn()) {
+        // Volatile: only the interrupt logic reads the table
+        ram_table().add(interrupt as u16 as usize).write_volatile(handler as usize as u16);
+    }
+}
+
+// The RAM table: the 64 words below the end of RAM (SLAU445I 1.3.6.1, p. 36)
+#[inline(always)]
+fn ram_table() -> *mut u16 { (RAM_END - 0x80) as *mut u16 }
+
+/// The bootloader (BSL) settings (SYSBSLC, SLAU445I Table 1-14, p. 67) and the BSL entry indication
+/// (SYSBSLIND, SLAU445I Table 1-13, p. 66). A BOR resets the settings (`rw-[0]`, SLAU445I Table 1-14, p. 67,
+/// with the key in SLAU445I Table 0-1, p. 28). Measured on an MSP430FR2476, SYSBSLC read 0000h when the
+/// program started, after a software BOR too: the boot code left the BSL unprotected.
+pub struct Bsl(());
+
+impl Bsl {
+    /// Whether a BSL entry sequence was detected on the Spy-Bi-Wire pins (SYSBSLIND, SLAU445I Table 1-13,
+    /// p. 66)
+    #[inline]
+    pub fn entry_detected(&self) -> bool { sys().sysctl().read().sysbslind().is_set() }
+
+    /// Protect the BSL memory (`true`), or leave it unprotected: "Read, program, and erase of BSL memory is
+    /// possible" (`false`) (SYSBSLPE, SLAU445I Table 1-14, p. 67). A BOR clears it, and "the boot code that
+    /// checks for an available BSL may set this bit in software to protect the BSL". The protection covers
+    /// the RAM assigned with [`Bsl::set_ram_assigned`] as well. Measured on an MSP430FR2476, the program
+    /// could still read the BSL memory with the protection on.
+    #[inline]
+    pub fn set_protection(&mut self, protect: bool) {
+        if protect {
+            unsafe { sys().sysbslc().set_bits(|w| w.sysbslpe().prot()) };
+        } else {
+            unsafe { sys().sysbslc().clear_bits(|w| w.sysbslpe().notprot()) };
+        }
+    }
+
+    /// Switch the BSL memory off (`true`): it then "behaves like vacant memory. Reads cause 3FFFh to be read.
+    /// Fetches cause JMP $ to be executed" (SYSBSLOFF, SLAU445I Table 1-14, p. 67). `false`, as after a BOR,
+    /// switches it back on.
+    #[inline]
+    pub fn set_memory_off(&mut self, off: bool) {
+        if off {
+            unsafe { sys().sysbslc().set_bits(|w| w.sysbsloff().off()) };
+        } else {
+            unsafe { sys().sysbslc().clear_bits(|w| w.sysbsloff().on()) };
+        }
+    }
+
+    /// Assign the lowest 16 bytes of RAM to the BSL (`true`), or give them back (`false`, as after a BOR)
+    /// (SYSBSLR, SLAU445I Table 1-14, p. 67).
+    ///
+    /// # Safety
+    ///
+    /// The program must not use those 16 bytes, 2000h to 200Fh: start RAM 0x10 later in `memory.x`. With the
+    /// BSL protected, "access to these RAM locations is only possible from within the protected BSL memory
+    /// segments" (SLAU445I 1.9.4, p. 45). Measured on an MSP430FR2476, a read of them from the program then
+    /// reset the device with a security violation, a BOR
+    /// ([`ResetCause::SecurityViolation`](crate::pmm::ResetCause::SecurityViolation)).
+    #[inline]
+    pub unsafe fn set_ram_assigned(&mut self, assigned: bool) {
+        if assigned {
+            sys().sysbslc().set_bits(|w| w.sysbslr().ram());
+        } else {
+            sys().sysbslc().clear_bits(|w| w.sysbslr().noram());
+        }
+    }
+}
+
+/// The JTAG pins, P1.4 (TCK), P1.5 (TMS), P1.6 (TDI/TCLK) and P1.7 (TDO) on every supported device
+/// (SLASEC4D Table 4-2, p. 23; SLASE59F Table 4-2, p. 12; SLASEO7C Table 7-2, p. 15; SLASEE4C Table 4-2,
+/// p. 13)
+pub struct JtagPins(());
+
+impl JtagPins {
+    /// Dedicate the JTAG pins to 4-wire JTAG until the next BOR (SYSJTAGPIN: "Setting this bit disables the
+    /// shared digital functionality of the JTAG pins and permanently enables the JTAG function. This bit can
+    /// only be set once. After the bit is set, it remains set until a BOR occurs", SLAU445I Table 1-13,
+    /// p. 66). It takes the pins, which can't be used for anything else afterwards. A debugger then selects
+    /// the mode with "explicit 4-wire JTAG mode selection" instead of the JTAG/SBW sequence.
+    #[inline]
+    pub fn dedicate<TCK, TMS, TDI, TDO>(
+        self,
+        _tck: Pin<P1, Pin4, TCK>,
+        _tms: Pin<P1, Pin5, TMS>,
+        _tdi: Pin<P1, Pin6, TDI>,
+        _tdo: Pin<P1, Pin7, TDO>,
+    ) {
+        unsafe { sys().sysctl().set_bits(|w| w.sysjtagpin().dedicated()) };
+    }
+}
+
+/// The protection of the PMM registers (SYSPMMPE, SLAU445I Table 1-13, p. 66)
+pub struct PmmProtection(());
+
+impl PmmProtection {
+    /// Protect the PMM registers until the next BOR: "After the bit is set to 1, it only can be cleared by
+    /// a BOR", with "Access only from the protected BSL segments" (SYSPMMPE, SLAU445I Table 1-13, p. 66).
+    /// Afterwards the HAL can't change them either: not through [`Pmm`](crate::pmm::Pmm) (`set_svsh()`, the
+    /// references and the software resets, say), and not on the way into LPM3.5 or LPM4.5, which sets
+    /// PMMREGOFF (SLAU445I 1.4.3.1, p. 41).
+    #[inline]
+    pub fn enable(self) {
+        unsafe { sys().sysctl().set_bits(|w| w.syspmmpe().en()) };
     }
 }
 

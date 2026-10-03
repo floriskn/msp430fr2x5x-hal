@@ -43,7 +43,7 @@ use embedded_io::Write;
 use msp430_rt::entry;
 use msp430_hal::{
     capture::{CapTrigger, Capture, CaptureParts3, OverCapture, TimerConfig, CCR1},
-    clock::{fll_status, ClockConfig, MclkDiv, SmclkDiv, Xt1Config},
+    clock::{fll_status, ClockConfig, FllStatus, MclkDiv, SmclkDiv, Xt1Config},
     delay::SysDelay,
     fram::Fram,
     gpio::Batch,
@@ -199,7 +199,7 @@ fn main() -> ! {
     // ±1.0 % at 25°C with REFO as the reference, ±3.0 % from –40°C to 105°C)
     let ratio_ok = mclk_cycles.abs_diff(expected) * 100 <= expected;
     // CSCTL7.FLLUNLOCK = 00b (SLAU445I Table 3-11, p. 121)
-    let locked = fll_status().is_locked();
+    let locked = fll_status() == FllStatus::Locked;
     print(&mut tx, "MCLK / ACLK measured: ");
     print_num(&mut tx, mclk_cycles * 100 / (8 * 64), 2);
     print(&mut tx, if locked { ", FLL locked" } else { ", FLL NOT locked" });

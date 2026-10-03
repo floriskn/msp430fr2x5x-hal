@@ -97,6 +97,29 @@ pub enum CounterLength {
     _8Bit = 3,
 }
 
+/// Which compare latches of a Timer_B load together (TBCLGRP: SLAU445I 14.2.4.2.2, p. 400; SLAU445I
+/// Table 14-3, p. 400; SLAU445I Table 14-6, p. 409), see [`TimerConfig::compare_latch_groups`].
+///
+/// The user's guide lists the groups of a Timer_B with seven capture/compare registers. The ones with three,
+/// TB0 to TB2 on the MSP430FR2x5x (SLASEC4D Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D
+/// Table 6-18, p. 74), have no TBxCL3 to TBxCL6, and it doesn't say what `Triples` and `All` group there.
+/// `Pairs` groups their TBxCL1 and TBxCL2.
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CompareLatchGroups {
+    /// Each compare latch loads on its own, as after reset (TBCLGRP = 00b, reset value 0h: SLAU445I
+    /// Table 14-6, p. 409)
+    #[default]
+    Independent = 0,
+    /// TBxCL1 + TBxCL2, TBxCL3 + TBxCL4 and TBxCL5 + TBxCL6, controlled by TBxCCR1, TBxCCR3 and TBxCCR5;
+    /// TBxCL0 on its own (TBCLGRP = 01b)
+    Pairs = 1,
+    /// TBxCL1 + TBxCL2 + TBxCL3 and TBxCL4 + TBxCL5 + TBxCL6, controlled by TBxCCR1 and TBxCCR4; TBxCL0 on its
+    /// own (TBCLGRP = 10b)
+    Triples = 2,
+    /// TBxCL0 to TBxCL6 all together, controlled by TBxCCR1 (TBCLGRP = 11b)
+    All = 3,
+}
+
 /// What switches all outputs of a Timer_B to high impedance (TBxOUTH, SYSCFG2.TBxTRGSEL: SLAU445I 14.2.5,
 /// p. 401; SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82; data sheets: SLASEC4D Table 6-20,
 /// p. 76; SLASEO7C Table 9-17, p. 61), for example to stop a motor driver on a fault
@@ -217,6 +240,7 @@ where
     div: TimerDiv,
     ex_div: TimerExDiv,
     cntl: u8,
+    tbclgrp: u8,
     /// The timer's TBxTRGSEL setter, and whether to select the pin (SLAU445I Table 1-26, p. 77; SLAU445I
     /// Table 1-31, p. 82)
     trgsel: Option<(fn(bool), bool)>,
@@ -236,6 +260,7 @@ where
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
             cntl: CounterLength::_16Bit as u8,
+            tbclgrp: CompareLatchGroups::Independent as u8,
             trgsel: None,
             _pin_map: PhantomData,
         }
@@ -274,6 +299,7 @@ where
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
         timer.set_cntl(self.cntl);
+        timer.set_tbclgrp(self.tbclgrp);
         // TBxTRGSEL: 0 = internal source (eCOMP), 1 = external source (TBxTRG pin) (SLAU445I Table 1-26,
         // p. 77; SLAU445I Table 1-31, p. 82)
         if let Some((set_trgsel, external)) = self.trgsel {
@@ -291,6 +317,28 @@ where
     /// 0x3FF, 0xFFF or 0xFFFF before it starts over (SLAU445I 14.2.1.1, p. 393; 14.2.3.2, p. 395).
     #[inline]
     pub fn counter_length(self, length: CounterLength) -> Self { TimerConfig { cntl: length as u8, ..self } }
+
+    /// Group the compare latches of this Timer_B (TBCLGRP), so that new values in several capture/compare
+    /// registers take effect together, for example the duty cycles of PWM outputs that must change in the
+    /// same period. A group loads when "all TBxCCRn registers of the group" have been written, "even when new
+    /// TBxCCRn data = old TBxCCRn data", and its load event occurs: that of the controlling register in
+    /// [`CompareLatchGroups`] (SLAU445I 14.2.4.2.2, p. 400).
+    ///
+    /// The controlling register's load event (CLLD) "must not be set to zero", or "all compare latches update
+    /// immediately when their corresponding TBxCCRn is written" (SLAU445I 14.2.4.2.2, p. 400). PWM sets it
+    /// when a channel is initialized (see [`crate::pwm`]), so with PWM the controlling channel must be in use.
+    ///
+    /// Measured on an MSP430FR2476, a group only waits for all its registers when the controlling register
+    /// loads when the timer counts to 0 or to the top (CLLD = 01b or 10b, SLAU445I Table 14-2, p. 400): with
+    /// CLLD = 11b, "when TBxR counts to the old TBxCLn value", each register still loaded on its own, in every
+    /// counting mode. So this works with center-aligned PWM, which uses 10b, and not with edge-aligned PWM,
+    /// which uses 11b because of erratum TB25 (see [`crate::pwm`]).
+    ///
+    /// Changed with the timer stopped, as SLAU445I 14.2.7, p. 407 lists TBCLGRP.
+    #[inline]
+    pub fn compare_latch_groups(self, groups: CompareLatchGroups) -> Self {
+        TimerConfig { tbclgrp: groups as u8, ..self }
+    }
 }
 
 impl<T, M> TimerConfig<T, M>

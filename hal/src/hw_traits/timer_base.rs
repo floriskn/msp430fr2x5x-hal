@@ -93,6 +93,9 @@ pub trait TimerBase: Steal {
     /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none
     /// (SLAU445I Table 14-6, p. 409; SLAU445I 14.1.1, p. 391).
     fn set_cntl(&self, cntl: u8);
+    /// Set the compare latch grouping (Timer_B TBCLGRP: 0 = none, 1 = pairs, 2 = triples, 3 = all). Timer_A has
+    /// none (SLAU445I Table 14-6, p. 409; SLAU445I Table 14-3, p. 400).
+    fn set_tbclgrp(&self, tbclgrp: u8);
 
     /// Apply clock select settings (TBSSEL and ID: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn config_clock(&self, tbssel: Tbssel, div: TimerDiv);
@@ -470,6 +473,12 @@ macro_rules! timer_base_impl {
             #[inline(always)]
             fn set_cntl(&self, cntl: u8) {
                 $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), cntl, cntl);
+            }
+
+            // TBCLGRP in TBxCTL, Timer_B only (SLAU445I Table 14-6, p. 409)
+            #[inline(always)]
+            fn set_tbclgrp(&self, tbclgrp: u8) {
+                $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), tbclgrp, tbclgrp);
             }
 
             // A write of TBSSEL and ID in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409),

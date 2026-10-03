@@ -4,7 +4,8 @@
 //! LPM3.5 and LPM4.5 (SLASEC4D Table 6-1, p. 61).
 //! # LPM0
 //! LPM0 turns off the CPU, while the rest of the system continues unimpeded. Entering LPM0 has no
-//! special requirements (SLAU445I Table 1-2, p. 39).
+//! special requirements (SLAU445I Table 1-2, p. 39). [`enter_lpm0_fram_off`] also powers the FRAM down
+//! until the next interrupt (SLAU445I 6.8, p. 303).
 //!
 //! # LPM3
 //! LPM3 turns off most high frequency clocks (FLL and DCO subsystems, MODCLK, etc.), most notably
@@ -211,7 +212,8 @@ fn lpm3_4_with_workarounds(mask: u8) {
 }
 
 /// The PMM32 workaround from SLAZ695J PMM32, p. 11, run from RAM: unlock FRCTL, clear `gcctl0_clear`
-/// in GCCTL0 (FRPWR and FRLPMPWR), lock FRCTL, and set the status register bits in `sr_bits`. The
+/// in GCCTL0 (FRPWR and FRLPMPWR), lock FRCTL, and set the status register bits in `sr_bits`. LPM0 with
+/// the FRAM powered down uses it too, with FRPWR alone, see [`enter_lpm0_fram_off`]. The
 /// erratum's code writes `FRCTL0 = FRCTLPW`, which would also clear NWAITS; this writes the password
 /// over the current low byte instead (FRCTLPW, NWAITS: SLAU445I Table 6-2, p. 306). A byte write of a
 /// wrong password to the upper byte locks FRCTL again (SLAU445I 6.10, p. 305). An access to the FRAM
@@ -220,7 +222,6 @@ fn lpm3_4_with_workarounds(mask: u8) {
 ///
 /// The `.data` section is copied to RAM at start-up (msp430-rt's link.x), so the function runs from
 /// RAM. FRCTL0 is at offset 00h and GCCTL0 at 04h of the FRCTL registers (SLAU445I Table 6-1, p. 305).
-#[cfg(feature = "erratum_pmm32")]
 #[link_section = ".data.lpm_from_ram"]
 #[inline(never)]
 unsafe fn sleep_from_ram(sr_bits: u16, frctl: *mut u16, gcctl0_clear: u16) {
@@ -328,6 +329,37 @@ pub fn enter_lpm0() {
 pub fn enter_lpm0_with_interrupts() {
     const LPM0: u8 = CPU_OFF | GIE;
     sleep::<LPM0>();
+}
+
+/// FRPWR, GCCTL0 bit 2 (SLAU445I Table 6-3, p. 307), for the routine that runs from RAM
+const GCCTL0_FRPWR: u16 = 1 << 2;
+
+/// Enter Low Power Mode 0 (LPM0) with the FRAM powered down (GCCTL0.FRPWR = 0: SLAU445I 6.8, p. 303;
+/// SLAU445I Table 6-3, p. 307), which saves the FRAM's supply current while the CPU sleeps.
+///
+/// "For LPM0, the FRAM power state during LPM0 is saved from the previous state in active mode", and
+/// "Memory accesses pointing into the FRAM address space automatically set FRPWR = 1" (SLAU445I 6.8,
+/// p. 303), so the FRAM is switched off from RAM, right before the sleep, by the routine the PMM32
+/// workaround uses.
+///
+/// The first interrupt handler powers the FRAM up again, as it runs from FRAM: "If FRAM power is disabled,
+/// any memory access automatically inserts wait states to ensure sufficient time for the FRAM power up and
+/// access" (SLAU445I 6.8, p. 303). If the handler leaves the CPU in LPM0, the FRAM stays on for the rest of
+/// it, so return from the sleep and call this again to have it off again.
+///
+/// Interrupts must be enabled already; see [`enter_lpm0_fram_off_with_interrupts`].
+#[inline(always)]
+pub fn enter_lpm0_fram_off() {
+    const LPM0: u8 = CPU_OFF;
+    unsafe { sleep_from_ram(LPM0 as u16, _pac::Frctl::ptr() as *mut u16, GCCTL0_FRPWR) };
+}
+
+/// Enable interrupts and enter Low Power Mode 0 (LPM0) with the FRAM powered down, in one instruction,
+/// like [`enter_lpm0_with_interrupts`]. See [`enter_lpm0_fram_off`].
+#[inline(always)]
+pub fn enter_lpm0_fram_off_with_interrupts() {
+    const LPM0: u8 = CPU_OFF | GIE;
+    unsafe { sleep_from_ram(LPM0 as u16, _pac::Frctl::ptr() as *mut u16, GCCTL0_FRPWR) };
 }
 
 /// Request Low Power Mode 3 (LPM3).
@@ -569,6 +601,15 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // (SLAU445I 1.4.3.1, p. 41, step 9d; a word write with a wrong password causes a PUC:
     // SLAU445I 2.3, p. 90)
     regs.pmm.pmmctl0_h().write(|w| w.pmmpw().lock());
+
+    // In manual mode, disconnect the LPM3.5 switch before the entry (SLAU445I 2.2.7, p. 88: "It is
+    // recommended to turn off the switch to avoid unnecessary leakage before the device enters LPM3.5").
+    // The BOR at the wake-up puts it back in automatic mode, connected (LPM5SM "rw-[0]", LPM5SW "rw-[1]":
+    // SLAU445I Table 2-7, p. 97, with the key in SLAU445I Table 0-1, p. 28).
+    #[cfg(feature = "lpm3_5_switch")]
+    if regs.pmm.pm5ctl0().read().lpm5sm().is_manual() {
+        unsafe { regs.pmm.pm5ctl0().clear_bits(|w| w.lpm5sw().disconnected()) };
+    }
 
     // Enter LPMx.5 with CPUOFF, OSCOFF, SCG0 and SCG1 (SLAU445I 1.4.3.1, p. 41, step 10). If
     // interrupts were enabled, GIE is set again in the same instruction, as SLAU445I 8.3.3, p. 318

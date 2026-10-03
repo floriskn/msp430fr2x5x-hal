@@ -30,7 +30,7 @@
 use embedded_hal::digital::*;
 use msp430_rt::entry;
 use msp430_hal::{
-    clock::{fll_status, ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv, Xt1Config},
+    clock::{fll_status, ClockConfig, DcoclkFreqSel, FllStatus, MclkDiv, SmclkDiv, Xt1Config},
     fram::Fram,
     gpio::Batch,
     pmm::Pmm,
@@ -86,7 +86,7 @@ fn main() -> ! {
         led1.set_state(xt1clk.is_faulted().into()).ok();
         // The FLL reports the DCO as too fast, too slow or out of range (CSCTL7.FLLUNLOCK: SLAU445I
         // Table 3-11, p. 121)
-        led2_blue.set_state((!fll_status().is_locked()).into()).ok();
+        led2_blue.set_state((fll_status() != FllStatus::Locked).into()).ok();
     }
 }
 

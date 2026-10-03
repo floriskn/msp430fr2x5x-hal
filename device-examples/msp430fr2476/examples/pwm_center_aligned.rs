@@ -10,10 +10,11 @@
 //! - P6.2 (TB0.0, the period output): a square wave at half the PWM frequency, 2.5 kHz.
 //!
 //! Each press of button S1 widens both pulses by 10 µs, up to a high pulse of 190 µs on P4.3, then
-//! starts again at 10 µs.
+//! starts again at 10 µs. TB0.5 and TB0.6 share a compare latch group, so both new pulses start in the
+//! same period: a period with one new and one old pulse could have both outputs high together.
 //! (Center-aligned PWM and the dead time: SLAU445I 14.2.3.5 and Figure 14-9, p. 397. Up/down mode:
-//! SLAU445I 14.2.3.4, p. 396. TB0 outputs: SLASEO7C Table 9-15, p. 59. Header pins: SLAU802 Figure 10,
-//! p. 13. S1 is P4.0: SLAU802 Figure 19, p. 25.)
+//! SLAU445I 14.2.3.4, p. 396. Compare latch groups: SLAU445I 14.2.4.2.2, p. 400. TB0 outputs: SLASEO7C
+//! Table 9-15, p. 59. Header pins: SLAU802 Figure 10, p. 13. S1 is P4.0: SLAU802 Figure 19, p. 25.)
 //!
 //! How to test (scope, three channels; ground clips on GND, J3 pin 22):
 //! - CH1 on P4.3 (J3 pin 24), CH2 on P4.4 (J3 pin 25), CH3 on P6.2 (J4 pin 33). Trigger on CH1, rising.
@@ -31,7 +32,7 @@ use msp430_hal::{
     fram::Fram,
     gpio::Batch,
     pmm::Pmm,
-    pwm::{Polarity, PwmParts7, TimerConfig},
+    pwm::{CompareLatchGroups, Polarity, PwmParts7, TimerConfig},
     watchdog::Wdt,
 };
 use panic_msp430 as _;
@@ -69,8 +70,12 @@ fn main() -> ! {
         .aclk_refoclk()
         .freeze(&mut fram);
 
-    // TB0 counts SMCLK (TBSSEL = 10b: SLAU445I Table 14-6, p. 409) in up/down mode
-    let pwm = PwmParts7::new_center_aligned(periph.tb0, TimerConfig::smclk(&smclk), PERIOD);
+    // TB0 counts SMCLK (TBSSEL = 10b: SLAU445I Table 14-6, p. 409) in up/down mode. Its compare latches
+    // load in pairs (TBCLGRP = 01b), TB0CL5 with TB0CL6 among them: the two duty cycles load together, once
+    // both are written, when the timer next reaches 0 or the top, as TB0CCR5 sets (SLAU445I 14.2.4.2.2,
+    // p. 400; SLAU445I Table 14-3, p. 400).
+    let config = TimerConfig::smclk(&smclk).compare_latch_groups(CompareLatchGroups::Pairs);
+    let pwm = PwmParts7::new_center_aligned(periph.tb0, config, PERIOD);
     // TB0.5 is P4.3 and TB0.6 is P4.4, with P4SEL = 10 (SLASEO7C Table 9-26, p. 68); TB0.0 is P6.2, with
     // P6SEL = 01 (SLASEO7C Table 9-28, p. 70). Their GPIO level is low.
     let mut high_side = pwm.pwm5.init(p4.pin3.to_output_low().to_alternate2());
@@ -101,18 +106,13 @@ fn main() -> ! {
         while s1.is_low().unwrap() {}
         delay.delay_ms(20);
 
-        // The two writes below can load half a period apart, so a longer high pulse is written to the
-        // low side first, and a shorter one to the high side first: in between, the low side's pulse
-        // is only longer than needed.
-        let new_duty = if duty + STEP + DEAD_TIME < PERIOD { duty + STEP } else { STEP };
-        if new_duty > duty {
-            low_side.set_duty_cycle(new_duty + DEAD_TIME).unwrap();
-            high_side.set_duty_cycle(new_duty).unwrap();
-        } else {
-            high_side.set_duty_cycle(new_duty).unwrap();
-            low_side.set_duty_cycle(new_duty + DEAD_TIME).unwrap();
-        }
-        duty = new_duty;
+        // The compare latch group loads both duty cycles in the same period, whatever the order of the
+        // writes. Measured on an MSP430FR2476 without the group, with the writes in the order that lets the
+        // pulses overlap and 20 µs between them: 433 of 1000 changes left both outputs high together for a
+        // moment. With the group: none.
+        duty = if duty + STEP + DEAD_TIME < PERIOD { duty + STEP } else { STEP };
+        high_side.set_duty_cycle(duty).unwrap();
+        low_side.set_duty_cycle(duty + DEAD_TIME).unwrap();
     }
 }
 

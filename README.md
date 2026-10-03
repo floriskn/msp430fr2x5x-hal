@@ -82,19 +82,13 @@ and pin function can be checked against its source. [REFERENCES.md](REFERENCES.m
 documents, their revisions and the reference format.
 
 # Functionality
-The library is mostly feature complete for the FR2xxx/4xxx family. There are a few edge cases not yet supported, such as:
-- Grouped compare latch updates on Timer_B (TBCLGRP)
-- Interrupt vectors in RAM (SYSRIVECT), and the BSL, PMM and JTAG pin protection settings of the SYS module
-- FRAM power control (FRPWR) and manual control of the LPM3.5 switch (LPM5SM, LPM5SW)
-- The FLL unlock warning (FLLWARNEN)
-
-The following FR2xxx/4xxx peripherals do not yet have drivers:
+The library is mostly feature complete for the FR2xxx/4xxx family. The following FR2xxx/4xxx peripherals do not yet have drivers:
 - LCD driver
 - CapTIvate
 - TIA
 - SAC-L1
 
-PRs with implementations for these features or peripherals are welcome.
+PRs with implementations for these peripherals are welcome.
 
 If you encounter any use cases not supported please open an issue (or submit a pull request).
 

@@ -20,7 +20,9 @@
 //!   Measured on an MSP430FR2476, only that change does this: not the same change written while the timer
 //!   counts up, nor changes to 0, from the maximum or to it. Two outputs driving a half bridge can then be
 //!   on together, so keep the pins at their GPIO level with [`Pwm::disable`] until the first duty cycles
-//!   have loaded, as the MSP430FR2476 example `pwm_center_aligned` does.
+//!   have loaded, as the MSP430FR2476 example `pwm_center_aligned` does. Outputs whose duty cycles must
+//!   change in the same period, such as those two, can share a compare latch group, see
+//!   [`TimerConfig::compare_latch_groups`].
 //! - With edge-aligned PWM on a Timer_B, in the period after the timer next reaches the old duty cycle (the
 //!   compare latch, CLLD = 11b: SLAU445I Table 14-2, p. 400), so a period is never cut short or left high to
 //!   its end. That is one or two periods later. Erratum TB25 makes the modes that load at the start of a
@@ -51,8 +53,8 @@ use crate::timer::{CapCmpTimer3, CapCmpTimer7};
 use core::marker::PhantomData;
 
 pub use crate::timer::{
-    CapCmp, CascadeOutput, TimerConfig, TimerDiv, TimerExDiv, TimerPeriph, CCR0, CCR1, CCR2, CCR3,
-    CCR4, CCR5, CCR6,
+    CapCmp, CascadeOutput, CompareLatchGroups, TimerConfig, TimerDiv, TimerExDiv, TimerPeriph, CCR0, CCR1,
+    CCR2, CCR3, CCR4, CCR5, CCR6,
 };
 
 // Sealed by CapCmp

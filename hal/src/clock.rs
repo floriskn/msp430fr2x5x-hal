@@ -882,7 +882,7 @@ fn osc_fault_pending() -> bool {
 /// Table 3-11, p. 121)
 #[inline]
 fn fll_unlocked(cs: &_pac::Cs) -> bool {
-    !cs.csctl7().read().fllunlock().is_fllunlock_0()
+    !cs.csctl7().read().fllunlock().is_locked()
 }
 
 // Using Xt1State as a trait bound outside the HAL will never be useful, since we only
@@ -1764,26 +1764,14 @@ impl<RANGE> Xt1clk<RANGE> {
     }
 }
 
-/// The FLL's lock status, as CSCTL7.FLLUNLOCK reports it (SLAU445I Table 3-11, p. 121), see [`fll_status`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum FllStatus {
-    /// The DCO runs at the frequency the FLL locks it to (FLLUNLOCK = 00b)
-    Locked,
-    /// The DCO is too slow (01b)
-    TooSlow,
-    /// The DCO is too fast (10b). With [`ClockConfig::reset_on_fll_unlock`] this resets the device.
-    TooFast,
-    /// The DCO is out of its range (11b, "DCOERROR"). FLLUNLOCK also reads 11b "as long as the DCOFFG flag
-    /// is set" (SLAU445I Table 3-11, p. 121).
-    OutOfRange,
-}
-
-impl FllStatus {
-    /// Whether the FLL is locked
-    #[inline]
-    pub fn is_locked(self) -> bool { self == FllStatus::Locked }
-}
+/// The FLL's lock status, as CSCTL7.FLLUNLOCK reports it (SLAU445I Table 3-11, p. 121), see [`fll_status`]:
+///
+/// - `Locked`: the DCO runs at the frequency the FLL locks it to (FLLUNLOCK = 00b).
+/// - `TooSlow`: the DCO is too slow (01b).
+/// - `TooFast`: the DCO is too fast (10b). With [`ClockConfig::reset_on_fll_unlock`] this resets the device.
+/// - `OutOfRange`: the DCO is out of its range (11b, "DCOERROR"). FLLUNLOCK also reads 11b "as long as the
+///   DCOFFG flag is set" (SLAU445I Table 3-11, p. 121).
+pub use crate::_pac::cs::csctl7::Fllunlock as FllStatus;
 
 /// The FLL's current lock status (CSCTL7.FLLUNLOCK, SLAU445I Table 3-11, p. 121), for example to watch the
 /// FLL follow an external XT1 reference. It's only meaningful while the FLL runs: "When the FLL is enabled,
@@ -1792,22 +1780,79 @@ impl FllStatus {
 #[inline]
 pub fn fll_status() -> FllStatus {
     let cs = unsafe { &*_pac::Cs::ptr() };
-    match cs.csctl7().read().fllunlock().bits() {
-        0b00 => FllStatus::Locked,
-        0b01 => FllStatus::TooSlow,
-        0b10 => FllStatus::TooFast,
-        _ => FllStatus::OutOfRange,
+    cs.csctl7().read().fllunlock().variant()
+}
+
+/// What the DCO has been since the FLL's unlock history was last cleared, as CSCTL7.FLLUNLOCKHIS records it
+/// (SLAU445I Table 3-11, p. 121), see [`fll_unlock_history`]:
+///
+/// - `Locked`: the FLL stayed locked (FLLUNLOCKHIS = 00b).
+/// - `TooSlow`: the DCO has been too slow (01b).
+/// - `TooFast`: the DCO has been too fast (10b).
+/// - `TooSlowAndFast`: the DCO has been both (11b).
+pub use crate::_pac::cs::csctl7::Fllunlockhis as FllUnlockHistory;
+
+/// What the DCO has been since [`clear_fll_unlock_history`] was last called: "As soon as any unlock condition
+/// happens, the respective bits are set and remain set until cleared by software by writing 0 to it or by a
+/// POR" (FLLUNLOCKHIS, SLAU445I Table 3-11, p. 121). It resets to `TooSlow`, and the FLL also leaves it
+/// there while it settles after [`ClockConfig::freeze`]: on an MSP430FR2476 the FLL reported the DCO as too
+/// slow for up to 16 ms after `freeze()` at 1 MHz, 3 ms at 8 MHz and 0.4 ms at 16 MHz.
+#[inline]
+pub fn fll_unlock_history() -> FllUnlockHistory {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    cs.csctl7().read().fllunlockhis().variant()
+}
+
+/// Clear the FLL's unlock history (FLLUNLOCKHIS = 00b, SLAU445I Table 3-11, p. 121), and then OFIFG, which
+/// the history sets with [`enable_fll_unlock_interrupt`]. The hardware sets OFIFG again straight away if an
+/// oscillator fault flag is still set (SLAU445I 3.2.13, p. 109), and the history if the FLL is still unlocked.
+#[inline]
+pub fn clear_fll_unlock_history() {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    let sfr = unsafe { &*_pac::Sfr::ptr() };
+    unsafe {
+        cs.csctl7().clear_bits(|w| w.fllunlockhis().locked());
+        sfr.sfrifg1().clear_bits(|w| w.ofifg().clear_bit());
     }
 }
 
+/// Request the oscillator fault interrupt, the user NMI, when the FLL loses lock: with FLLWARNEN set, "If
+/// FLLUNLOCKHIS is not equal to 00, an OFIFG is generated" (SLAU445I Table 3-11, p. 121; SLAU445I 3.2.9,
+/// p. 106), and OFIFG requests the NMI with OFIE set (SLAU445I 3.2.13, p. 109). Write an `UNMI` interrupt
+/// handler that calls [`take_fault_interrupt`]; [`fll_unlock_history`] then tells an FLL unlock from an
+/// oscillator fault. The NMI isn't masked by GIE (SLAU445I 1.3.1, p. 33), so the handler must not share
+/// data through a critical section, as with [`Xt1clk::enable_fault_interrupt`].
+///
+/// This clears the unlock history first, and enables OFIE (SLAU445I Table 1-9, p. 62). Call it once the FLL
+/// has settled after `freeze()`, or the settling itself requests the interrupt, see [`fll_unlock_history`].
+#[inline]
+pub fn enable_fll_unlock_interrupt() {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    let sfr = unsafe { &*_pac::Sfr::ptr() };
+    clear_fll_unlock_history();
+    unsafe {
+        cs.csctl7().set_bits(|w| w.fllwarnen().enabled());
+        sfr.sfrie1().set_bits(|w| w.ofie().set_bit());
+    }
+}
+
+/// Stop the FLL unlock history from setting OFIFG (FLLWARNEN, SLAU445I Table 3-11, p. 121). OFIE stays as
+/// it is, for the oscillator faults; [`take_fault_interrupt`] clears it.
+#[inline]
+pub fn disable_fll_unlock_interrupt() {
+    let cs = unsafe { &*_pac::Cs::ptr() };
+    unsafe { cs.csctl7().clear_bits(|w| w.fllwarnen().disabled()) };
+}
+
 /// For the `UNMI` interrupt handler: whether an oscillator fault requested the interrupt, see
-/// [`Xt1clk::enable_fault_interrupt`].
+/// [`Xt1clk::enable_fault_interrupt`], or an FLL unlock, see [`enable_fll_unlock_interrupt`].
 ///
 /// If so, this also disables the fault interrupt. The fault flags stay set until they're
 /// cleared, and they can only be cleared once the fault is gone, so the interrupt would
 /// otherwise be requested again straight away (SLAU445I 3.2.13, p. 109: "When the interrupt is
 /// granted, the OFIE is not reset automatically"). Once [`Xt1clk::clear_fault`] shows that the
-/// fault is gone, [`Xt1clk::enable_fault_interrupt`] turns it back on.
+/// fault is gone, [`Xt1clk::enable_fault_interrupt`] turns it back on; after an FLL unlock,
+/// [`enable_fll_unlock_interrupt`] does, once the FLL has locked again.
 #[inline]
 pub fn take_fault_interrupt() -> bool {
     let sfr = unsafe { &*_pac::Sfr::ptr() };

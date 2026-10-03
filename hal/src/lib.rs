@@ -45,6 +45,7 @@
 #![allow(incomplete_features)] // Enable specialization without warnings
 #![feature(specialization)]
 #![feature(asm_experimental_arch)]
+#![feature(abi_msp430_interrupt)]
 #![allow(stable_features)] // Feature flags used on older compiler versions
 #![feature(const_option)]
 #![deny(missing_docs)]
