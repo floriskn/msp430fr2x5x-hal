@@ -1,14 +1,18 @@
-//! The RST/NMI pin as an interrupt input: the reset button S3 toggles LED1, which is green, instead
-//! of resetting the device (SLAU802 Figure 19, p. 25).
+//! The RST/NMI pin as an interrupt input: the reset button S3 toggles LED1 instead of resetting the
+//! device.
 //!
 //! The pin's interrupt is the user NMI, which is non-maskable: it can't share data with the rest of
 //! the program through a critical section, so this example uses an atomic flag from `msp430-atomic`.
 //! (NMIs "are not masked by the general interrupt enable (GIE) bit", and an edge on the RST/NMI pin
-//! in NMI mode is a user NMI source: SLAU445I 1.3.1, p. 33. The NMI function: SLAU445I 1.7, p. 43.)
+//! in NMI mode is a user NMI source: SLAU445I 1.3.1, p. 33. The NMI function: SLAU445I 1.7, p. 43. LED1
+//! on P1.0 is green, and S3 pulls RST low: SLAU802 Figure 19, p. 25.)
 //!
-//! The pin stays an NMI input until the next reset (SYSNMI is cleared by a PUC: SLAU445I Figure 1-20,
-//! p. 64, with the key in SLAU445I Table 0-1, p. 28), and S3 no longer causes one, so to get the
-//! reset button back, unplug the USB cable or flash another program.
+//! How to test:
+//! 1. Flash this example.
+//! 2. Press S3: LED1 toggles at each press.
+//! 3. The pin stays an NMI input until the next reset (SYSNMI is cleared by a PUC: SLAU445I Figure 1-20,
+//!    p. 64, with the key in SLAU445I Table 0-1, p. 28), and S3 no longer causes one: to get the reset
+//!    button back, unplug the USB cable and plug it back in, or flash another program.
 #![no_main]
 #![no_std]
 #![feature(abi_msp430_interrupt)]

@@ -1,3 +1,21 @@
+//! The internal temperature sensor: an LED on P1.0 is on while the chip is between 20.0 °C and 25.0 °C, and
+//! off otherwise.
+//!
+//! The ADC converts the sensor, channel 12, against the internal 1.5 V reference. The device descriptors
+//! (TLV) hold the factory's readings of the sensor against that reference at 30 °C and 85 °C, and
+//! `TempSensorCalibration` turns each new reading into tenths of a degree with them.
+//! (Channel 12: SLASEE4C Table 6-13, p. 55. The readings at 30 °C and 85 °C: SLASEE4C Table 6-18, p. 61;
+//! their use: SLAU445I 1.13.3.3, p. 60. P1.0 is a GPIO output, P1SELx = 00 and P1DIR = 1: SLASEE4C
+//! Table 6-15, p. 58. No board document covers the LED: there is none for the MSP430FR25x2.)
+//!
+//! How to test (an LED and a resistor):
+//! 1. Connect an LED with a series resistor (about 1 kΩ) from P1.0 to GND.
+//! 2. Flash this example. In a room at 20 °C to 25 °C, the LED is on.
+//! 3. Hold a fingertip on the MSP430FR2522: as the chip warms past 25 °C, the LED turns off. Take the
+//!    finger away, and the LED turns on again as the chip cools.
+//!
+//! In a room below 20 °C the LED starts off: the finger turns it on as the chip passes 20 °C, and off again
+//! past 25 °C.
 #![no_main]
 #![no_std]
 
@@ -13,9 +31,6 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Turn on P1.0 if temp between 20 and 25C
-// No board document covers an LED on P1.0: there is none for the MSP430FR25x2. P1.0 is a GPIO output,
-// P1SELx = 00 and P1DIR = 1 (SLASEE4C Table 6-15, p. 58).
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog. The watchdog runs from every PUC and must be halted, here

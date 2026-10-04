@@ -3,29 +3,26 @@
 //!
 //! TA0's CCR2 output is the 38 kHz carrier, and TA1's CCR2 output, the envelope, is held low. In ASK
 //! mode the modulator then outputs the carrier while the data bit is 1, and stays low while it's 0.
-//! P1.4 is eUSCI_A0's TXD pin, which the modulator takes over.
-//!
+//! P1.4 is eUSCI_A0's TXD pin, which the modulator takes over. An NEC frame is a 9 ms burst, a 4.5 ms
+//! space, then 32 bits, least significant bit first: the address, its inverse, the command and its
+//! inverse. Each bit is a 562 µs burst followed by a 562 µs space for 0 or a 1687 µs space for 1, and a
+//! last 562 µs burst ends the frame.
 //! (Carrier and coding inputs: SLASEO7C Table 9-12, p. 55 and SLASEO7C Table 9-13, p. 56. The ASK
 //! logic is drawn for the MSP430FR2433 in SLAU445I Figure 1-8, p. 50. The modulator drives "the
 //! eUSCI_A pin of UCA0TXD/UCA0SIMO": SLASEO7C 9.10.8, p. 60. SLASEO7C Figure 9-2, p. 57 labels that
 //! pin P2.0, but measured on an MSP430FR2476 the output is on P1.4, with eUSCI_A0 in its default
 //! mapping.)
 //!
-//! An NEC frame is a 9 ms burst, a 4.5 ms space, then 32 bits, least significant bit first: the
-//! address, its inverse, the command and its inverse. Each bit is a 562 µs burst followed by a 562 µs
-//! space for 0 or a 1687 µs space for 1, and a last 562 µs burst ends the frame.
-//!
-//! To see it on an oscilloscope:
-//! 1. P1.4 goes to the debug probe's backchannel UART through the TXD jumper of J101, the jumper
-//!    block between the debug probe and the MSP430. Pull that jumper off and connect the probe tip to
-//!    the TXD pin on the MSP430 side, away from the USB connector. Connect the ground clip to GND, for
-//!    example pin 20 of the BoosterPack headers. (J101: SLAU802 Table 2, p. 8; its target-side TXD
-//!    pin is P1.4_UART_TX: SLAU802 Figure 16, p. 22; board layout: SLAU802 Figure 1, p. 1; pin 20:
-//!    SLAU802 Figure 10, p. 13)
-//! 2. Set the channel to 1 V/div and the time base to 10 ms/div, and trigger on a rising edge at
-//!    1.5 V in normal mode.
-//! 3. The frame shows as blocks: the long first burst, the space, then the 32 bits. At 20 µs/div a
-//!    burst shows the carrier, a square wave with a period of 26 µs.
+//! How to test (the scope):
+//! 1. P1.4 isn't on the BoosterPack headers: it goes to the debug probe's backchannel UART through the
+//!    TXD jumper of J101. Pull that jumper off, connect the probe tip to the TXD pin on the MSP430 side,
+//!    away from the USB connector, and the ground clip to GND (J3 pin 22). (J101: SLAU802 Table 2, p. 8;
+//!    its target-side TXD pin is P1.4_UART_TX: SLAU802 Figure 16, p. 22; board layout: SLAU802 Figure 1,
+//!    p. 1; header pins: SLAU802 Figure 10, p. 13.)
+//! 2. Flash this example.
+//! 3. Scope: 1 V/div, 10 ms/div, trigger on a rising edge at 1.5 V in normal mode. Expected: a frame
+//!    every 108 ms, as blocks: the long first burst, the space, then the 32 bits. At 20 µs/div a burst
+//!    shows the carrier, a square wave with a period of 26 µs.
 //! 4. Put the TXD jumper back for the examples that use the backchannel UART.
 #![no_main]
 #![no_std]

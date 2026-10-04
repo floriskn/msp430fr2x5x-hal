@@ -1,3 +1,19 @@
+//! The internal temperature sensor: LED1 is on while the chip is between 20.0 °C and 25.0 °C, and off
+//! otherwise.
+//!
+//! The ADC converts the sensor, channel 12, against the internal 1.5 V reference. The device descriptors
+//! (TLV) hold the factory's readings of the sensor against that reference at 30 °C and 105 °C, and
+//! `TempSensorCalibration` turns each new reading into tenths of a degree with them.
+//! (Channel 12: SLASEC4D Table 6-21, p. 77. The readings at 30 °C and 105 °C: SLASEC4D Table 6-70, p. 108;
+//! their use: SLAU445I 1.13.3.3, p. 60. LED1 on P1.0 is red: SLAU680 Figure 18, p. 26.)
+//!
+//! How to test:
+//! 1. Flash this example. In a room at 20 °C to 25 °C, LED1 is on.
+//! 2. Hold a fingertip on the MSP430FR2355 (MSP1: SLAU680 Figure 2, p. 6): as the chip warms past 25 °C,
+//!    LED1 turns off. Take the finger away, and LED1 turns on again as the chip cools.
+//!
+//! In a room below 20 °C LED1 starts off: the finger turns it on as the chip passes 20 °C, and off again
+//! past 25 °C.
 #![no_main]
 #![no_std]
 
@@ -13,7 +29,6 @@ use msp430_hal::{
 use nb::block;
 use panic_msp430 as _;
 
-// Turn on P1.0 if temp between 20 and 25C (LED1, red: SLAU680 Figure 18, p. 26)
 #[entry]
 fn main() -> ! {
     // Take peripherals and disable watchdog
