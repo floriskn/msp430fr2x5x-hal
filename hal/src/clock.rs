@@ -196,16 +196,16 @@ impl DcoclkFreqSel {
     #[inline(always)]
     fn dcorsel(self) -> Dcorsel {
         match self {
-            DcoclkFreqSel::_1MHz => Dcorsel::Dcorsel0,
-            DcoclkFreqSel::_2MHz => Dcorsel::Dcorsel1,
-            DcoclkFreqSel::_4MHz => Dcorsel::Dcorsel2,
-            DcoclkFreqSel::_8MHz => Dcorsel::Dcorsel3,
-            DcoclkFreqSel::_12MHz => Dcorsel::Dcorsel4,
-            DcoclkFreqSel::_16MHz => Dcorsel::Dcorsel5,
+            DcoclkFreqSel::_1MHz => Dcorsel::Range1mhz,
+            DcoclkFreqSel::_2MHz => Dcorsel::Range2mhz,
+            DcoclkFreqSel::_4MHz => Dcorsel::Range4mhz,
+            DcoclkFreqSel::_8MHz => Dcorsel::Range8mhz,
+            DcoclkFreqSel::_12MHz => Dcorsel::Range12mhz,
+            DcoclkFreqSel::_16MHz => Dcorsel::Range16mhz,
             #[cfg(feature = "enhanced_cs")]
-            DcoclkFreqSel::_20MHz => Dcorsel::Dcorsel6,
+            DcoclkFreqSel::_20MHz => Dcorsel::Range20mhz,
             #[cfg(feature = "enhanced_cs")]
-            DcoclkFreqSel::_24MHz => Dcorsel::Dcorsel7,
+            DcoclkFreqSel::_24MHz => Dcorsel::Range24mhz,
         }
     }
 
@@ -283,19 +283,19 @@ impl DcoTarget {
             return DcoTarget { freq, ..highest };
         }
         let range = match DCO_RANGE_BOUNDARY_HZ.iter().filter(|&&boundary| freq > boundary).count() {
-            0 => Dcorsel::Dcorsel0,
-            1 => Dcorsel::Dcorsel1,
-            2 => Dcorsel::Dcorsel2,
-            3 => Dcorsel::Dcorsel3,
-            4 => Dcorsel::Dcorsel4,
+            0 => Dcorsel::Range1mhz,
+            1 => Dcorsel::Range2mhz,
+            2 => Dcorsel::Range4mhz,
+            3 => Dcorsel::Range8mhz,
+            4 => Dcorsel::Range12mhz,
             #[cfg(not(feature = "enhanced_cs"))]
-            _ => Dcorsel::Dcorsel5,
+            _ => Dcorsel::Range16mhz,
             #[cfg(feature = "enhanced_cs")]
-            5 => Dcorsel::Dcorsel5,
+            5 => Dcorsel::Range16mhz,
             #[cfg(feature = "enhanced_cs")]
-            6 => Dcorsel::Dcorsel6,
+            6 => Dcorsel::Range20mhz,
             #[cfg(feature = "enhanced_cs")]
-            _ => Dcorsel::Dcorsel7,
+            _ => Dcorsel::Range24mhz,
         };
         DcoTarget { freq, range, factory_trim: false }
     }

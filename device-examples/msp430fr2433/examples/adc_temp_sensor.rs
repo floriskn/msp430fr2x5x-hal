@@ -40,9 +40,9 @@ fn main() -> ! {
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
-        Resolution::_10BIT,
-        SamplingRate::_200KSPS,
-        SampleTime::_256,
+        Resolution::Bits10,
+        SamplingRate::Max200ksps,
+        SampleTime::Cycles256,
     )
     .use_modclk()
     .configure(periph.adc);
@@ -50,7 +50,7 @@ fn main() -> ! {
     // The 1.5-V reference: REFVSEL = 00b and INTREFEN = 1 in PMMCTL2 (SLAU445I Table 2-4, p. 93 to p. 94).
     // The sensor: TSENSOREN in PMMCTL2 "must be set to turn on the sensor" (SLAU445I 2.2.9, p. 89), and it
     // is ADC channel 12 (SLASE59F Table 6-15, p. 53).
-    let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
+    let vref = pmm.enable_internal_reference(ReferenceVoltage::V1_5).unwrap();
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
@@ -60,7 +60,7 @@ fn main() -> ! {
     // SLAU445I 1.13.3.3, Equation 9, p. 60; typical VSENSOR and TCSENSOR: SLASE59F Table 5-22, p. 36.)
     // VR+ = VREF and VR- = AVSS: ADCSREFx = 001b (SLAU445I Table 21-8, p. 567)
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
-    let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
+    let calibration = TempSensorCalibration::new(ReferenceVoltage::V1_5);
 
     loop {
         let count = block!(adc.read_count(&mut t_sense)).unwrap();

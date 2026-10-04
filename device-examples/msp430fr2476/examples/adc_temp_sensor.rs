@@ -40,15 +40,15 @@ fn main() -> ! {
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
-        Resolution::_12BIT,
-        SamplingRate::_200KSPS,
-        SampleTime::_256,
+        Resolution::Bits12,
+        SamplingRate::Max200ksps,
+        SampleTime::Cycles256,
     )
     .use_modclk()
     .configure(periph.adc);
 
     // REFVSEL = 00b selects 1.5 V, and TSENSOREN = 1 turns the sensor on (SLAU445I Table 2-4, p. 93)
-    let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
+    let vref = pmm.enable_internal_reference(ReferenceVoltage::V1_5).unwrap();
     // The sensor is ADC channel 12 (SLASEO7C Table 9-19, p. 62)
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
@@ -60,7 +60,7 @@ fn main() -> ! {
     // "can be large and must be calibrated": SLAU445I 21.2.7.8, p. 556.)
     // ADCSREFx = 001b: VR+ = VREF and VR- = AVSS (SLAU445I 21.3.6, p. 567)
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
-    let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
+    let calibration = TempSensorCalibration::new(ReferenceVoltage::V1_5);
 
     loop {
         let count = block!(adc.read_count(&mut t_sense)).unwrap();

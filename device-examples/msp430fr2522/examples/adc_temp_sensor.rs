@@ -37,15 +37,15 @@ fn main() -> ! {
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
-        Resolution::_10BIT,
-        SamplingRate::_200KSPS,
-        SampleTime::_256,
+        Resolution::Bits10,
+        SamplingRate::Max200ksps,
+        SampleTime::Cycles256,
     )
     .use_modclk()
     .configure(periph.adc);
 
     // The temperature sensor is ADC channel 12 (SLASEE4C Table 6-13, p. 55)
-    let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
+    let vref = pmm.enable_internal_reference(ReferenceVoltage::V1_5).unwrap();
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
@@ -55,7 +55,7 @@ fn main() -> ! {
     // SLAU445I 1.13.3.3, p. 60. Full resolution is 10 bits on this device (SLASEE4C 6.10.12, p. 55).
     // Typical sensor voltage and slope: VSENSOR and TCSENSOR, SLASEE4C Table 5-22, p. 39.
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
-    let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
+    let calibration = TempSensorCalibration::new(ReferenceVoltage::V1_5);
 
     loop {
         let count = block!(adc.read_count(&mut t_sense)).unwrap();

@@ -47,7 +47,7 @@ fn main() -> ! {
 
     // If this reset was a wake up from LPMx.5...
     // (SYSRSTIV can be used to decode the reset condition: SLAU445I 1.4.3.2, p. 42)
-    if sys.sysrstiv().read().sysrstiv().is_lpm5wu() {
+    if sys.sysrstiv().read().sysrstiv().is_lpmx5_wake_up() {
         // Toggle the LED.
         // I/O registers have their values reset coming out of LPMx.5,
         // so we have to store state in the backup memory.

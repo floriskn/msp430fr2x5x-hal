@@ -523,46 +523,26 @@ impl PmmProtection {
 
 /// The sources of the system NMI, in priority order (SYSSNIV: SLASEC4D Table 6-12, p. 70; SLASE59F
 /// Table 6-9, p. 48; SLASEO7C Table 9-10, p. 53; SLASEE4C Table 6-10, p. 52)
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SystemNmi {
-    /// SVS low-power reset entry (SYSSNIV 02h; the low-power reset state: SLAU445I 2.2.5, p. 87)
-    SvsLowPowerResetEntry,
-    /// The FRAM detected a bit error it couldn't correct, see
-    /// [`Fram::set_uncorrectable_bit_error_action()`](crate::fram::Fram::set_uncorrectable_bit_error_action)
-    /// (SYSSNIV 04h; UBDIFG, SLAU445I 6.6, p. 303)
-    FramUncorrectableBitError,
-    /// The CPU accessed vacant memory, see [`VacantMemory`] (SYSSNIV 12h; SLAU445I 1.9.2, p. 45)
-    VacantMemoryAccess,
-    /// A message from the debugger arrived in the JTAG mailbox (SYSSNIV 14h; JMBINIFG, SLAU445I 1.10.4,
-    /// p. 47)
-    JtagMailboxIn,
-    /// The debugger read the outgoing JTAG mailbox message (SYSSNIV 16h; JMBOUTIFG, SLAU445I 1.10.4, p. 46)
-    JtagMailboxOut,
-    /// The FRAM detected and corrected a bit error, see
-    /// [`Fram::enable_correctable_bit_error_interrupts()`](crate::fram::Fram::enable_correctable_bit_error_interrupts)
-    /// (SYSSNIV 18h; CBDIFG, SLAU445I 6.6, p. 303)
-    FramCorrectableBitError,
-    /// A value the data sheets list as reserved (SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48;
-    /// SLASEO7C Table 9-10, p. 53; SLASEE4C Table 6-10, p. 52)
-    Reserved(u16),
-}
+///
+/// - `SvsLowPowerResetEntry`: SVS low-power reset entry (the low-power reset state: SLAU445I 2.2.5, p. 87).
+/// - `FramUncorrectableBitError`: the FRAM detected a bit error it couldn't correct, see
+///   [`Fram::set_uncorrectable_bit_error_action()`](crate::fram::Fram::set_uncorrectable_bit_error_action)
+///   (UBDIFG, SLAU445I 6.6, p. 303).
+/// - `VacantMemoryAccess`: the CPU accessed vacant memory, see [`VacantMemory`] (SLAU445I 1.9.2, p. 45).
+/// - `JtagMailboxIn`: a message from the debugger arrived in the JTAG mailbox (JMBINIFG, SLAU445I
+///   1.10.4, p. 47).
+/// - `JtagMailboxOut`: the debugger read the outgoing JTAG mailbox message (JMBOUTIFG, SLAU445I 1.10.4,
+///   p. 46).
+/// - `FramCorrectableBitError`: the FRAM detected and corrected a bit error, see
+///   [`Fram::enable_correctable_bit_error_interrupts()`](crate::fram::Fram::enable_correctable_bit_error_interrupts)
+///   (CBDIFG, SLAU445I 6.6, p. 303).
+pub use crate::_pac::sys::syssniv::Syssniv as SystemNmi;
 
 /// Returns the highest-priority pending system NMI source and clears its flag (SYSSNIV, SLAU445I
 /// 1.3.7, p. 36), or `None` if none is pending. Call this in the `SYSNMI` handler, until it returns
 /// `None` if several sources are enabled.
 #[inline]
 pub fn take_system_nmi() -> Option<SystemNmi> {
-    // SYSSNIV values: SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48; SLASEO7C Table 9-10, p. 53;
-    // SLASEE4C Table 6-10, p. 52
-    match sys().syssniv().read().bits() {
-        0x00 => None,
-        0x02 => Some(SystemNmi::SvsLowPowerResetEntry),
-        0x04 => Some(SystemNmi::FramUncorrectableBitError),
-        0x12 => Some(SystemNmi::VacantMemoryAccess),
-        0x14 => Some(SystemNmi::JtagMailboxIn),
-        0x16 => Some(SystemNmi::JtagMailboxOut),
-        0x18 => Some(SystemNmi::FramCorrectableBitError),
-        other => Some(SystemNmi::Reserved(other)),
-    }
+    // 00h, no interrupt pending, has no variant, nor do the values the data sheets reserve
+    sys().syssniv().read().syssniv().variant()
 }

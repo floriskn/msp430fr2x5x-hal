@@ -561,20 +561,7 @@ pub enum TimerVector {
 }
 
 #[inline]
-pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector {
-    // TBxIV only takes these values (SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
-    match timer.tbxiv_rd() {
-        0 => TimerVector::NoInterrupt,
-        2 => TimerVector::SubTimer1,
-        4 => TimerVector::SubTimer2,
-        6 => TimerVector::SubTimer3,
-        8 => TimerVector::SubTimer4,
-        10 => TimerVector::SubTimer5,
-        12 => TimerVector::SubTimer6,
-        14 => TimerVector::MainTimer,
-        _ => unsafe { core::hint::unreachable_unchecked() },
-    }
-}
+pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector { timer.tbxiv_rd() }
 
 /// Interrupt vector register for determining which timer caused an ISR (TAxIV/TBxIV: SLAU445I Table 13-8,
 /// p. 388; SLAU445I Table 14-10, p. 414)

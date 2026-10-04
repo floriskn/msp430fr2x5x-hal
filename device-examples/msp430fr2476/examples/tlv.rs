@@ -89,9 +89,9 @@ fn main() -> ! {
     writeln!(tx, "ADC gain factor:   {:04X}\r", tlv::adc_gain_factor()).ok();
     writeln!(tx, "ADC offset:        {}\r", tlv::adc_offset()).ok();
     for (vref, name) in [
-        (ReferenceVoltage::_1V5, "1.5"),
-        (ReferenceVoltage::_2V0, "2.0"),
-        (ReferenceVoltage::_2V5, "2.5"),
+        (ReferenceVoltage::V1_5, "1.5"),
+        (ReferenceVoltage::V2_0, "2.0"),
+        (ReferenceVoltage::V2_5, "2.5"),
     ] {
         let temp = TempSensorCalibration::new(vref);
         writeln!(

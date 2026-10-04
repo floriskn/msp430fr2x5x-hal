@@ -342,19 +342,7 @@ impl<PORT: IntrPortNum> PxIV<PORT> {
     #[inline]
     pub fn get_interrupt_vector(&mut self) -> GpioVector {
         let p = unsafe { PORT::steal() };
-        // PxIV values: SLAU445I Tables 8-5 to 8-8, p. 332 to p. 333
-        match p.pxiv_rd() {
-            0 => GpioVector::NoIsr,
-            2 => GpioVector::Pin0Isr,
-            4 => GpioVector::Pin1Isr,
-            6 => GpioVector::Pin2Isr,
-            8 => GpioVector::Pin3Isr,
-            10 => GpioVector::Pin4Isr,
-            12 => GpioVector::Pin5Isr,
-            14 => GpioVector::Pin6Isr,
-            16 => GpioVector::Pin7Isr,
-            _ => unsafe { core::hint::unreachable_unchecked() },
-        }
+        p.pxiv_rd()
     }
 }
 

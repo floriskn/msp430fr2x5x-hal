@@ -34,14 +34,14 @@ fn main() -> ! {
     let adc = AdcConfig::new(
         ClockDivider::_1,
         Predivider::_1,
-        Resolution::_12BIT,
-        SamplingRate::_200KSPS,
-        SampleTime::_256,
+        Resolution::Bits12,
+        SamplingRate::Max200ksps,
+        SampleTime::Cycles256,
     )
     .use_modclk()
     .configure(periph.adc);
 
-    let vref = pmm.enable_internal_reference(ReferenceVoltage::_1V5).unwrap();
+    let vref = pmm.enable_internal_reference(ReferenceVoltage::V1_5).unwrap();
     let mut t_sense = pmm.enable_internal_temp_sensor(&vref).unwrap();
 
     // The device descriptors (TLV) hold the sensor readings measured in the factory at two temperatures,
@@ -51,7 +51,7 @@ fn main() -> ! {
     // high temperature, 105 C; SLAU445I 1.13.3.3, p. 60. Typical values: VSENSOR 788 mV at 30 C and
     // TCSENSOR 2.32 mV per degree C, SLASEC4D Table 5-10, p. 41.)
     let mut adc = adc.with_reference(PositiveReference::Internal(&vref), NegativeReference::Avss);
-    let calibration = TempSensorCalibration::new(ReferenceVoltage::_1V5);
+    let calibration = TempSensorCalibration::new(ReferenceVoltage::V1_5);
 
     loop {
         let count = block!(adc.read_count(&mut t_sense)).unwrap();

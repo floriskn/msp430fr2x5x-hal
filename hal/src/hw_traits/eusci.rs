@@ -422,8 +422,9 @@ pub trait EUsciI2C: Steal {
     fn ifg_rst(&self);
     fn ifg_clr_except_rx(&self);
 
-    // UCBxIV (SLAU445I Table 24-20, p. 664)
-    fn iv_rd(&self) -> u16;
+    // UCBxIV (SLAU445I Table 24-20, p. 664). Reading it clears the flag it reports (SLAU445I 24.3.11.5,
+    // p. 646).
+    fn iv_rd(&self) -> crate::i2c::I2cVector;
 }
 
 pub trait EusciSPI: Steal {
@@ -455,6 +456,10 @@ pub trait EusciSPI: Steal {
     // UCxIE (SLAU445I Table 23-8, p. 617; SLAU445I Table 23-17, p. 624)
     fn ie_rd(&self) -> u16;
     fn ie_wr(&self, reg: u16);
+
+    // UCRXIE and UCTXIE in UCxIE (SLAU445I Table 23-8, p. 617; SLAU445I Table 23-17, p. 624)
+    fn receive_interrupt_enabled(&self) -> bool;
+    fn transmit_interrupt_enabled(&self) -> bool;
 
     // UCTXIE and UCRXIE in UCxIE (SLAU445I Table 23-8, p. 617; SLAU445I Table 23-17, p. 624)
     fn set_transmit_interrupt(&self);
@@ -577,6 +582,12 @@ macro_rules! eusci_spi_impl {
 
             #[inline(always)]
             fn ie_wr(&self, reg: u16) { self.$ucxie().write(|w| unsafe { w.bits(reg) }); }
+
+            #[inline(always)]
+            fn receive_interrupt_enabled(&self) -> bool { self.$ucxie().read().ucrxie().bit() }
+
+            #[inline(always)]
+            fn transmit_interrupt_enabled(&self) -> bool { self.$ucxie().read().uctxie().bit() }
 
             #[inline(always)]
             fn set_transmit_interrupt(&self) {
@@ -1110,10 +1121,10 @@ macro_rules! eusci_i2c_impl {
 
             // UCBxADDMASK (SLAU445I Table 24-16, p. 659)
             #[inline(always)]
-            fn addmask_rd(&self) -> u16 { self.$ucbxaddmask().read().bits() }
+            fn addmask_rd(&self) -> u16 { self.$ucbxaddmask().read().addmask().bits() }
             #[inline(always)]
             fn addmask_wr(&self, val: u16) {
-                self.$ucbxaddmask().write(|w| unsafe { w.bits(val) });
+                self.$ucbxaddmask().write(|w| unsafe { w.addmask().bits(val) });
             }
 
             // UCBxI2CSA (SLAU445I Table 24-17, p. 659)
@@ -1161,7 +1172,27 @@ macro_rules! eusci_i2c_impl {
 
             // UCBxIV (SLAU445I Table 24-20, p. 664)
             #[inline(always)]
-            fn iv_rd(&self) -> u16 { self.$ucbxiv().read().bits() }
+            fn iv_rd(&self) -> crate::i2c::I2cVector {
+                use crate::i2c::I2cVector;
+                let r = self.$ucbxiv().read();
+                let iv = r.uciv();
+                if iv.is_ucalifg() { I2cVector::ArbitrationLost }
+                else if iv.is_ucnackifg() { I2cVector::NackReceived }
+                else if iv.is_ucsttifg() { I2cVector::StartReceived }
+                else if iv.is_ucstpifg() { I2cVector::StopReceived }
+                else if iv.is_ucrxifg3() { I2cVector::Slave3RxBufFull }
+                else if iv.is_uctxifg3() { I2cVector::Slave3TxBufEmpty }
+                else if iv.is_ucrxifg2() { I2cVector::Slave2RxBufFull }
+                else if iv.is_uctxifg2() { I2cVector::Slave2TxBufEmpty }
+                else if iv.is_ucrxifg1() { I2cVector::Slave1RxBufFull }
+                else if iv.is_uctxifg1() { I2cVector::Slave1TxBufEmpty }
+                else if iv.is_ucrxifg0() { I2cVector::RxBufFull }
+                else if iv.is_uctxifg0() { I2cVector::TxBufEmpty }
+                else if iv.is_ucbcntifg() { I2cVector::ByteCounterZero }
+                else if iv.is_uccltoifg() { I2cVector::ClockLowTimeout }
+                else if iv.is_ucbit9ifg() { I2cVector::NinthBitReceived }
+                else { I2cVector::None }
+            }
         }
 
         // UCBxIFG flags (SLAU445I Table 24-19, p. 662 to p. 663)

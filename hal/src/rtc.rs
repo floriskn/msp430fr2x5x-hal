@@ -204,10 +204,9 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
         // Table 3-11, p. 121); XT1CLK is RTCSS = 10b (SLAU445I Table 15-2, p. 420).
         #[cfg(feature = "erratum_rtc15")]
         let leaving_stopped_xt1 = {
-            let xt1clk = u8::from(Rtcss::Xt1clk);
             let cs = unsafe { _pac::Cs::steal() };
-            self.periph.rtcctl().read().rtcss().bits() == xt1clk
-                && u8::from(SRC::CLK_SRC) != xt1clk
+            self.periph.rtcctl().read().rtcss().is_xt1clk()
+                && SRC::CLK_SRC != Rtcss::Xt1clk
                 && cs.csctl7().read().xt1offg().bit_is_set()
         };
         // Select the clock first, then reset the counter, which also loads `count` into the

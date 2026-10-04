@@ -262,16 +262,16 @@ struct SavedDco {
 }
 
 /// Bring the DCO to 2 MHz or lower for erratum CS13 (SLAZ695J CS13, p. 9; SLAZ664S CS13; SLAZ705H
-/// CS13), if it may run faster. DCORSEL is bits 3-1 of CSCTL1 (SLAU445I Table 3-5, p. 114). In the
-/// lowest range, DCORSEL = 000b, with DCOFTRIM = 000b the DCO runs at 0.85 MHz to 0.90 MHz at its
-/// highest tap (SLASEC4D Table 5-6, p. 38; SLASE59F Table 5-6, p. 25; SLASEE4C Table 5-6, p. 27). In
-/// that range already, the FLL keeps it near 1 MHz, and nothing changes.
+/// CS13), if it may run faster. In the lowest range, DCORSEL = 000b (SLAU445I Table 3-5, p. 114),
+/// with DCOFTRIM = 000b the DCO runs at 0.85 MHz to 0.90 MHz at its highest tap (SLASEC4D
+/// Table 5-6, p. 38; SLASE59F Table 5-6, p. 25; SLASEE4C Table 5-6, p. 27). In that range already,
+/// the FLL keeps it near 1 MHz, and nothing changes.
 #[cfg(feature = "erratum_cs13")]
 #[inline(always)]
 fn lower_dco() -> Option<SavedDco> {
     let cs = unsafe { _pac::Cs::steal() };
     let csctl1 = cs.csctl1().read();
-    if csctl1.dcorsel().bits() == 0 {
+    if csctl1.dcorsel().is_range_1mhz() {
         return None;
     }
     let saved = SavedDco {
@@ -284,7 +284,11 @@ fn lower_dco() -> Option<SavedDco> {
     // in interrupt handlers: an interrupt "does not clear SCG0" (SLAU445I 3.2.10, p. 106).
     set_sr_bits::<SCG0>();
     // DCOFTRIMEN = 1, DCOFTRIM = 000b, DCORSEL = 000b, DISMOD kept (CSCTL1, SLAU445I Table 3-5, p. 114)
-    cs.csctl1().write(|w| w.dismod().bit(csctl1.dismod().bit()).dcoftrimen().set_bit());
+    cs.csctl1().write(|w| w
+        .dismod().bit(csctl1.dismod().bit())
+        .dcoftrimen().set_bit()
+        .dcoftrim().set(0)
+        .dcorsel().range_1mhz());
     Some(saved)
 }
 
