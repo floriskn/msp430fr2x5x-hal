@@ -11,9 +11,9 @@
 //! SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82; devices: SLASEC4D Table 6-9, p. 68;
 //! SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49).
 
+use crate::_pac::{self, rtc::rtcctl::Rtcss};
 use crate::clock::{Smclk, Xt1clk};
 use core::{convert::Infallible, marker::PhantomData};
-use crate::_pac::{self, rtc::rtcctl::Rtcss};
 
 #[cfg(feature = "rtc_aclk")]
 use crate::clock::Aclk;
@@ -48,7 +48,7 @@ pub struct RtcSmclk;
 impl RtcClockSrc for RtcSmclk {
     // RTCSS = 01b, the device-specific source (SLAU445I Table 15-2, p. 420)
     const CLK_SRC: Rtcss = Rtcss::Smclk;
-    
+
     #[cfg(feature = "rtc_aclk")]
     fn apply_sys_config() {
         // Ensure the mux is set to SMCLK (0) (RTCCKSEL: SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31,

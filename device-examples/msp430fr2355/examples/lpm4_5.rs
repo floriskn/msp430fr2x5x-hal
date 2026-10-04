@@ -60,8 +60,8 @@ fn main() -> ! {
         let mut button = port2.pin3;
         button.select_falling_edge_trigger().enable_interrupts();
 
-        // And enter LPM4.5. Global interrupts are enabled before LPM4.5 is entered.
-        // ("TI also recommends setting GIE = 1 before entry into LPMx.5": SLAU445I 8.3.3, p. 318)
+        // And enter LPM4.5. Interrupts were never enabled, so GIE stays clear, as in
+        // SLAU445I 1.4.3.1 step 8, p. 41; the P2.3 edge wakes the device anyway (SLAU445I 1.4.3.2, p. 41).
         enter_lpm4_5(wdt, periph.rtc, SvsState::Disabled);
     }
 }
@@ -75,9 +75,9 @@ fn init_unused_gpio(p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
 }
 
 // Note: In this case we don't need an ISR when waking from LPMx.5, since power on disables interrupts.
-// (The exit from LPMx.5 is a BOR, SLAU445I 1.4.3.2, p. 42, and after a BOR the "Status register (SR) is
-// reset", which clears GIE: SLAU445I 1.2.1, p. 32.)
 // You *can* service the interrupt that causes the wakeup, but this isn't done here.
+// (Any exit from LPMx.5 is a BOR: SLAU445I 1.4.3.2, p. 42, and a BOR resets the SR, GIE included:
+// SLAU445I 1.2.1, p. 32.)
 
 // The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
 // enabled (default for dev profile). MSP430 does not actually have meaningful abort() support

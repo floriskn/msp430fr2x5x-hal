@@ -560,9 +560,6 @@ pub enum TimerVector {
     MainTimer,
 }
 
-#[inline]
-pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector { timer.tbxiv_rd() }
-
 /// Interrupt vector register for determining which timer caused an ISR (TAxIV/TBxIV: SLAU445I Table 13-8,
 /// p. 388; SLAU445I Table 14-10, p. 414)
 pub struct TBxIV<T>(PhantomData<T>);
@@ -573,7 +570,7 @@ impl<T: TimerBase> TBxIV<T> {
     /// 13.2.6.2, p. 380; 14.2.6.2, p. 405).
     pub fn interrupt_vector(&mut self) -> TimerVector {
         let timer = unsafe { T::steal() };
-        read_tbxiv(&timer)
+        timer.tbxiv_rd()
     }
 }
 

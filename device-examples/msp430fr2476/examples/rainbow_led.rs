@@ -46,7 +46,7 @@ fn main() -> ! {
     let mut green = pwm.pwm2.init(p5.pin0.to_output().to_alternate2());
     let mut blue = pwm.pwm1.init(p4.pin7.to_output().to_alternate2());
 
-    let max = red.max_duty_cycle(); // 5000
+    let max = red.max_duty_cycle(); // 5001: the period, CCR0 + 1
     let mut phase: u16 = 0;
 
     /// Simple triangle waveform generator for PWM duty cycle
@@ -61,8 +61,8 @@ fn main() -> ! {
       let green_duty = triangle(phase + max/3, max);
       let blue_duty = triangle(phase + 2*max/3, max);
 
-      // On the MSP430FR247x a new duty cycle takes effect at once in up mode, not when the timer
-      // counts to 0 (SLAZ726B TB25)
+      // Each new duty cycle loads when TB0 counts to the old one, so the running period ends with the
+      // old one (CLLD = 11b: SLAU445I Table 14-2, p. 400)
       red.set_duty_cycle(red_duty).unwrap();
       green.set_duty_cycle(green_duty).unwrap();
       blue.set_duty_cycle(blue_duty).unwrap();

@@ -148,7 +148,6 @@ impl<MODE: WatchdogSelect> Wdt<MODE> {
             Self::prewrite(w, r.bits())
             .wdthold().unhold());
     }
-
 }
 
 impl Wdt<WatchdogMode> {

@@ -79,8 +79,9 @@ fn main() -> ! {
         rtc.set_clk_div(RtcDiv::_1);
         rtc.start(VLOCLK_FREQ_HZ); // Count up to VLOCLK freq -> 1 Hz period
         rtc.enable_interrupts();
-        // Global interrupts are enabled by `enter_lpm3_5()`
-        // ("TI also recommends setting GIE = 1 before entry into LPMx.5": SLAU445I 8.3.3, p. 318)
+        // Interrupts were never enabled, so `enter_lpm3_5()` enters LPM3.5 with GIE clear, as
+        // SLAU445I 1.4.3.1 step 8, p. 41 does. The RTC event still wakes the device (SLAU445I 1.4.3.2,
+        // p. 41).
         // Leaving LPMx.5 requires a full system reset, so this function will never return.
         // ("Any exit from LPMx.5 causes a BOR": SLAU445I 1.4.3.2, p. 42)
         enter_lpm3_5(wdt, rtc, SvsState::Disabled);
@@ -97,10 +98,10 @@ fn init_unused_gpio(p2: P2, p3: P3, p4: P4, p5: P5, p6: P6, pmm: &Pmm) {
 }
 
 // Note: In this case we don't need an ISR when waking from LPMx.5, since power on disables interrupts
-// and we clear the RTC interrupt flag before re-enabling interrupts.
-// (The exit from LPMx.5 is a BOR, SLAU445I 1.4.3.2, p. 42, and after a BOR the "Status register (SR) is
-// reset", which clears GIE: SLAU445I 1.2.1, p. 32.)
+// and this program never enables them; the RTC interrupt flag is cleared before LPM3.5 is entered again.
 // You *can* service the interrupt that causes the wakeup, but this isn't done here.
+// (A BOR resets the SR, GIE included: SLAU445I 1.2.1, p. 32. The wake-up interrupt is serviced once
+// interrupts are enabled: SLAU445I 1.4.3.3 step 7, p. 42.)
 
 // The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
 // enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
