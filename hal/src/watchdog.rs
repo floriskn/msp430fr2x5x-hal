@@ -7,6 +7,16 @@
 //! 12.2.2, p. 363).
 //! If this is undesirable, call `Wdt::constrain()` as soon in the application as possible to stop the
 //! watchdog.
+//!
+//! To find out whether the watchdog reset the device, use
+//! [`Pmm::take_reset_cause()`](crate::pmm::Pmm::take_reset_cause). It returns `WatchdogTimeout` when the
+//! interval ran out in watchdog mode, and `WatchdogPassword` after a write to WDTCTL without the password
+//! (SYSRSTIV 16h and 18h: SLASEC4D Table 6-12, p. 70; SLASE59F Table 6-9, p. 48; SLASEO7C Table 9-10,
+//! p. 52; SLASEE4C Table 6-10, p. 52). WDTIFG can't tell you. SLAU445I 12.2.4, p. 363 says the reset
+//! routine can read it, but the register description says that in watchdog mode it "self clears upon a
+//! watchdog timeout event" and that "The SYSRSTIV can be read to determine if the reset was caused by a
+//! watchdog timeout event" (SLAU445I Table 1-10, p. 63). Measured on an MSP430FR2476, WDTIFG read 0 after
+//! both kinds of watchdog reset.
 
 use crate::_pac::{self, wdt_a::wdtctl::Wdtssel};
 use crate::clock::{Aclk, Smclk};
@@ -174,9 +184,10 @@ impl Wdt<IntervalMode> {
     /// Checks if the timer has expired, returning `Ok(())` if it has, otherwise `WouldBlock`.
     /// If called while the timer is not running, this will always return `WouldBlock`.
     ///
-    /// Only available in interval mode: in watchdog mode the flag only tells that the last reset
-    /// came from the watchdog (WDTIFG in SFRIFG1: SLAU445I 12.2.4, p. 363; SLAU445I Table 1-10,
-    /// p. 63).
+    /// Only available in interval mode, where WDTIFG marks an expired interval (SLAU445I 12.2.3,
+    /// p. 363; WDTIFG in SFRIFG1: SLAU445I Table 1-10, p. 63). In watchdog mode an expired interval
+    /// resets the device instead, and the flag doesn't show it afterwards: see the
+    /// [module documentation](crate::watchdog).
     #[inline]
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let sfr = unsafe { &*_pac::Sfr::ptr() };
@@ -195,8 +206,8 @@ impl Wdt<IntervalMode> {
         let mut wdt = Wdt { _mode: PhantomData, periph: self.periph };
         // Change mode bit and pause timer
         wdt.pause();
-        // Wipe out old interrupt flag, which may cause a watchdog reset (in watchdog mode "the WDTIFG flag
-        // sources a reset vector interrupt": SLAU445I 12.2.4, p. 363)
+        // Clear a flag left from interval mode, so that back in interval mode `wait()` and the WDT
+        // interrupt only see new expiries (WDTIFG in SFRIFG1: SLAU445I Table 1-10, p. 63)
         let sfr = unsafe { &*_pac::Sfr::ptr() };
         unsafe { sfr.sfrifg1().clear_bits(|w| w.wdtifg().clear_bit()) };
         wdt
