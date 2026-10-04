@@ -541,6 +541,8 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
 /// no interrupt through CCR1 to CCR6 to the timer overflow (SLAU445I Table 13-8, p. 388; SLAU445I
 /// Table 14-10, p. 414). CCR0 has its own interrupt vector and isn't in this list (SLAU445I 13.2.6.1,
 /// p. 380; 14.2.6.1, p. 405).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimerVector {
     /// No pending interrupt
     NoInterrupt,

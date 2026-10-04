@@ -13,7 +13,8 @@ readme = "../README.md"
 [features]
 default = ["msp430fr2476"] # FOR TESTING DONT CHANGE
 embedded-hal-02 = ["dep:embedded-hal-02", "dep:void"]
-defmt = ["dep:defmt"]
+# defmt::Format for the HAL's types, and for the PAC enums it re-exports, such as `pmm::ResetCause`
+defmt = ["dep:defmt", "msp430fr2355?/defmt", "msp430fr2433?/defmt", "msp430fr247x?/defmt", "msp430fr25x2?/defmt"]
 
 # Device features. Provide exactly one of these.
 # MSP430FR2x5x: SLASEC4D Table 3-1, p. 8

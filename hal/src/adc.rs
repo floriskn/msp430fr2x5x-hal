@@ -510,6 +510,21 @@ bitflags::bitflags! {
     }
 }
 
+// The set flags by name, as in the Debug output; a bitflags struct can't derive defmt::Format
+#[cfg(feature = "defmt")]
+impl defmt::Format for AdcInterruptFlags {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "AdcInterruptFlags(");
+        for (i, (name, _)) in self.iter_names().enumerate() {
+            if i > 0 {
+                defmt::write!(f, " | ");
+            }
+            defmt::write!(f, "{=str}", name);
+        }
+        defmt::write!(f, ")");
+    }
+}
+
 /// The highest-priority pending ADC interrupt, as read from ADCIV by [`Adc::interrupt_source()`] (SLAU445I
 /// Table 21-15, p. 572)
 ///

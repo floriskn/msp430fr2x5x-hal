@@ -104,6 +104,7 @@ pub fn die_record() -> DieRecord {
 /// sensor is calibrated using the internal voltage references"; 105 °C: SLASEC4D Table 6-70 note 3, p. 108,
 /// and SLASEO7C Table 9-30, p. 72; 85 °C: SLASE59F Table 6-22, p. 60, and SLASEE4C Table 6-18, p. 61)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TempSensorCalibration {
     count_30c: u16,
     count_high: u16,

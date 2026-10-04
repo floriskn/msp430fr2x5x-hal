@@ -348,6 +348,8 @@ impl<PORT: IntrPortNum> PxIV<PORT> {
 
 /// Indicates which pin on the GPIO port caused the ISR: PxIV reads 00h for none and 02h to 10h for
 /// pins 0 to 7 (SLAU445I Tables 8-5 to 8-8, p. 332 to p. 333).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GpioVector {
     /// No ISR
     NoIsr,

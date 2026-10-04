@@ -590,6 +590,7 @@ macro_rules! spi_common {
 /// Possible sources for an eUSCI SPI interrupt. The values are those of UCxIV (SLAU445I Table 23-10, p. 618;
 /// SLAU445I Table 23-19, p. 625).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SpiVector {
     /// No interrupt is currently being serviced.
     None = 0,

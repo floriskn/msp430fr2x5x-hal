@@ -124,6 +124,7 @@ impl From<AddressingMode> for bool {
 
 /// I2C transmission modes. The values are those of UCTR (SLAU445I Table 24-4, p. 650).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TransmissionMode {
     /// Receiver mode
     Receive = 0,
@@ -1668,6 +1669,7 @@ impl_i2c_error!(I2cMasterSlaveErr);
 /// Writing the Tx buffer clears UCTXIFGx and reading the Rx buffer clears UCRXIFGx
 /// (SLAU445I Table 24-9, p. 655; SLAU445I Table 24-10, p. 655).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum I2cEvent {
     /// The master sent a (repeated) start and wants to read from us. Write to the Tx buffer to clear this event.
     ReadStart,
@@ -1696,6 +1698,7 @@ pub enum I2cEvent {
 /// The values are those of UCBxIV (SLAU445I Table 24-20, p. 664); the flags behind them are described in
 /// SLAU445I Table 24-2, p. 646 and SLAU445I Table 24-19, p. 662.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum I2cVector {
     /// No interrupt.
     None             = 0x00,
