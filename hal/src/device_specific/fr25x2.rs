@@ -244,8 +244,7 @@ mod i2c {
         // USCIB0RMP = 0: eUSCI_B0 on P1.0 to P1.3 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG2.USCIB0RMP (SLAU445I Table 1-31, p. 82), which SLASEE4C calls USCIBRMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, DefaultMapping);
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB0 {
@@ -256,8 +255,7 @@ mod i2c {
         // USCIB0RMP = 1: eUSCI_B0 on P2.3 to P2.6 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG2.USCIB0RMP (SLAU445I Table 1-31, p. 82), which SLASEE4C calls USCIBRMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, RemappedMapping);
         }
     }
 }
@@ -323,8 +321,7 @@ mod serial {
         // p. 64 lists no SYSCFG3; the code follows SLASEE4C 6.10.7, p. 53 and SLAU445I Table 1-28, p. 79,
         // which puts SYSCFG3 at offset 26h on the MSP430FR25xx.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, DefaultMapping);
         }
     }
     impl SerialUsci<RemappedMapping> for EUsciA0 {
@@ -335,8 +332,7 @@ mod serial {
         // USCIA0RMP = 1: TXD and RXD on P2.0 and P2.1 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG3.USCIA0RMP (SLAU445I Table 1-32, p. 83), which SLASEE4C calls USCIARMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, RemappedMapping);
         }
     }
 
@@ -417,8 +413,7 @@ mod spi {
         // USCIA0RMP = 0: SIMO and SOMI on P1.4 and P1.5 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG3.USCIA0RMP (SLAU445I Table 1-32, p. 83), which SLASEE4C calls USCIARMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, DefaultMapping);
         }
     }
 
@@ -431,8 +426,7 @@ mod spi {
         // USCIA0RMP = 1: SIMO and SOMI on P2.0 and P2.1 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG3.USCIA0RMP (SLAU445I Table 1-32, p. 83), which SLASEE4C calls USCIARMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, RemappedMapping);
         }
     }
 
@@ -445,8 +439,7 @@ mod spi {
         // USCIB0RMP = 0: eUSCI_B0 on P1.0 to P1.3 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG2.USCIB0RMP (SLAU445I Table 1-31, p. 82), which SLASEE4C calls USCIBRMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, DefaultMapping);
         }
     }
 
@@ -459,8 +452,7 @@ mod spi {
         // USCIB0RMP = 1: eUSCI_B0 on P2.3 to P2.6 (SLASEE4C 6.10.7, p. 53; SLASEE4C Table 6-11, p. 53).
         // SYSCFG2.USCIB0RMP (SLAU445I Table 1-31, p. 82), which SLASEE4C calls USCIBRMP.
         fn configure_pin_mapping() {
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, RemappedMapping);
         }
     }
 

@@ -541,8 +541,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             // USCIB0RMP, SYSCFG2 bit 11, = 0: default pins (SLAU445I Table 1-31, p. 82)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, DefaultMapping);
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB0 {
@@ -552,8 +551,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             // USCIB0RMP, SYSCFG2 bit 11, = 1: remapped pins (SLAU445I Table 1-31, p. 82)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, RemappedMapping);
         }
     }
 
@@ -564,8 +562,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             // USCIB1RMP, SYSCFG3 bit 4, = 0: default pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscib1rmp, DefaultMapping);
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB1 {
@@ -575,8 +572,7 @@ mod i2c {
 
         fn configure_pin_mapping() {
             // USCIB1RMP, SYSCFG3 bit 4, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscib1rmp, RemappedMapping);
         }
     }
 }
@@ -733,8 +729,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             // USCIA0RMP, SYSCFG3 bit 0, = 0: default pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, DefaultMapping);
         }
     }
     impl SerialUsci<RemappedMapping> for EUsciA0 {
@@ -744,8 +739,7 @@ mod serial {
 
         fn configure_pin_mapping() {
             // USCIA0RMP, SYSCFG3 bit 0, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, RemappedMapping);
         }
     }
 
@@ -902,8 +896,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIA0RMP, SYSCFG3 bit 0, = 0: default pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, DefaultMapping);
         }
     }
 
@@ -915,8 +908,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIA0RMP, SYSCFG3 bit 0, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscia0rmp, RemappedMapping);
         }
     }
 
@@ -936,8 +928,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIB0RMP, SYSCFG2 bit 11, = 0: default pins (SLAU445I Table 1-31, p. 82)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, DefaultMapping);
         }
     }
 
@@ -949,8 +940,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIB0RMP, SYSCFG2 bit 11, = 1: remapped pins (SLAU445I Table 1-31, p. 82)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
+            write_remap_bit!(syscfg2.uscib0rmp, RemappedMapping);
         }
     }
 
@@ -962,8 +952,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIB1RMP, SYSCFG3 bit 4, = 0: default pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.uscib1rmp, DefaultMapping);
         }
     }
 
@@ -975,8 +964,7 @@ mod spi {
 
         fn configure_pin_mapping() {
             // USCIB1RMP, SYSCFG3 bit 4, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
+            write_remap_bit!(syscfg3.uscib1rmp, RemappedMapping);
         }
     }
 
@@ -1306,8 +1294,7 @@ mod timer {
         fn configure_pin_mapping() {
             // TA2RMP, SYSCFG3 bit 2, = 0: default pins (SLAU445I Table 1-32, p. 83;
             // SLASEO7C Table 9-16, p. 60)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.ta2rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.ta2rmp, DefaultMapping);
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta2 {
@@ -1317,8 +1304,7 @@ mod timer {
         fn configure_pin_mapping() {
             // TA2RMP, SYSCFG3 bit 2, = 1: remapped pins (SLAU445I Table 1-32, p. 83;
             // SLASEO7C Table 9-16, p. 60)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.ta2rmp().set_bit()) };
+            write_remap_bit!(syscfg3.ta2rmp, RemappedMapping);
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta2 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
@@ -1331,8 +1317,7 @@ mod timer {
         fn configure_pin_mapping() {
             // TA3RMP, SYSCFG3 bit 3, = 0: default pins (SLAU445I Table 1-32, p. 83;
             // SLASEO7C Table 9-16, p. 60)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().clear_bits(|w| w.ta3rmp().clear_bit()) };
+            write_remap_bit!(syscfg3.ta3rmp, DefaultMapping);
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta3 {
@@ -1342,8 +1327,7 @@ mod timer {
         fn configure_pin_mapping() {
             // TA3RMP, SYSCFG3 bit 3, = 1: remapped pins (SLAU445I Table 1-32, p. 83;
             // SLASEO7C Table 9-16, p. 60)
-            let sys = unsafe { crate::_pac::Sys::steal() };
-            unsafe { sys.syscfg3().set_bits(|w| w.ta3rmp().set_bit()) };
+            write_remap_bit!(syscfg3.ta3rmp, RemappedMapping);
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta3 {} // CCR0 to CCR2 (SLASEO7C 9.10.8, p. 55)
