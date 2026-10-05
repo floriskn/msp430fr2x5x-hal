@@ -57,7 +57,7 @@ use panic_msp430 as _;
 
 /// The ADC's reference, AVCC: the 3.3 V the MSP430FR2522 runs from
 const AVCC_MV: u16 = 3300;
-/// The window, in counts of the 10-bit result: 1023 × voltage / 3.3 V (SLAU445I 21.2.1, p. 541)
+/// The window, in counts of the 10-bit result: 1024 × voltage / 3.3 V (SLAU445I 21.2.1, p. 541)
 const LOW: u16 = 310; // 1.0 V
 const HIGH: u16 = 620; // 2.0 V
 
@@ -150,8 +150,8 @@ fn main() -> ! {
         });
         led.set_state((last == AdcVector::InsideWindow).into()).ok();
 
-        // count × 3300 / 1023, as `Adc::count_to_mv` works it out
-        let mv = count as u32 * AVCC_MV as u32 / 1023;
+        // count × 3300 / 1024, as `Adc::count_to_mv` works it out
+        let mv = count as u32 * AVCC_MV as u32 / 1024;
         print_num(&mut tx, mv);
         let window = match last {
             AdcVector::BelowWindow => " mV: BelowWindow\r\n",

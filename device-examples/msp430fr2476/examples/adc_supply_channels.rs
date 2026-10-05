@@ -15,8 +15,10 @@
 //! How to test:
 //! 1. Flash this example, with the TXD jumper of J101 on, and open the COM port of "MSP Application
 //!    UART1" at 9600 baud (SLAU802 2.2.4, p. 9).
-//! 2. Expected, once a second, for example: `DVSS (channel 14): 0 = 0 mV, DVCC (channel 15): 4095 = 3300 mV,
-//!    busy for 30 polls`. The counts can be off by a little, within the ADC's offset and gain errors
+//! 2. Expected, once a second, for example: `DVSS (channel 14): 0 = 0 mV, DVCC (channel 15): 4095 = 3299 mV,
+//!    busy for 30 polls`. The full-scale count converts to one step below the reference, the voltage at
+//!    which the conversion formula reaches it (`Adc::count_to_mv`; SLAU445I 21.2.1, p. 541). The counts
+//!    can be off by a little, within the ADC's offset and gain errors
 //!    (SLASEO7C 8.12.8.3, p. 41). The number of polls depends on the clocks and the build, but is never 0:
 //!    that would mean `adc_is_busy()` missed the conversion.
 #![no_main]

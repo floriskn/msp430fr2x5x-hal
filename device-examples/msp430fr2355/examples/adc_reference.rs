@@ -7,10 +7,10 @@
 //! - the internal 2.5 V reference
 //! - an external reference on VeREF+ (P1.0), here from the function generator's second channel
 //!
-//! An input voltage converts to `count = 4095 × input / reference` (12-bit results, SLAU445I 21.2.1,
-//! p. 541), so each line shows the count and the voltage worked out from the reference. All three
-//! should give the input voltage; the internal reference is the most accurate (2.5 V ±1.5 %: SLASEC4D
-//! Table 5-10, p. 41), while AVCC is only as accurate as the LaunchPad's 3.3 V supply.
+//! An input voltage converts to `count = 4096 × input / reference`, at most 4095 (12-bit results:
+//! SLAU445I 21.2.1, p. 541), so each line shows the count and the voltage worked out from the reference.
+//! All three should give the input voltage; the internal reference is the most accurate (2.5 V ±1.5 %:
+//! SLASEC4D Table 5-10, p. 41), while AVCC is only as accurate as the LaunchPad's 3.3 V supply.
 //! (ADCSREFx: SLAU445I Table 21-8, p. 567. VeREF+ is P1.0 and A1 is P1.1: SLASEC4D Table 6-21, p. 77.
 //! P1.0 isn't on the header: it drives LED1 through jumper J10, SLAU680 Figure 18, p. 26.)
 //!

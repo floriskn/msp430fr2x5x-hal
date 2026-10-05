@@ -37,12 +37,25 @@ impl Fram {
     /// left set can reset the device at 16 MHz for bit errors that don't exist (SLAZ664S GC4, p. 10), see
     /// the [module documentation](crate::fram). Select the handling with
     /// [`Fram::set_uncorrectable_bit_error_action`] and [`Fram::enable_correctable_bit_error_interrupts`].
+    ///
+    /// The clearing takes about 50 bytes of program FRAM (measured in an MSP430FR2433 build of `blinky`).
+    /// [`Fram::new_raw`] writes nothing and saves them.
     pub fn new(fram: _pac::Frctl) -> Self {
-        let mut fram = Fram { fram };
+        let mut fram = Self::new_raw(fram);
+        // GCCTL0 can only be written while the FRCTL password unlocks it, or the write causes a PUC
+        // (SLAU445I 6.10, p. 305), see `unlocked`
         fram.unlocked(|fram| unsafe {
             fram.gcctl0().clear_bits(|w| w.ubdrsten().clear_bit().ubdie().clear_bit().cbdie().clear_bit())
         });
         fram
+    }
+
+    /// Turn FRCTL into `Fram` without writing any register, so the bit error handling stays as it is:
+    /// UBDRSTEN, UBDIE and CBDIE are 0 after the last BOR, or as the program before this one left them if
+    /// there was no BOR since, see [`Fram::new`].
+    #[inline]
+    pub fn new_raw(fram: _pac::Frctl) -> Self {
+        Fram { fram }
     }
 }
 

@@ -6,9 +6,9 @@
 //! - the internal 1.5 V reference, the only internal level of this device
 //! - an external reference on VeREF+ (P1.0), here from the function generator's second channel
 //!
-//! A 10-bit result is full scale, 1023, at the reference (SLAU445I 21.2.1, p. 541), so an input converts
-//! to about `count = 1023 × input / reference`, and each line shows the count and the voltage worked out
-//! from the reference. All three should give the input voltage, each as accurately as its reference: the
+//! An input voltage converts to `count = 1024 × input / reference`, at most 1023 (10-bit results:
+//! SLAU445I 21.2.1, p. 541), and each line shows the count and the voltage worked out from the
+//! reference. All three should give the input voltage, each as accurately as its reference: the
 //! internal one within ±3 % (the ADC's gain error with it: SLASEE4C Table 5-22, p. 39), AVCC as the 3.3 V
 //! supply, and VeREF+ as the generator.
 //! (ADCSREFx: SLAU445I Table 21-8, p. 567. The internal reference is 1.5 V: SLASEE4C 6.10.1, p. 48.
