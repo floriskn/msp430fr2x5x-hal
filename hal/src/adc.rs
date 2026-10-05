@@ -54,6 +54,11 @@
 //! configuration, so the two functions below provide a reference that can be used to read from these channels.
 //! The ADC channel tables listed above give channel 12 as the temperature sensor, 13 as the internal
 //! reference, 14 as DVSS and 15 as DVCC.
+//!
+//! On the MSP430FR2433 and MSP430FR25x2, temperature sensor results may be wrong with ACLK as the ADC clock
+//! in LPM3 (erratum ADC50). Read the sensor with SMCLK or MODCLK as the ADC clock, with a 100 µs sampling
+//! time if the conversion is triggered from LPM3, or in LPM0 or active mode (SLAZ664S ADC50, p. 6;
+//! SLAZ705H ADC50, p. 5). See [`AdcConfig::use_aclk()`].
 
 use crate::_pac;
 use crate::{
@@ -312,11 +317,12 @@ impl AdcConfig<NoClockSet> {
     }
     /// Configure the ADC to use ACLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     ///
-    /// On the MSP430FR2433 and MSP430FR25x2, temperature sensor readings taken in LPM3 with ACLK as the
-    /// ADC clock may be wrong: "When ACLK is used as ADC clock source and device is in LPM3 mode while
-    /// sampling the on-chip temperature sensor, the ADC may generate erroneous conversion results". The
-    /// erratum's workarounds are SMCLK or MODCLK as the ADC clock, with "A 100us sampling time" if the
-    /// conversion is triggered from LPM3, or LPM0 or active mode (SLAZ664S ADC50; SLAZ705H ADC50).
+    /// Erratum ADC50, on the MSP430FR2433 and MSP430FR25x2: temperature sensor readings taken in LPM3 with
+    /// ACLK as the ADC clock may be wrong: "When ACLK is used as ADC clock source and device is in LPM3 mode
+    /// while sampling the on-chip temperature sensor, the ADC may generate erroneous conversion results".
+    /// The erratum's workarounds are SMCLK or MODCLK as the ADC clock ([`use_smclk()`](Self::use_smclk),
+    /// [`use_modclk()`](Self::use_modclk)), with "A 100us sampling time" if the conversion is triggered
+    /// from LPM3, or LPM0 or active mode (SLAZ664S ADC50, p. 6; SLAZ705H ADC50, p. 5).
     pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::Aclk),
@@ -329,6 +335,14 @@ impl AdcConfig<NoClockSet> {
         }
     }
     /// Configure the ADC to use MODCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
+    ///
+    /// "During a conversion, the ADC module issues an unconditional request for the MODOSC clock source"
+    /// (SLAU445I 3.2.15.1, p. 111). On the MSP430FR2x5x, MSP430FR2433 and MSP430FR25x2, a MODCLK request or
+    /// its removal ("e.g. end of ADC conversion") that coincides with an interrupt request and the entry
+    /// into LPM3 or LPM4 can lock up the device or make it run unintended code, erratum PMM32 (SLAZ695J
+    /// PMM32, p. 9 to p. 10; SLAZ664S PMM32, p. 11; SLAZ705H PMM32, p. 8 to p. 9). The [`lpm`](crate::lpm)
+    /// functions [`request_lpm3()`](crate::lpm::request_lpm3) and
+    /// [`request_lpm4()`](crate::lpm::request_lpm4) work around it.
     pub fn use_modclk(self) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::Modclk),
@@ -360,6 +374,9 @@ impl AdcConfig<ClockSet> {
             .adcdiv().variant(self.clock_divider)
         );
 
+        // One word write. On the MSP430FR2433, "ADCHI/ADCLO may be reset unexpectedly when ADCCTL2 high byte
+        // is written byte-wise", erratum ADC63, whose workaround is "Write to ADCCTL2 high byte in word-wise
+        // method" (SLAZ664S ADC63, p. 6). The high byte holds ADCPDIVx (SLAU445I 21.3.3, p. 565).
         adc_reg.adcctl2().write(|w| w
             .adcpdiv().variant(self.predivider)
             .adcres().variant(self.resolution)

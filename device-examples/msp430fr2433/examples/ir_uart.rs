@@ -1,0 +1,104 @@
+//! UNTESTED ON HARDWARE: nobody has run this example on a board yet. If you test it, remove this note
+//! and open a pull request.
+//!
+//! The infrared modulator with eUSCI_A0's UART as its data: every 20 ms the UART sends `U`, and P1.4 sends
+//! a burst of a 38 kHz carrier for each 0 bit of it, the start bit included, and nothing for the 1 bits.
+//!
+//! TA0's CCR2 output is the carrier, and TA1's CCR2 output, the envelope, stays high. In ASK mode the
+//! modulator then outputs the carrier while the UART's data is 0, and stays low while it's 1, as the idle
+//! line is. The UART runs at 2400 baud, so each bit is 417 µs long, about 16 periods of the carrier. `U` is
+//! 55h: LSB first, the start bit is followed by 1, 0, 1, 0, 1, 0, 1, 0 and the stop bit.
+//! (Carrier and coding inputs: SLASE59F Table 6-11, p. 50 and SLASE59F Table 6-12, p. 51. The ASK logic,
+//! with the data "From UCA0TXD/UCA0SIMO" and the output on P1.4: SLAU445I 1.12.2.2 and Figure 1-8, p. 50.
+//! The modulator drives "the eUSCI_A pin of UCA0TXD/UCA0SIMO": SLASE59F 6.10.8, p. 51.)
+//!
+//! How to test (the scope):
+//! 1. Flash this example.
+//! 2. Scope on P1.4 (J1 pin 4), ground clip on GND (J3 pin 22): 1 V/div, 1 ms/div, trigger on a rising
+//!    edge at 1.5 V in normal mode. Expected every 20 ms: five bursts, each 417 µs long and starting
+//!    833 µs after the one before: the start bit and the four 0 bits of 55h. At 20 µs/div a burst shows
+//!    the carrier, a square wave with a period of 26 µs.
+//! (Header pins: SLAU739 Figure 18, p. 23.)
+#![no_main]
+#![no_std]
+
+use embedded_hal::delay::DelayNs;
+use embedded_hal_nb::serial::Write;
+use msp430_rt::entry;
+use msp430_hal::{
+    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv},
+    fram::Fram,
+    gpio::Batch,
+    ir::{IrMapping, IrMode, IrModulator},
+    pmm::Pmm,
+    pwm::{PwmParts3, TimerConfig},
+    serial::*,
+    watchdog::Wdt,
+};
+use nb::block;
+use panic_msp430 as _;
+
+/// 38 kHz carrier period, in cycles of the 8 MHz SMCLK
+const CARRIER_PERIOD: u16 = 210;
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr2433::Peripherals::take().unwrap();
+
+    let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
+    Wdt::constrain(periph.wdt_a);
+
+    let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    let p1 = Batch::new(periph.p1).split(&pmm);
+
+    // MCLK = SMCLK = DCOCLKDIV in the 8 MHz range, ACLK from REFO (SELMS = 000b, SELA = 01b: SLAU445I
+    // Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118). The timers count SMCLK (TASSEL = 10b:
+    // SLASE59F Table 6-7, p. 46).
+    let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
+        .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
+        .smclk_on(SmclkDiv::_1)
+        .aclk_refoclk()
+        .freeze(&mut fram);
+
+    // The carrier, high for half of each period
+    // (TA0's CCR2 output is an "IR Input": SLASE59F Table 6-11, p. 50)
+    let carrier = PwmParts3::new(periph.ta0, TimerConfig::smclk(&smclk), CARRIER_PERIOD - 1)
+        .pwm2
+        .into_ir_input(CARRIER_PERIOD / 2);
+    // The envelope, high for the whole period, so the data alone switches the carrier on and off
+    // (TA1's CCR2 output is the other "IR Input": SLASE59F Table 6-12, p. 51)
+    let envelope = PwmParts3::new(periph.ta1, TimerConfig::smclk(&smclk), CARRIER_PERIOD - 1)
+        .pwm2
+        .into_ir_input(CARRIER_PERIOD);
+
+    // eUSCI_A0 at 2400 baud, 8N1, with TXD on P1.4, P1SELx = 01 (SLASE59F Table 6-17, p. 55), in the pin
+    // mapping whose TXD pin carries the modulator's output
+    let mut tx = SerialConfig::<_, _, IrMapping>::new(
+        periph.e_usci_a0,
+        BitOrder::LsbFirst,
+        BitCount::EightBits,
+        StopBits::OneStopBit,
+        Parity::NoParity,
+        Loopback::NoLoop,
+        2400,
+    )
+    .use_smclk(&smclk)
+    .tx_only(p1.pin4.to_alternate1());
+    // In SYSCFG1: IREN = 1, IRMSEL = 0 for ASK, IRPSEL = 0 for normal polarity, IRDSSEL = 0 for the data
+    // from eUSCI_A0 (SLAU445I Table 1-30, p. 81)
+    let _ir = IrModulator::with_uart_data(&carrier, &envelope, IrMode::Ask, false, &tx);
+
+    loop {
+        block!(tx.write(b'U')).ok();
+        delay.delay_ms(20);
+    }
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}

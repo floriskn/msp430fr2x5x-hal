@@ -220,9 +220,11 @@ impl<T: CapCmp<CCR2>> CascadeOutput<T> {
         let timer = unsafe { T::steal() };
         // Reset/set mode sets the output as the timer wraps around to 0, and resets it when the
         // timer reaches CCR2 (SLAU445I Table 13-2, p. 376; 13.2.5.1.1, p. 377). With CCR2 at 0 both
-        // happen at once and the output stays low.
-        CCRn::<CCR2>::set_ccrn(&timer, 1);
+        // happen at once and the output stays low. The OUTMOD write also clears CLLD on a Timer_B
+        // (SLAU445I Table 14-8, p. 411), so CCR2, written after it, loads at once (CLLD = 00b: SLAU445I
+        // Table 14-2, p. 400), whatever CLLD a PWM channel had.
         CCRn::<CCR2>::config_outmod(&timer, Outmod::ResetSet);
+        CCRn::<CCR2>::set_ccrn(&timer, 1);
         CascadeOutput(PhantomData)
     }
 }
@@ -332,7 +334,8 @@ where
     /// loads when the timer counts to 0 or to the top (CLLD = 01b or 10b, SLAU445I Table 14-2, p. 400): with
     /// CLLD = 11b, "when TBxR counts to the old TBxCLn value", each register still loaded on its own, in every
     /// counting mode. So this works with center-aligned PWM, which uses 10b, and not with edge-aligned PWM,
-    /// which uses 11b because of erratum TB25 (see [`crate::pwm`]).
+    /// which uses 11b because of erratum TB25 (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8; see
+    /// [`crate::pwm`]).
     ///
     /// Changed with the timer stopped, as SLAU445I 14.2.7, p. 407 lists TBCLGRP.
     #[inline]

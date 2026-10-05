@@ -85,7 +85,7 @@ enum Alignment {
 
 /// Configure a PWM channel: its output mode, and on Timer_B when its compare latch loads the duty cycle,
 /// so a new duty cycle starts with a period instead of cutting one short (SLAU445I 14.2.4.2.1, p. 400).
-/// Erratum TB25 breaks this in up mode, see below.
+/// Erratum TB25 breaks this in up mode, see below (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
 fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
     match alignment {
         Alignment::Edge => {
@@ -160,6 +160,10 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
     /// Create uninitialized PWM pins with the same period. The timer counts from 0 up to and
     /// including `period`, so each PWM period is `period + 1` timer clock cycles (SLAU445I 13.2.3.1,
     /// p. 371; 14.2.3.1, p. 394), and each output is high at the start of the period.
+    ///
+    /// On a Timer_B a new duty cycle loads when the timer counts to the old one (CLLD = 11b), as erratum
+    /// TB25 makes the loads at the start of a period happen at once in up mode (SLAZ695J TB25, p. 11;
+    /// SLAZ726B TB25, p. 8), see the module documentation.
     pub fn new(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Edge);
@@ -176,6 +180,10 @@ impl<T: CapCmpTimer3<M>, M: PinMap> PwmParts3<T, M> {
     /// centered on the timer's return to 0. Duty cycles go up to `period`. Two outputs with nearly the
     /// same duty cycle, one of them active low, drive the two sides of a half bridge with a dead time
     /// between them (SLAU445I 13.2.3.5 and Figure 13-9, p. 374; SLAU445I 14.2.3.5 and Figure 14-9, p. 397).
+    ///
+    /// On a Timer_B a new duty cycle loads when the timer counts to 0 or to the top (CLLD = 10b). Erratum
+    /// TB25, which makes such loads happen at once, names up mode only, and this uses up/down mode
+    /// (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
     pub fn new_center_aligned(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         setup_channel::<T, CCR1>(&timer, Alignment::Center);
@@ -221,6 +229,10 @@ impl<T: CapCmpTimer7<M>, M: PinMap> PwmParts7<T, M> {
     /// Create uninitialized PWM pins with the same period. The timer counts from 0 up to and
     /// including `period`, so each PWM period is `period + 1` timer clock cycles (SLAU445I 13.2.3.1,
     /// p. 371; 14.2.3.1, p. 394), and each output is high at the start of the period.
+    ///
+    /// A new duty cycle loads when the timer counts to the old one (CLLD = 11b), as erratum TB25 makes
+    /// the loads at the start of a period happen at once in up mode (SLAZ695J TB25, p. 11; SLAZ726B
+    /// TB25, p. 8), see the module documentation.
     pub fn new(timer: T, config: TimerConfig<T, M>, period: u16) -> Self {
         setup_pwm(&timer, config, period);
         Self::setup_channels(&timer, Alignment::Edge);
@@ -333,7 +345,7 @@ impl<T: CapCmp<CCR2>, M> PwmUninit<T, CCR2, M> {
 }
 
 #[cfg(feature = "adc")]
-impl<T: CapCmp<CCR1> + crate::adc::AdcTriggerTimer, M> PwmUninit<T, CCR1, M> {
+impl<T: CapCmp<CCR1> + CapCmp<CCR0> + crate::adc::AdcTriggerTimer, M> PwmUninit<T, CCR1, M> {
     /// Use this PWM output to start ADC conversions with
     /// [`TriggerSource::Timer`](crate::adc::TriggerSource::Timer) instead of driving a pin (ADC trigger
     /// TB1.1B or TA1.1B: SLASEC4D Table 6-22, p. 77; SLASE59F Table 6-16, p. 53; SLASEO7C Table 9-20, p. 62;
@@ -363,17 +375,47 @@ impl<T: CapCmp<CCR2> + crate::ir::IrInputTimer, M> PwmUninit<T, CCR2, M> {
     }
 }
 
+#[cfg(feature = "sac_l3")]
+impl<C> PwmUninit<crate::pac::Tb2, C>
+where
+    crate::pac::Tb2: CapCmp<C>,
+{
+    /// Use this TB2 output to load the SAC DACs instead of driving a pin: `pwm1` with
+    /// [`LoadTrigger::TB2_1`](crate::sac::LoadTrigger::TB2_1), `pwm2` with
+    /// [`LoadTrigger::TB2_2`](crate::sac::LoadTrigger::TB2_2) (TB2.1 and TB2.2 go "To SAC DAC update
+    /// trigger": SLASEC4D Table 6-18, p. 74; DACLSEL = 10b and 11b: SLASEC4D Table 6-32, p. 80). A DAC
+    /// loads "on the rising edge" of its trigger (SLAU445I 20.2.3.4, p. 529), so this selects reset/set
+    /// mode with CCRn = 1: the output is set when the timer counts to TBxCL0, once per period, and reset
+    /// when it counts to 1 (SLAU445I Table 14-4, p. 401). That needs a `period` of at least 2.
+    ///
+    /// Writing the output mode also clears CLLD, so CCRn loads at once (CLLD = 00b: SLAU445I Table 14-2,
+    /// p. 400). On `pwm1`, the controlling register of the compare latch groups, that ungroups them:
+    /// "When the CLLD bits of the controlling TBxCCRn are set to zero, all compare latches update
+    /// immediately when their corresponding TBxCCRn is written" (SLAU445I 14.2.4.2.2, p. 400; see
+    /// [`TimerConfig::compare_latch_groups`]).
+    #[inline]
+    pub fn into_dac_trigger(self) -> crate::sac::DacTrigger<C> {
+        let timer = unsafe { crate::pac::Tb2::steal() };
+        // OUTMOD first: its write clears CLLD (SLAU445I Table 14-8, p. 411), so CCRn loads at once
+        CCRn::<C>::config_outmod(&timer, Outmod::ResetSet);
+        CCRn::<C>::set_ccrn(&timer, 1);
+        crate::sac::DacTrigger(PhantomData)
+    }
+}
+
 /// A PWM output that starts ADC conversions, see [`PwmUninit::into_adc_trigger()`]
 pub struct AdcTriggerOutput<T>(PhantomData<T>);
 
-impl<T: CapCmp<CCR1>> AdcTriggerOutput<T> {
+impl<T: CapCmp<CCR1> + CapCmp<CCR0>> AdcTriggerOutput<T> {
     /// Change how many timer cycles the output stays high at the start of each period. It writes CCR1
     /// (TAxCCR1/TBxCCR1: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) as [`Pwm`] duty cycle
-    /// changes do, with a Timer_A stopped for the write (SLAU445I 13.2.4.2, p. 376).
+    /// changes do: with a Timer_A stopped for the write (SLAU445I 13.2.4.2, p. 376), and on a Timer_B at
+    /// once after a value above the period, which the compare latch would otherwise never load (see
+    /// `write_duty`).
     #[inline]
     pub fn set_high_cycles(&mut self, high_cycles: u16) {
         let timer = unsafe { T::steal() };
-        CCRn::<CCR1>::set_ccrn(&timer, high_cycles);
+        write_duty::<T, CCR1>(&timer, high_cycles);
     }
 }
 

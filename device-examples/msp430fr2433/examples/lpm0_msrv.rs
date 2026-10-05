@@ -1,0 +1,120 @@
+//! UNTESTED ON HARDWARE: nobody has run this example on a board yet. If you test it, remove this note
+//! and open a pull request.
+//!
+//! LPM0 and a button interrupt, with the work done in the interrupt: the CPU sleeps in LPM0, and each press
+//! of S1 toggles LED1 in the port 2 interrupt, after which the CPU goes back to sleep.
+//!
+//! S1 pulls P2.3 low against its internal pullup, and the falling edge requests the port 2 interrupt. Its
+//! handler toggles LED1 and debounces the button. When it returns, the CPU is back in LPM0, so the main
+//! program never gets past `enter_lpm0()`.
+//! (LPM0 turns off the CPU and MCLK: SLAU445I Table 1-2, p. 39. On return from an interrupt "The original SR
+//! is popped from the stack, restoring the previous operating mode": SLAU445I 1.4.2, p. 40. LED1 on P1.0 is
+//! red, and S1 is on P2.3, with no pull-up on the board: SLAU739 Figure 18, p. 23.)
+//!
+//! How to test:
+//! 1. Flash this example.
+//! 2. Expected: LED1 is off, and each press of S1 toggles it.
+#![no_main]
+#![no_std]
+#![feature(abi_msp430_interrupt)]
+
+// NOTE: Historically there was no way to return the CPU to active mode after entering a low power mode,
+// the MSP restores the CPU to active mode during an interrupt but turns it off afterwards.
+// (The SR, with the low-power mode bits, is saved on the stack during an interrupt, and the program
+// returns to that mode unless the handler changes the saved SR: SLAU445I 1.4, p. 36)
+
+// A feature was recently added to msp430-rt to allow the CPU to return to active mode, but it depends on Rust 1.88.
+// For compatibility with the MSRV of this crate we showcase the old implementation here, with all work being done inside the interrupt.
+// For the more flexible new version, see lpm0.rs
+
+use critical_section::with;
+use msp430fr2433::{interrupt, P1, P2, P3};
+
+use core::cell::RefCell;
+use embedded_hal::digital::*;
+use msp430::{asm, interrupt::{enable as enable_interrupts, Mutex}};
+use msp430_rt::entry;
+use msp430_hal::{
+    gpio::{Batch, GpioVector, Output, Pin, Pin0, PxIV}, lpm::enter_lpm0, pmm::Pmm, watchdog::Wdt
+};
+use panic_msp430 as _;
+
+static P2IV: Mutex<RefCell<Option< PxIV<P2> >>> = Mutex::new(RefCell::new(None));
+static LED1: Mutex<RefCell<Option< Pin<P1, Pin0, Output> >>> = Mutex::new(RefCell::new(None));
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr2433::Peripherals::take().unwrap();
+
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
+    let _wdt = Wdt::constrain(periph.wdt_a);
+    let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+
+    // Floating input pins consume a *huge* amount of power (relatively speaking).
+    // Set unused pins to outputs or enable their pull resistors.
+    // (SLAU445I 8.3.2, p. 317; pullup and pulldown settings: SLAU445I Table 8-1, p. 313)
+    let p1 = Batch::new(periph.p1)
+        .pulldown_all()
+        .config_pin0(|p| p.to_output())
+        .split(&pmm);
+    let led1 = p1.pin0;
+
+    let p2 = Batch::new(periph.p2)
+        .pulldown_all()
+        .config_pin3(|p| p.pullup())
+        .split(&pmm);
+    let mut button = p2.pin3;
+    let p2iv = p2.pxiv;
+
+    init_unused_gpio(periph.p3, &pmm);
+
+    with(|cs| {
+        P2IV.borrow_ref_mut(cs).replace(p2iv);
+        LED1.borrow_ref_mut(cs).replace(led1);
+    });
+
+    // S1 pulls P2.3 low, so a press is a high-to-low transition (PxIES = 1: SLAU445I Table 8-16, p. 336;
+    // PxIE: SLAU445I Table 8-17, p. 336)
+    button.select_falling_edge_trigger().enable_interrupts();
+
+    // Set GIE, which masks every maskable interrupt while clear (SLAU445I 1.3.3, p. 33)
+    unsafe { enable_interrupts() };
+
+    // Since no peripherals were configured to use SMCLK / ACLK we could just as well enter LPM3 / LPM4 here
+    // (port interrupts wake the device from LPM4 too: SLASE59F Table 6-1, p. 40)
+    // LPM0 sets CPUOFF: "CPU, MCLK are disabled" (SLAU445I Table 1-2, p. 39)
+    enter_lpm0();
+
+    loop {}
+}
+
+// The CPU will wake up to handle interrupts, but will be put back to sleep afterwards.
+// (SLAU445I 1.4, p. 36)
+// The port 2 interrupt vector, P2IFG.0 to P2IFG.7 through P2IV (FFDAh: SLASE59F Table 6-2, p. 42).
+// Reading P2IV "automatically resets the highest pending interrupt flag" (SLAU445I 8.2.6, p. 315).
+#[interrupt]
+fn PORT2() {
+    with(|cs| {
+        let Some(ref mut p2iv) = *P2IV.borrow_ref_mut(cs) else {return};
+        let Some(ref mut led1) = *LED1.borrow_ref_mut(cs) else {return};
+        if let GpioVector::Pin3Isr = p2iv.get_interrupt_vector() {
+            led1.toggle().ok();
+            for _ in 0..15_000 { // Debouncing
+                asm::nop();
+            }
+        }
+    });
+}
+
+/// Enable pulldowns on unused ports to massively reduce power usage (SLAU445I 8.3.2, p. 317).
+fn init_unused_gpio(p3: P3, pmm: &Pmm) {
+    Batch::new(p3).pulldown_all().split(pmm);
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}

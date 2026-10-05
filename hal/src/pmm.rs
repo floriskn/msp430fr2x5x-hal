@@ -155,7 +155,7 @@ impl Pmm {
     /// A debugger can start the program without a reset, after flashing it for example, and then
     /// there may be no reason at all. On the MSP430FR2433, a PUC for a FRAM bit error that doesn't
     /// exist leaves no reason either: "This PUC will not be recognized by the SYSRSTIV register
-    /// (SYSRSTIV = 0x00)" (SLAZ664S GC4), see [`fram`](crate::fram).
+    /// (SYSRSTIV = 0x00)" (SLAZ664S GC4, p. 10), see [`fram`](crate::fram).
     pub fn take_reset_cause(&mut self) -> Option<ResetCause> {
         let sys = unsafe { &*_pac::Sys::ptr() };
         // 00h, no reason left, has no variant, nor do the values the data sheets reserve

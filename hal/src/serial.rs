@@ -22,9 +22,6 @@
 //! - MSP430FR25x2: SLASEE4C Table 6-11, p. 53; port pin functions, including UCA0CLK: SLASEE4C Table 6-15,
 //!   p. 58 (P1) and SLASEE4C Table 6-16, p. 60 (P2).
 //!
-//! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
-//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
-//!
 //! On the MSP430FR2x5x, eUSCI_A1's pins in alternate function 2 (`to_alternate2()`) invert the polarity of
 //! TXD and RXD, and a rising edge then starts a character (SLASEC4D 6.10.8, p. 73; SLASEC4D Table 6-15,
 //! p. 73, "eUSCI_A1 UART Polarity Configurations"; SLASEC4D Table 6-66, p. 102: P4SELx = 10b). SLASEC4D
@@ -313,7 +310,9 @@ pub enum UartVector {
     TxBufEmpty,
     /// A start bit was received (UCSTTIFG, SLAU445I Table 22-6, p. 591)
     StartBit,
-    /// A character was sent completely (UCTXCPTIFG, SLAU445I Table 22-6, p. 591)
+    /// A character was sent completely (UCTXCPTIFG, SLAU445I Table 22-6, p. 591). Due to erratum USCI42
+    /// this comes after every character, even while the next one waits in the Tx buffer (SLAZ695J USCI42,
+    /// p. 12; SLAZ664S USCI42, p. 13; SLAZ726B USCI42, p. 8; SLAZ705H USCI42, p. 10).
     TxComplete,
 }
 
@@ -545,12 +544,16 @@ where
     #[cfg(feature = "eusci_modclk")]
     /// Configure serial UART to use MODCLK (UCSSELx = 01b on the MSP430FR2433, SLASE59F Table 6-7, p. 46).
     ///
+    /// This also sets MODOSCREQEN, so that MODCLK runs for the eUSCI whichever kind of request it makes
+    /// (SLAU445I 3.2.15.1, p. 111; SLAU445I Table 3-12, p. 123).
+    ///
     /// # Panics
     ///
     /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (SLAU445I
     /// 22.3.9.1, p. 584).
     #[inline(always)]
     pub fn use_modclk(self) -> SerialConfig<USCI, ClockSet, M> {
+        crate::clock::enable_modosc_conditional_requests();
         serial_config!(
             self,
             ClockSet {
@@ -798,7 +801,8 @@ where
 
     /// Enable interrupts when a character has been sent completely (UCTXCPTIE, SLAU445I Table 22-17, p. 600).
     /// Due to erratum USCI42 the flag is set after each character, even while the next one waits in the Tx
-    /// buffer (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and SLAZ705H USCI42).
+    /// buffer (SLAZ695J USCI42, p. 12; SLAZ664S USCI42, p. 13; SLAZ726B USCI42, p. 8; SLAZ705H USCI42,
+    /// p. 10).
     #[inline(always)]
     pub fn enable_tx_complete_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
@@ -860,8 +864,8 @@ where
     // Internal flush function: done once the Tx buffer is empty and the last character has left the
     // shift register. UCBUSY also covers a character being received, so this can wait for that too
     // (UCTXIFG, UCBUSY: SLAU445I Table 22-18, p. 601 and SLAU445I Table 22-12, p. 596).
-    // (UCTXCPTIFG can't be used: erratum USCI42 sets it after each character; SLAZ695J USCI42, SLAZ664S
-    // USCI42, SLAZ726B USCI42 and SLAZ705H USCI42.)
+    // (UCTXCPTIFG can't be used: erratum USCI42 sets it after each character; SLAZ695J USCI42, p. 12;
+    // SLAZ664S USCI42, p. 13; SLAZ726B USCI42, p. 8; SLAZ705H USCI42, p. 10.)
     #[inline]
     fn flush(&mut self) -> nb::Result<(), Infallible> {
         let usci = unsafe { USCI::steal() };
@@ -1108,11 +1112,11 @@ mod emb_io {
         USCI: SerialUsci<M>,
         M: PinMap,
     {
-        /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
-        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
-        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
-        /// SLAU445I Table 22-12, p. 596).
+        /// Due to erratum USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
+        /// even if there's still more buffered (SLAZ695J USCI42, p. 12; SLAZ664S USCI42, p. 13; SLAZ726B
+        /// USCI42, p. 8; SLAZ705H USCI42, p. 10). Thus, the implementation uses UCTXIFG and UCBUSY instead.
+        /// When `flush()` completes, the Tx buffer is empty and the last character has left the shift
+        /// register (UCBUSY, SLAU445I Table 22-12, p. 596).
         ///
         /// As the error type is `Infallible`, this can be safely unwrapped.
         #[inline]
@@ -1211,11 +1215,11 @@ mod ehal_nb1 {
         USCI: SerialUsci<M>,
         M: PinMap,
     {
-        /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
-        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
-        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
-        /// SLAU445I Table 22-12, p. 596).
+        /// Due to erratum USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
+        /// even if there's still more buffered (SLAZ695J USCI42, p. 12; SLAZ664S USCI42, p. 13; SLAZ726B
+        /// USCI42, p. 8; SLAZ705H USCI42, p. 10). Thus, the implementation uses UCTXIFG and UCBUSY instead.
+        /// When `flush()` completes, the Tx buffer is empty and the last character has left the shift
+        /// register (UCBUSY, SLAU445I Table 22-12, p. 596).
         #[inline]
         fn flush(&mut self) -> nb::Result<(), Self::Error> { self.flush() }
 
@@ -1253,11 +1257,11 @@ mod ehal02 {
     {
         type Error = void::Void;
 
-        /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
-        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
-        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
-        /// SLAU445I Table 22-12, p. 596).
+        /// Due to erratum USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
+        /// even if there's still more buffered (SLAZ695J USCI42, p. 12; SLAZ664S USCI42, p. 13; SLAZ726B
+        /// USCI42, p. 8; SLAZ705H USCI42, p. 10). Thus, the implementation uses UCTXIFG and UCBUSY instead.
+        /// When `flush()` completes, the Tx buffer is empty and the last character has left the shift
+        /// register (UCBUSY, SLAU445I Table 22-12, p. 596).
         #[inline]
         fn flush(&mut self) -> nb::Result<(), Self::Error> {
             self.flush().map_err(|_| nb::Error::WouldBlock)

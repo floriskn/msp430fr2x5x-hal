@@ -272,6 +272,40 @@ impl<PORT: PortNum, PIN: PinNum, DIR> MaskRegisters for PinProxy<PORT, PIN, DIR>
     fn pxsel1_mask(&self) -> u8 { (self.pxsel1_on() as u8) << PIN::NUM }
 }
 
+// SYSCFG2.ADCPCTLx, on the devices that select ADC inputs there (SLAU445I Table 1-31, p. 82): set for a pin
+// in `AdcMode`, cleared for another pin that has an ADC input, and left alone for the other pins
+#[cfg(feature = "adcpctl")]
+trait WriteAdcPctl {
+    // The bits to set, and the bits to keep (0 clears the bit)
+    fn adcpctl_set_mask(&self) -> u16;
+    fn adcpctl_keep_mask(&self) -> u16;
+}
+#[cfg(feature = "adcpctl")]
+impl<T> WriteAdcPctl for T {
+    #[inline(always)]
+    default fn adcpctl_set_mask(&self) -> u16 { 0 }
+    #[inline(always)]
+    default fn adcpctl_keep_mask(&self) -> u16 { !0 }
+}
+#[cfg(feature = "adcpctl")]
+impl<PORT: PortNum, PIN: PinNum, DIR> WriteAdcPctl for PinProxy<PORT, PIN, DIR>
+where Pin<PORT, PIN, DIR>: ToAdcPctl
+{
+    #[inline(always)]
+    default fn adcpctl_set_mask(&self) -> u16 { 0 }
+    #[inline(always)]
+    default fn adcpctl_keep_mask(&self) -> u16 { <Pin<PORT, PIN, DIR> as ToAdcPctl>::CLR_MASK }
+}
+#[cfg(feature = "adcpctl")]
+impl<PORT: PortNum, PIN: PinNum, DIR> WriteAdcPctl for PinProxy<PORT, PIN, AdcMode<DIR>>
+where Pin<PORT, PIN, AdcMode<DIR>>: ToAdcPctl
+{
+    #[inline(always)]
+    fn adcpctl_set_mask(&self) -> u16 { <Pin<PORT, PIN, AdcMode<DIR>> as ToAdcPctl>::SET_MASK }
+    #[inline(always)]
+    fn adcpctl_keep_mask(&self) -> u16 { !0 }
+}
+
 // Only ports with interrupts have PxIE (SLAU445I 8.2.6, p. 314)
 trait InterruptOperations {
     fn maybe_write_pxie(&self, b: u8);
@@ -463,6 +497,35 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         // PxDIR (SLAU445I Table 8-11, p. 334) and PxREN (SLAU445I Table 8-12, p. 335)
         p.pxdir_wr(pxdir);
         p.pxren_wr(pxren);
+
+        // The ADC inputs among the pins (SYSCFG2.ADCPCTLx, SLAU445I Table 1-31, p. 82). Setting the bit
+        // "disables both the output driver and input Schmitt trigger" of the pin (SLASE59F Table 6-17,
+        // p. 55; SLASEE4C Table 6-15, p. 58).
+        #[cfg(feature = "adcpctl")]
+        {
+            let adc_set = self.pin0.adcpctl_set_mask()
+                | self.pin1.adcpctl_set_mask()
+                | self.pin2.adcpctl_set_mask()
+                | self.pin3.adcpctl_set_mask()
+                | self.pin4.adcpctl_set_mask()
+                | self.pin5.adcpctl_set_mask()
+                | self.pin6.adcpctl_set_mask()
+                | self.pin7.adcpctl_set_mask();
+            let adc_keep = self.pin0.adcpctl_keep_mask()
+                & self.pin1.adcpctl_keep_mask()
+                & self.pin2.adcpctl_keep_mask()
+                & self.pin3.adcpctl_keep_mask()
+                & self.pin4.adcpctl_keep_mask()
+                & self.pin5.adcpctl_keep_mask()
+                & self.pin6.adcpctl_keep_mask()
+                & self.pin7.adcpctl_keep_mask();
+            if adc_set != 0 {
+                p.adcpctl_set(adc_set);
+            }
+            if adc_keep != !0 {
+                p.adcpctl_clr(adc_keep);
+            }
+        }
     }
 
     #[inline(always)]

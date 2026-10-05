@@ -1,0 +1,126 @@
+//! UNTESTED ON HARDWARE: nobody has run this example on a board yet. If you test it, remove this note
+//! and open a pull request.
+//!
+//! Center-aligned PWM on TB3, with one output active low, as for the two switches of a half bridge.
+//!
+//! TB3 counts up to 100 and back down (up/down mode), from SMCLK at 1 MHz, so a PWM period is 200 µs
+//! (5 kHz). The pulses are centered on the moments the timer passes 0:
+//! - P6.2 (TB3.3), duty 40, active high: high for 80 µs of each period.
+//! - P6.3 (TB3.4), duty 44, active low: low for 88 µs, around the high pulse of P6.2, and high for the
+//!   rest of the period. The two outputs are never high together, with 4 µs between one going low and
+//!   the other going high: the dead time.
+//!
+//! Each press of button S1 widens both pulses by 10 µs, up to a high pulse of 190 µs on P6.2, then
+//! starts again at 10 µs. TB3.3 and TB3.4 share a compare latch group, so both new pulses start in the
+//! same period: a period with one new and one old pulse could have both outputs high together.
+//! (Center-aligned PWM and the dead time: SLAU445I 14.2.3.5 and Figure 14-9, p. 397. Up/down mode:
+//! SLAU445I 14.2.3.4, p. 396. Compare latch groups: SLAU445I 14.2.4.2.2, p. 400. TB3 outputs: SLASEC4D
+//! Table 6-19, p. 75. Header pins: SLAU680 Figure 10, p. 15. S1 is P4.1: SLAU680 Figure 18, p. 26.)
+//!
+//! How to test (scope, two channels; ground clips on GND, J3 pin 22):
+//! 1. CH1 on P6.2 (J4 pin 37), CH2 on P6.3 (J4 pin 36). Trigger on CH1, rising.
+//! 2. Flash this example. CH1: 80 µs high pulses every 200 µs. CH2: 88 µs low pulses, centered on CH1's
+//!    pulses. Zoom in on the edges: CH2 goes low 4 µs before CH1 goes high, and goes high 4 µs after CH1
+//!    goes low.
+//! 3. Press S1 a few times: both pulses widen, and CH1 and CH2 are still never high together.
+#![no_main]
+#![no_std]
+
+use embedded_hal::{delay::DelayNs, digital::*, pwm::SetDutyCycle};
+use msp430_rt::entry;
+use msp430_hal::{
+    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv},
+    fram::Fram,
+    gpio::Batch,
+    pmm::Pmm,
+    pwm::{CompareLatchGroups, Polarity, PwmParts7, TimerConfig},
+    watchdog::Wdt,
+};
+use panic_msp430 as _;
+
+/// The timer counts from 0 up to this and back down, so a period is twice this many SMCLK cycles
+const PERIOD: u16 = 100;
+/// The dead time, in timer counts: P6.3's low pulse is this much longer on each side
+const DEAD_TIME: u16 = 4;
+/// The first duty cycle of P6.2, and the step for each press of S1, in timer counts on each side of 0
+const DUTY: u16 = 40;
+const STEP: u16 = 5;
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr2355::Peripherals::take().unwrap();
+
+    let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
+    Wdt::constrain(periph.wdt_a);
+
+    let (pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    // S1 pulls P4.1 low, with the internal pullup on (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I
+    // Table 8-1, p. 313), as the board has none (SLAU680 Figure 18, p. 26)
+    let p4 = Batch::new(periph.p4)
+        .config_pin1(|p| p.pullup())
+        .split(&pmm);
+    let p6 = Batch::new(periph.p6).split(&pmm);
+    let mut s1 = p4.pin1;
+
+    // MCLK = DCOCLKDIV in the 8 MHz range, 244 × 32.768 kHz, and SMCLK = MCLK / 8, 999.4 kHz, for the
+    // timer: the 1 MHz range, 32 × 32.768 kHz, is 5 % faster (SLAU445I 3.2.5, p. 104). ACLK from REFO
+    // (SELMS = 000b, SELA = 01b: SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
+    let (smclk, _aclk, mut delay) = ClockConfig::new(periph.cs)
+        .mclk_dcoclk(DcoclkFreqSel::_8MHz, MclkDiv::_1)
+        .smclk_on(SmclkDiv::_8)
+        .aclk_refoclk()
+        .freeze(&mut fram);
+
+    // TB3 counts SMCLK (TBSSEL = 10b: SLAU445I Table 14-6, p. 409) in up/down mode. Its compare latches
+    // load in pairs (TBCLGRP = 01b), TB3CL3 with TB3CL4 among them: the two duty cycles load together, once
+    // both are written, when the timer next reaches 0 or the top, as TB3CCR3 sets (SLAU445I 14.2.4.2.2,
+    // p. 400; SLAU445I Table 14-3, p. 400).
+    let config = TimerConfig::smclk(&smclk).compare_latch_groups(CompareLatchGroups::Pairs);
+    let pwm = PwmParts7::new_center_aligned(periph.tb3, config, PERIOD);
+    // TB3.3 is P6.2 and TB3.4 is P6.3, with P6SELx = 01 (SLASEC4D Table 6-68, p. 106). Their GPIO level is
+    // low.
+    let mut high_side = pwm.pwm3.init(p6.pin2.to_output_low().to_alternate1());
+    let mut low_side = pwm.pwm4.init(p6.pin3.to_output_low().to_alternate1());
+
+    // The outputs start with a duty cycle of 0. Each output loads a new duty cycle when the timer next
+    // reaches 0 or the top (CLLD = 10b: SLAU445I Table 14-2, p. 400), and one that loads at 0 starts in
+    // the middle of a pulse. Measured on an MSP430FR2476: after the first duty cycles, both outputs were
+    // high together for a moment. So the pins stay at their GPIO level, low, until both duty cycles have
+    // loaded, and the duty cycles never go back to 0.
+    high_side.disable();
+    low_side.disable();
+    // The low side is active low: its output is low for its duty cycle (output mode toggle/set instead
+    // of toggle/reset: SLAU445I Table 14-4, p. 401)
+    low_side.set_polarity(Polarity::ActiveLow);
+    low_side.set_duty_cycle(DUTY + DEAD_TIME).unwrap();
+    high_side.set_duty_cycle(DUTY).unwrap();
+    // Two PWM periods of 200 µs
+    delay.delay_us(400);
+    low_side.enable();
+    high_side.enable();
+
+    let mut duty = DUTY;
+    loop {
+        // Wait for a press and release of S1, and for the bouncing to stop
+        while s1.is_high().unwrap() {}
+        while s1.is_low().unwrap() {}
+        delay.delay_ms(20);
+
+        // The compare latch group loads both duty cycles in the same period, whatever the order of the
+        // writes. Measured on an MSP430FR2476 without the group, with the writes in the order that lets the
+        // pulses overlap and 20 µs between them: 433 of 1000 changes left both outputs high together for a
+        // moment. With the group: none.
+        duty = if duty + STEP + DEAD_TIME < PERIOD { duty + STEP } else { STEP };
+        high_side.set_duty_cycle(duty).unwrap();
+        low_side.set_duty_cycle(duty + DEAD_TIME).unwrap();
+    }
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}

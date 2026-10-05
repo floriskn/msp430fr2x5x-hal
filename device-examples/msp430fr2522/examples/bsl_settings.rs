@@ -1,0 +1,164 @@
+//! UNTESTED ON HARDWARE: nobody has run this example on a board yet. If you test it, remove this note
+//! and open a pull request.
+//!
+//! The bootloader (BSL) settings. At the start eUSCI_A0 prints why the device reset and whether a BSL
+//! entry sequence was detected, then the first word of the BSL memory, as it is and with the BSL memory
+//! switched off. Each press of a button on P2.2 takes one more step: protect the BSL and read the word
+//! again, then assign the lowest 16 bytes of RAM to the protected BSL and read one of them. On an
+//! MSP430FR2476 that read was measured to be a security violation, which resets the device, so the next
+//! start prints `reset: SecurityViolation`.
+//! (SYSBSLC: SLAU445I Table 1-14, p. 67. SYSBSLIND: SLAU445I Table 1-13, p. 66. "When the BSL memory is
+//! protected, access to these RAM locations is only possible from within the protected BSL memory
+//! segments": SLAU445I 1.9.4, p. 45. BSL memory from 1000h and RAM from 2000h: SLASEE4C Table 6-19,
+//! p. 62. Security violation (BOR), SYSRSTIV 0Ah: SLASEE4C Table 6-10, p. 52. UCA0TXD is P1.4: SLASEE4C
+//! Table 6-11, p. 53; SLASEE4C Table 6-15, p. 58. P2.2 is a GPIO in both packages: SLASEE4C Table 4-2,
+//! p. 14; SLASEE4C Table 6-16, p. 60. No board document covers the button: there is none for the
+//! MSP430FR25x2.)
+//!
+//! How to test (a 3.3-V USB-to-UART adapter, and a button or a jumper wire):
+//! 1. Connect the adapter: its RX to P1.4 and its GND to GND. Connect a button from P2.2 to GND (the
+//!    internal pullup is on); a wire from P2.2 that you touch to GND works as the button too.
+//! 2. Flash this example, and open the adapter's COM port at 9600 baud. Pull RST low for a moment, with a
+//!    wire to GND, to start the example again with the terminal open.
+//! 3. Expected: `reset: ResetPin`, `no BSL entry sequence detected`, then `BSL memory at 1000h:` and
+//!    a word, and `switched off: 3FFF`: the BSL memory then reads like vacant memory (SYSBSLOFF: SLAU445I
+//!    Table 1-14, p. 67).
+//! 4. Press the button. Expected: `protected:` and, as measured on an MSP430FR2476, the same word as in
+//!    step 3: the program could still read the BSL memory with the protection on (the HAL's
+//!    `Bsl::set_protection`).
+//! 5. Press the button again. Expected, as measured on an MSP430FR2476 (the HAL's
+//!    `Bsl::set_ram_assigned`): `reading 2000h`, then the device resets and starts with
+//!    `reset: SecurityViolation`. If this device allows the read, the program prints `read`, the value
+//!    and `no reset` instead. The reset is a BOR, which also clears the BSL settings (`rw-[0]`: SLAU445I
+//!    Table 1-14, p. 67, with the key in SLAU445I Table 0-1, p. 28).
+//!
+//! The BSL entry sequence is a pattern on the TEST and RST pins that starts the BSL (SLASEE4C 6.5, p. 47).
+//! This test doesn't apply one, so expect `no BSL entry sequence detected`.
+#![no_main]
+#![no_std]
+
+use embedded_hal::digital::*;
+use embedded_io::Write;
+use msp430_rt::entry;
+use msp430_hal::{
+    clock::{ClockConfig, DcoclkFreqSel, MclkDiv, SmclkDiv},
+    fram::Fram,
+    gpio::Batch,
+    pin_mapping::DefaultMapping,
+    pmm::Pmm,
+    serial::*,
+    sys::SysParts,
+    watchdog::Wdt,
+};
+use panic_msp430 as _;
+
+/// The first word of the BSL memory, 1000h to 17FFh (SLASEE4C Table 6-19, p. 62)
+const BSL_MEMORY: usize = 0x1000;
+/// The first word of RAM (SLASEE4C Table 6-19, p. 62), in the lowest 16 bytes that SYSBSLR assigns to the
+/// BSL (SLAU445I Table 1-14, p. 67)
+const BSL_RAM: usize = 0x2000;
+
+#[entry]
+fn main() -> ! {
+    let periph = msp430fr25x2::Peripherals::take().unwrap();
+
+    let mut fram = Fram::new(periph.frctl);
+    // Stop the watchdog (WDTHOLD = 1: SLAU445I Table 12-2, p. 366)
+    Wdt::constrain(periph.wdt_a);
+
+    let (mut pmm, _) = Pmm::new(periph.pmm, periph.sys);
+    let p1 = Batch::new(periph.p1).split(&pmm);
+    // The button pulls P2.2 low, with the internal pullup on (PxDIR = 0, PxREN = 1, PxOUT = 1: SLAU445I
+    // Table 8-1, p. 313)
+    let p2 = Batch::new(periph.p2)
+        .config_pin2(|p| p.pullup())
+        .split(&pmm);
+    let mut button = p2.pin2;
+
+    // MCLK = SMCLK = DCOCLKDIV in the 1 MHz range and ACLK from REFO (SELMS = 000b, SELA = 01b:
+    // SLAU445I Table 3-8, p. 117; DIVM, DIVS: SLAU445I Table 3-9, p. 118)
+    let (smclk, _aclk, _delay) = ClockConfig::new(periph.cs)
+        .mclk_dcoclk(DcoclkFreqSel::_1MHz, MclkDiv::_1)
+        .smclk_on(SmclkDiv::_1)
+        .aclk_refoclk()
+        .freeze(&mut fram);
+
+    // eUSCI_A0's TXD on P1.4, P1SEL = 01 in the default mapping, 8N1 (SLASEE4C Table 6-11, p. 53; SLASEE4C
+    // Table 6-15, p. 58; SLAU445I Table 22-8, p. 593)
+    let mut tx = SerialConfig::<_, _, DefaultMapping>::new(
+        periph.e_usci_a0,
+        BitOrder::LsbFirst,
+        BitCount::EightBits,
+        StopBits::OneStopBit,
+        Parity::NoParity,
+        Loopback::NoLoop,
+        9600,
+    )
+    .use_smclk(&smclk)
+    .tx_only(p1.pin4.to_alternate1());
+
+    // Every reason for the reset, highest priority first. Reading them clears them (SLAU445I 1.3.7, p. 36).
+    write!(tx, "\r\nreset:").ok();
+    while let Some(cause) = pmm.take_reset_cause() {
+        write!(tx, " {:?}", cause).ok();
+    }
+    writeln!(tx, "\r").ok();
+
+    let mut bsl = SysParts::new(periph.sfr).bsl;
+    // SYSBSLIND (SLAU445I Table 1-13, p. 66)
+    if bsl.entry_detected() {
+        writeln!(tx, "BSL entry sequence detected\r").ok();
+    } else {
+        writeln!(tx, "no BSL entry sequence detected\r").ok();
+    }
+
+    writeln!(tx, "BSL memory at {:04X}h: {:04X}\r", BSL_MEMORY, read(BSL_MEMORY)).ok();
+    // SYSBSLOFF = 1, then 0 again (SLAU445I Table 1-14, p. 67)
+    bsl.set_memory_off(true);
+    writeln!(tx, "switched off: {:04X}\r", read(BSL_MEMORY)).ok();
+    bsl.set_memory_off(false);
+
+    writeln!(tx, "press the button to protect the BSL\r").ok();
+    wait_for_press(&mut button);
+    // SYSBSLPE = 1 (SLAU445I Table 1-14, p. 67)
+    bsl.set_protection(true);
+    writeln!(tx, "protected: {:04X}\r", read(BSL_MEMORY)).ok();
+
+    writeln!(tx, "press the button to assign RAM to the BSL and read it\r").ok();
+    wait_for_press(&mut button);
+    writeln!(tx, "reading {:04X}h\r", BSL_RAM).ok();
+    // Send the text before the reset
+    tx.flush().ok();
+    // SYSBSLR = 1 (SLAU445I Table 1-14, p. 67). Safety: the program's RAM starts at 2000h (memory.x), but
+    // from here on nothing uses 2000h to 200Fh but the read that follows, which is the test: no
+    // interrupts are enabled, and the stack is at the top of RAM.
+    unsafe { bsl.set_ram_assigned(true) };
+    let value = read(BSL_RAM);
+    writeln!(tx, "read {:04X}, no reset\r", value).ok();
+
+    loop {
+        msp430::asm::nop();
+    }
+}
+
+/// The word at `address`
+fn read(address: usize) -> u16 {
+    unsafe { core::ptr::read_volatile(address as *const u16) }
+}
+
+/// Wait until the button is pressed and released, and for the bouncing to stop
+fn wait_for_press(button: &mut impl InputPin) {
+    while button.is_high().unwrap() {}
+    while button.is_low().unwrap() {}
+    for _ in 0..10_000 {
+        msp430::asm::nop();
+    }
+}
+
+// The compiler will emit calls to the abort() compiler intrinsic if debug assertions are
+// enabled (default for dev profile). MSP430 does not actually have meaningful abort() support
+// so for now, we create our own in each application where debug assertions are present.
+#[no_mangle]
+extern "C" fn abort() -> ! {
+    panic!();
+}
