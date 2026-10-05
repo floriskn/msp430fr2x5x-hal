@@ -188,7 +188,14 @@ impl Pmm {
     /// resets the device only once it reaches the brownout level (SLAU445I 2.2.4, p. 87 and SLAU445I
     /// 2.2.6, p. 88). For LPM3.5 and LPM4.5, `enter_lpm3_5()` and `enter_lpm4_5()` set this.
     pub fn set_svsh(&mut self, svs: SvsState) {
-        self.unlocked(|pmm| pmm.pmmctl0().modify(|_, w| w.pmmpw().password().svshe().variant(svs)));
+        // PMMCTL0 itself takes the password in the same word write, so it needs no unlocking first, as
+        // only the other PMM registers do ("Write access to a register other than PMMCTL0 while write access
+        // is not enabled causes a PUC", SLAU445I 2.3, p. 90). The write leaves them unlocked, so lock them
+        // again, as `unlocked` does.
+        critical_section::with(|_| {
+            self.0.pmmctl0().modify(|_, w| w.pmmpw().password().svshe().variant(svs));
+            self.0.pmmctl0_h().write(|w| w.pmmpw().lock());
+        });
     }
 
     /// Select how the LPM3.5 switch is controlled, see [`Lpm3_5Switch`] (PM5CTL0.LPM5SM and LPM5SW, SLAU445I

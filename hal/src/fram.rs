@@ -105,9 +105,16 @@ impl Fram {
     /// p. 27; SLASE59F 5.3, p. 16; SLASEO7C 8.3, p. 20; SLASEE4C 5.3, p. 17).
     #[inline]
     pub unsafe fn set_wait_states(&mut self, wait: WaitStates) {
-        self.unlocked(|fram| fram.frctl0().write(|w| w
-            .frctlpw().password()
-            .nwaits().variant(wait)));
+        // FRCTL0 itself takes the password in the same word write, so it needs no unlocking first, as
+        // only the other FRCTL registers do ("A write access to a register other than FRCTL while write
+        // access is not enabled causes a PUC", SLAU445I 6.10, p. 305; FRCTLPW, NWAITS: SLAU445I Table 6-2,
+        // p. 306). The write leaves them unlocked, so lock them again, as `unlocked` does.
+        critical_section::with(|_| {
+            self.fram.frctl0().write(|w| w
+                .frctlpw().password()
+                .nwaits().variant(wait));
+            self.fram.frctl0_h().write(|w| w.frctlpw().lock());
+        });
     }
 
     /// Select what happens when the FRAM detects a bit error it can't correct (UBDRSTEN, UBDIE:

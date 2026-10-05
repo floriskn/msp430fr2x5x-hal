@@ -469,11 +469,10 @@ where
         // remapping bits are set here
         USCI::configure_pin_mapping();
 
-        // 4. Clear UCSWRST
+        // 4. Clear UCSWRST. The interrupts stay off: setting UCSWRST in step 1 cleared UCTXIE and UCRXIE
+        // ("When set, the UCSWRST bit resets the UCRXIE, UCTXIE, UCRXIFG, UCOE, and UCFE bits", SLAU445I
+        // 23.3.1, p. 606).
         self.usci.ctw0_clear_rst();
-
-        self.usci.clear_transmit_interrupt();
-        self.usci.clear_receive_interrupt();
     }
 }
 

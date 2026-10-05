@@ -299,9 +299,7 @@ where
         // configuring the timer, set TBCLR bit").
         timer.reset();
         timer.set_tbidex(self.ex_div);
-        timer.config_clock(self.sel, self.div);
-        timer.set_cntl(self.cntl);
-        timer.set_tbclgrp(self.tbclgrp);
+        timer.config_ctl(self.sel, self.div, self.cntl, self.tbclgrp);
         // TBxTRGSEL: 0 = internal source (eCOMP), 1 = external source (TBxTRG pin) (SLAU445I Table 1-26,
         // p. 77; SLAU445I Table 1-31, p. 82)
         if let Some((set_trgsel, external)) = self.trgsel {
