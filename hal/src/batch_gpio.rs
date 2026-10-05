@@ -488,11 +488,16 @@ impl<PORT: PortNum, DIR0, DIR1, DIR2, DIR3, DIR4, DIR5, DIR6, DIR7>
         p.pxsel1_wr(pxsel1);
 
         // Only write to PxOUT if we need to match the pull resistor state to the typestate,
-        // otherwise keep it at it's previous value.
-        // Instead of a write(), use a set_bits() and a clear_bits() to allow for leaving unchanged.
-        // PxOUT: SLAU445I Table 8-10, p. 334.
-        p.pxout_set(pxout_set);
-        p.pxout_clear(pxout_clr);
+        // otherwise keep it at its previous value.
+        // Instead of a write(), use a set_bits() and a clear_bits() to allow for leaving unchanged,
+        // and skip each when no pin needs it (the masks follow from the typestates, so the compiler
+        // decides). PxOUT: SLAU445I Table 8-10, p. 334.
+        if pxout_set != 0 {
+            p.pxout_set(pxout_set);
+        }
+        if pxout_clr != !0 {
+            p.pxout_clear(pxout_clr);
+        }
 
         // PxDIR (SLAU445I Table 8-11, p. 334) and PxREN (SLAU445I Table 8-12, p. 335)
         p.pxdir_wr(pxdir);

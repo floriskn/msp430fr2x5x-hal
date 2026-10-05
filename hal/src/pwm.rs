@@ -69,11 +69,12 @@ pub trait PwmPeriph<C, M: PinMap = DefaultMapping>: CapCmp<C> + CapCmp<CCR0> + T
 }
 
 fn setup_pwm<T: TimerPeriph<M>, M: PinMap>(timer: &T, config: TimerConfig<T, M>, period: u16) {
+    // This leaves the timer stopped (MC = 0), for the writes below and in `setup_channel`
     config.write_regs(timer);
     // CCR0 sets the period, written while the timer is stopped (SLAU445I 13.2.3.1.1, p. 371). Its
     // output toggles once per period, for the period output (SLAU445I Table 13-2, p. 376).
-    CCRn::<CCR0>::set_ccrn(timer, period);
-    CCRn::<CCR0>::config_outmod(timer, Outmod::Toggle);
+    CCRn::<CCR0>::set_ccrn_stopped(timer, period);
+    CCRn::<CCR0>::config_outmod_stopped(timer, Outmod::Toggle);
 }
 
 /// Whether PWM outputs go high at the start of each period, or are centered on the timer's return to 0
@@ -85,13 +86,14 @@ enum Alignment {
 
 /// Configure a PWM channel: its output mode, and on Timer_B when its compare latch loads the duty cycle,
 /// so a new duty cycle starts with a period instead of cutting one short (SLAU445I 14.2.4.2.1, p. 400).
-/// Erratum TB25 breaks this in up mode, see below (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8).
+/// Erratum TB25 breaks this in up mode, see below (SLAZ695J TB25, p. 11; SLAZ726B TB25, p. 8). The timer is
+/// stopped, by `setup_pwm` (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7, p. 407).
 fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
     match alignment {
         Alignment::Edge => {
             // Set as the timer wraps to 0, reset when it reaches CCRn (SLAU445I Table 13-2, p. 376;
             // SLAU445I Figure 13-12, p. 377)
-            CCRn::<C>::config_outmod(timer, Outmod::ResetSet);
+            CCRn::<C>::config_outmod_stopped(timer, Outmod::ResetSet);
             // Load when the timer counts to the old duty cycle (CLLD = 11b: "when TBxR counts to the old
             // TBxCLn value", SLAU445I Table 14-2, p. 400): the period running then ends at the old duty
             // cycle, and the next ones have the new one. Loading when the timer counts to 0 (CLLD = 01b or
@@ -107,7 +109,7 @@ fn setup_channel<T: CapCmp<C>, C>(timer: &T, alignment: Alignment) {
         Alignment::Center => {
             // In up/down mode: high from CCRn on the way down to CCRn on the way up, reset at the top
             // (SLAU445I Table 13-2, p. 376; SLAU445I Figure 13-14, p. 379)
-            CCRn::<C>::config_outmod(timer, Outmod::ToggleReset);
+            CCRn::<C>::config_outmod_stopped(timer, Outmod::ToggleReset);
             // Load when the timer counts to 0 or to the top (CLLD = 10b, SLAU445I Table 14-2, p. 400). A
             // duty cycle written while the timer counts down loads at 0, in the middle of a high stretch,
             // so that one stretch is not symmetric, and one that replaces 0 starts out of step (see the

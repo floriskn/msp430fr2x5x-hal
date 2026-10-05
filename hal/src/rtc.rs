@@ -215,10 +215,11 @@ impl<SRC: RtcClockSrc> Rtc<SRC> {
         SRC::apply_sys_config();
         // Erratum RTC15: moving the RTC off XT1CLK while XT1 is stopped hangs it (SLAZ695J RTC15, p. 11;
         // SLAZ664S RTC15, p. 13; SLAZ705H RTC15, p. 10). XT1CLK is RTCSS = 10b (SLAU445I Table 15-2,
-        // p. 420).
+        // p. 420). The new clock is tested first: it is known when compiling, so an RTC started on XT1CLK
+        // reads nothing here.
         #[cfg(feature = "erratum_rtc15")]
-        let leaving_stopped_xt1 = self.periph.rtcctl().read().rtcss().is_xt1clk()
-            && SRC::CLK_SRC != Rtcss::Xt1clk
+        let leaving_stopped_xt1 = SRC::CLK_SRC != Rtcss::Xt1clk
+            && self.periph.rtcctl().read().rtcss().is_xt1clk()
             && xt1_stopped();
         // Select the clock first, then reset the counter, which also loads `count` into the
         // shadow register (SLAU445I 15.2.3, p. 417). The reset resynchronizes the count with the new

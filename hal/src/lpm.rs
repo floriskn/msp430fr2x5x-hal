@@ -191,9 +191,8 @@ fn lpm3_4_with_workarounds(mask: u8) {
     // in GCCTL0, SLAU445I Table 6-3, p. 307), unless it is off already
     #[cfg(feature = "erratum_gc5")]
     let bit_error_handling = {
-        let gcctl0 = unsafe { _pac::Frctl::steal() }.gcctl0().read();
-        let saved = (gcctl0.ubdrsten().bit(), gcctl0.ubdie().bit(), gcctl0.cbdie().bit());
-        if saved != (false, false, false) {
+        let saved = unsafe { _pac::Frctl::steal() }.gcctl0().read();
+        if saved.ubdrsten().bit() || saved.ubdie().bit() || saved.cbdie().bit() {
             fram_unlocked(|fram| unsafe {
                 fram.gcctl0().clear_bits(|w| w
                     .ubdrsten().clear_bit()
@@ -240,11 +239,14 @@ fn lpm3_4_with_workarounds(mask: u8) {
     #[cfg(feature = "erratum_gc5")]
     {
         valid_fram_access();
-        let (ubdrsten, ubdie, cbdie) = bit_error_handling;
+        let saved = bit_error_handling;
         fram_unlocked(|fram| unsafe {
             // UBDIFG and CBDIFG are cleared by writing 0 (SLAU445I Table 6-4, p. 308)
             fram.gcctl1().clear_bits(|w| w.ubdifg().clear_bit().cbdifg().clear_bit());
-            fram.gcctl0().set_bits(|w| w.ubdrsten().bit(ubdrsten).ubdie().bit(ubdie).cbdie().bit(cbdie));
+            fram.gcctl0().set_bits(|w| w
+                .ubdrsten().bit(saved.ubdrsten().bit())
+                .ubdie().bit(saved.ubdie().bit())
+                .cbdie().bit(saved.cbdie().bit()));
         });
     }
 }
@@ -261,9 +263,20 @@ fn lpm3_4_with_workarounds(mask: u8) {
 ///
 /// The `.data` section is copied to RAM at start-up (msp430-rt's link.x), so the function runs from
 /// RAM. FRCTL0 is at offset 00h and GCCTL0 at 04h of the FRCTL registers (SLAU445I Table 6-1, p. 305).
+///
+/// It gets a symbol name of its own, as code outside the program could call it, so that the compiler
+/// leaves its arguments to the callers. A program with one call passing constants otherwise had the
+/// constants loaded in the function itself, 12 more bytes of RAM. The name holds the HAL's version, so
+/// two versions of the HAL in one program don't clash, and the linker still leaves the function out of
+/// programs that don't call it.
 #[link_section = ".data.lpm_from_ram"]
 #[inline(never)]
-unsafe fn sleep_from_ram(sr_bits: u16, frctl: *mut u16, gcctl0_clear: u16) {
+#[export_name = concat!(
+    "__msp430_hal_",
+    env!("CARGO_PKG_VERSION_MAJOR"), "_", env!("CARGO_PKG_VERSION_MINOR"), "_", env!("CARGO_PKG_VERSION_PATCH"),
+    "_lpm_sleep_from_ram"
+)]
+unsafe extern "C" fn sleep_from_ram(sr_bits: u16, frctl: *mut u16, gcctl0_clear: u16) {
     asm!(
         "mov.b 0({frctl}), {tmp}",
         "bis #0xA500, {tmp}",
@@ -633,26 +646,44 @@ impl KeepXt1Pins {
         Self { xin, xout: xin && Xt1Xout::<()>::function_matches_type() }
     }
 
-    /// Bit mask of the kept pins on `PORT`
-    fn mask_on<PORT: PortNum + 'static>(self) -> u8 {
-        fn pin_mask<PIN: AlternatePin, PORT: 'static>(keep: bool) -> u8
+    /// Bit mask of the kept pins on `PORT`, or `None` if neither XT1 pin is on `PORT`, which the compiler
+    /// knows from the types
+    fn mask_on<PORT: PortNum + 'static>(self) -> Option<u8> {
+        fn pin_mask<PIN: AlternatePin, PORT: 'static>(keep: bool) -> Option<u8>
         where
             PIN::Port: 'static,
         {
-            if keep && TypeId::of::<PIN::Port>() == TypeId::of::<PORT>() { PIN::MASK } else { 0 }
+            if TypeId::of::<PIN::Port>() != TypeId::of::<PORT>() {
+                None
+            } else if keep {
+                Some(PIN::MASK)
+            } else {
+                Some(0)
+            }
         }
-        pin_mask::<Xt1Xin<()>, PORT>(self.xin) | pin_mask::<Xt1Xout<()>, PORT>(self.xout)
+        match (pin_mask::<Xt1Xin<()>, PORT>(self.xin), pin_mask::<Xt1Xout<()>, PORT>(self.xout)) {
+            (None, None) => None,
+            (xin, xout) => Some(xin.unwrap_or(0) | xout.unwrap_or(0)),
+        }
     }
 }
 
 /// Return every pin of `PORT` to GPIO (PxSEL0 and PxSEL1 cleared), except the XT1 pins in `keep`
 /// (SLAU445I 1.4.3.1, p. 41, step 2)
 pub(crate) fn reset_pin_functions<PORT: PortNum + 'static>(keep: KeepXt1Pins) {
-    let keep = keep.mask_on::<PORT>();
     let port = unsafe { PORT::steal() };
-    // Clearing leaves only the bits in the mask set
-    port.pxsel0_clear(keep);
-    port.pxsel1_clear(keep);
+    match keep.mask_on::<PORT>() {
+        // Clearing leaves only the bits in the mask set
+        Some(keep) => {
+            port.pxsel0_clear(keep);
+            port.pxsel1_clear(keep);
+        }
+        // No XT1 pin on this port: one write each
+        None => {
+            port.pxsel0_wr(0);
+            port.pxsel1_wr(0);
+        }
+    }
 }
 
 /// Define `reset_all_pin_functions()` in a device's `lpm` module, from the list of the device's
@@ -670,8 +701,8 @@ pub(crate) use reset_all_pin_functions_impl;
 
 /// Configuration common to LPM3.5 and 4.5, following the entry steps of SLAU445I 1.4.3.1, p. 41
 fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
-    // Take peripherals. Execution won't return from this fn.
-    let regs = unsafe { _pac::Peripherals::steal() };
+    // Take the CS and the PMM. Execution won't return from this fn.
+    let (cs, pmm) = unsafe { (_pac::Cs::steal(), _pac::Pmm::steal()) };
 
     // Pause WDT (SLAU445I 1.4.3.1, p. 41, step 7: with the WDT in watchdog mode "the device does
     // not enter LPMx.5")
@@ -679,11 +710,11 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
 
     // A module that still requests ACLK keeps the device out of LPMx.5 (SLAU445I 3.2.12.1, p. 109;
     // ACLKREQEN: SLAU445I Table 3-12, p. 123)
-    unsafe { regs.cs.csctl8().clear_bits(|w| w.aclkreqen().clear_bit()) };
+    unsafe { cs.csctl8().clear_bits(|w| w.aclkreqen().clear_bit()) };
     // The low-power REFO mode must be switched off before LPMx.5, or it draws extra current
     // (SLAU445I Table 3-7, p. 116)
     #[cfg(feature = "enhanced_cs")]
-    unsafe { regs.cs.csctl3().clear_bits(|w| w.refolp().clear_bit()) };
+    unsafe { cs.csctl3().clear_bits(|w| w.refolp().clear_bit()) };
 
     // Clear GIE (SLAU445I 1.4.3.1, p. 41, step 8)
     let interrupts_were_enabled = msp430::register::sr::read().gie();
@@ -693,7 +724,7 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // Set PMMREGOFF
     // (SLAU445I 1.4.3.1, p. 41, steps 9a to 9c; PMMPW, SVSHE and PMMREGOFF: SLAU445I Table 2-2,
     // p. 91)
-    regs.pmm.pmmctl0().write(|w| w
+    pmm.pmmctl0().write(|w| w
         .pmmpw().password()
         .svshe().variant(svs)
         .pmmregoff().set_bit()
@@ -703,15 +734,15 @@ fn enter_lpmx_5<MODE: WatchdogSelect>(mut wdt: Wdt<MODE>, svs: SvsState) -> ! {
     // Only write to the upper byte of PMMCTL0
     // (SLAU445I 1.4.3.1, p. 41, step 9d; a word write with a wrong password causes a PUC:
     // SLAU445I 2.3, p. 90)
-    regs.pmm.pmmctl0_h().write(|w| w.pmmpw().lock());
+    pmm.pmmctl0_h().write(|w| w.pmmpw().lock());
 
     // In manual mode, disconnect the LPM3.5 switch before the entry (SLAU445I 2.2.7, p. 88: "It is
     // recommended to turn off the switch to avoid unnecessary leakage before the device enters LPM3.5").
     // The BOR at the wake-up puts it back in automatic mode, connected (LPM5SM "rw-[0]", LPM5SW "rw-[1]":
     // SLAU445I Table 2-7, p. 97, with the key in SLAU445I Table 0-1, p. 28).
     #[cfg(feature = "lpm3_5_switch")]
-    if regs.pmm.pm5ctl0().read().lpm5sm().is_manual() {
-        unsafe { regs.pmm.pm5ctl0().clear_bits(|w| w.lpm5sw().disconnected()) };
+    if pmm.pm5ctl0().read().lpm5sm().is_manual() {
+        unsafe { pmm.pm5ctl0().clear_bits(|w| w.lpm5sw().disconnected()) };
     }
 
     // Enter LPMx.5 with CPUOFF, OSCOFF, SCG0 and SCG1 (SLAU445I 1.4.3.1, p. 41, step 10). If

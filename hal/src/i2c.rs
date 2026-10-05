@@ -908,12 +908,14 @@ mod sealed {
         }
 
         /// In multi-operation transactions update the NACK byte error count to match *total* bytes sent
+        /// (wrapping, as in release builds: it only numbers the byte)
         #[inline]
         fn add_nack_count(err: Self::ErrorType, bytes_already_sent: usize) -> Self::ErrorType {
+            let total = |n: usize| n.wrapping_add(bytes_already_sent);
             match err.nack_type() {
                 None => err,
-                Some(NackType::Address(n)) => Self::ErrorType::nack(NackType::Address(n + bytes_already_sent)),
-                Some(NackType::Data(n))    => Self::ErrorType::nack(NackType::Data(n + bytes_already_sent)),
+                Some(NackType::Address(n)) => Self::ErrorType::nack(NackType::Address(total(n))),
+                Some(NackType::Data(n))    => Self::ErrorType::nack(NackType::Data(total(n))),
             }
         }
 
@@ -945,7 +947,8 @@ mod sealed {
             self.blocking_read_unchecked(address, buffer, send_start, send_stop)
         }
 
-        /// blocking write then blocking read
+        /// blocking write then blocking read. A read without bytes puts nothing on the bus (see
+        /// `blocking_read_unchecked`), so with an empty `buffer` the write sends the STOP.
         #[inline]
         fn blocking_write_read(
             &mut self,
@@ -953,7 +956,7 @@ mod sealed {
             bytes: &[u8],
             buffer: &mut [u8],
         ) -> Result<(), Self::ErrorType> {
-            self.blocking_write(address, bytes, true, false)?;
+            self.blocking_write(address, bytes, true, buffer.is_empty())?;
             self.blocking_read(address, buffer, true, true)
                 .map_err(|e| Self::add_nack_count(e, bytes.len()))
         }
@@ -1665,8 +1668,10 @@ where
 macro_rules! impl_i2c_error {
     ($err_type: ty) => {
         impl I2cError for $err_type {
+            #[inline(always)]
             fn nack(variant: NackType) -> Self { Self::GotNACK(variant) }
 
+            #[inline(always)]
             fn nack_type(&self) -> Option<NackType> {
                 match self {
                     Self::GotNACK(nack_type) => Some(*nack_type),
@@ -1890,9 +1895,11 @@ pub trait AddressType: AddressMode + Into<u16> + Copy {
     fn addr_type() -> AddressingMode;
 }
 impl AddressType for SevenBitAddress {
+    #[inline(always)]
     fn addr_type() -> AddressingMode { AddressingMode::SevenBit }
 }
 impl AddressType for TenBitAddress {
+    #[inline(always)]
     fn addr_type() -> AddressingMode { AddressingMode::TenBit }
 }
 
@@ -1912,36 +1919,48 @@ mod ehal1 {
                 fn transaction(
                     &mut self,
                     address: TenOrSevenBit,
-                    ops: &mut [Operation<'_>],
+                    mut ops: &mut [Operation<'_>],
                 ) -> Result<(), Self::Error> {
                     self.set_addressing_mode(TenOrSevenBit::addr_type());
 
-                    let mut prev_discr = None;
-                    let mut bytes_sent = 0;
-                    let len = ops.len();
-                    for (i, op) in ops.iter_mut().enumerate() {
+                    // A read without bytes puts nothing on the bus, as the eUSCI can't receive zero bytes
+                    // (see `blocking_read_unchecked`), so the STOP follows the last operation that isn't
+                    // one. A write without bytes sends the address with its own STOP (`zero_byte_write`),
+                    // so the operation after it starts with a START.
+                    fn empty_read(op: &Operation<'_>) -> bool {
+                        matches!(op, Operation::Read(items) if items.is_empty())
+                    }
+                    // Whether the previous operation was a read; `None` before the first one, and after a
+                    // write without bytes
+                    let mut prev_read = None;
+                    let mut bytes_sent: usize = 0;
+                    while let Some((op, rest)) = core::mem::take(&mut ops).split_first_mut() {
+                        ops = rest;
+                        if empty_read(op) {
+                            continue;
+                        }
+                        let read = matches!(op, Operation::Read(_));
                         // Send a start if this is the first operation,
                         // or if the previous operation was a different type (e.g. Read and Write)
-                        let send_start = match prev_discr {
-                            None => true,
-                            Some(prev) => prev != core::mem::discriminant(op),
-                        };
-                        // Send a stop only if this is the last operation
-                        let send_stop = i == (len - 1);
+                        let send_start = prev_read != Some(read);
+                        // Send a stop only after the last operation that isn't an empty read
+                        let send_stop = ops.iter().all(empty_read);
 
-                        match op {
-                            Operation::Read(ref mut items) => {
+                        let len = match op {
+                            Operation::Read(items) => {
                                 self.blocking_read(address.into(), items, send_start, send_stop)
                                     .map_err(|e| Self::add_nack_count(e, bytes_sent))?;
-                                bytes_sent += items.len();
+                                items.len()
                             }
                             Operation::Write(items) => {
                                 self.blocking_write(address.into(), items, send_start, send_stop)
                                     .map_err(|e| Self::add_nack_count(e, bytes_sent))?;
-                                bytes_sent += items.len();
+                                items.len()
                             }
-                        }
-                        prev_discr = Some(core::mem::discriminant(op));
+                        };
+                        // Only numbers the byte of a NACK, so it wraps, as it does in release builds
+                        bytes_sent = bytes_sent.wrapping_add(len);
+                        prev_read = if len == 0 { None } else { Some(read) };
                     }
                     Ok(())
                 }

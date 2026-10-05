@@ -173,13 +173,19 @@ pub enum Mode {
 // Table 14-9, p. 413) and TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386 to p. 387; SLAU445I Table 14-8,
 // p. 411 to p. 412)
 pub trait CCRn<C>: Steal {
-    // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
+    // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413). `set_ccrn` stops a running
+    // Timer_A for the write (SLAU445I 13.2.4.2, p. 376); `set_ccrn_stopped` is for a timer the caller has
+    // stopped (MC = 0), and leaves out the check.
     fn set_ccrn(&self, count: u16);
+    fn set_ccrn_stopped(&self, count: u16);
     fn get_ccrn(&self) -> u16;
 
     // TAxCCTLn/TBxCCTLn, for compare mode with an output mode or for capture mode (SLAU445I Table 13-6,
-    // p. 386; SLAU445I Table 14-8, p. 411)
+    // p. 386; SLAU445I Table 14-8, p. 411). `config_outmod` stops a running timer for the write (SLAU445I
+    // 13.2.7, p. 382; SLAU445I 14.2.7, p. 407); `config_outmod_stopped` is for a timer the caller has
+    // stopped (MC = 0), and leaves out the check.
     fn config_outmod(&self, outmod: Outmod);
+    fn config_outmod_stopped(&self, outmod: Outmod);
     fn config_cap_mode(&self, cm: Cm, ccis: Ccis);
 
     // CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
@@ -256,19 +262,19 @@ pub(crate) use timer_b_read;
 // stop mode "The timer is halted" (SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394), and set back
 // to up mode "the timer starts counting up from the value in TAxR" (SLAU445I 13.2.3.1.1, p. 371), so it
 // only loses the counts of the few cycles it was stopped. MC is bits 5-4 of TAxCTL/TBxCTL (SLAU445I
-// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409).
+// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409). The restore takes MC from the register value read at
+// the start, so the compiler can keep the bits in place instead of shifting them down and back up.
 macro_rules! timer_stopped {
     ($ctl:expr, $body:expr) => {{
         let ctl = $ctl;
-        let mc = ctl.read().mc();
-        let running = !mc.is_stop();
-        let mc = mc.bits();
+        let r = ctl.read();
+        let running = !r.mc().is_stop();
         if running {
             unsafe { ctl.clear_bits(|w| w.mc().stop()) };
         }
         let ret = $body;
         if running {
-            unsafe { ctl.set_bits(|w| w.mc().bits(mc)) };
+            unsafe { ctl.set_bits(|w| w.mc().bits(r.mc().bits())) };
         }
         ret
     }};
@@ -336,6 +342,12 @@ macro_rules! ccrn_impl {
                 });
             }
 
+            // TAxCCRn/TBxCCRn of a stopped timer (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
+            #[inline(always)]
+            fn set_ccrn_stopped(&self, count: u16) {
+                self.$tbxccrn().write(|w| unsafe { w.bits(count) });
+            }
+
             // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
             #[inline(always)]
             fn get_ccrn(&self) -> u16 { self.$tbxccrn().read().bits() }
@@ -348,6 +360,12 @@ macro_rules! ccrn_impl {
                 $crate::hw_traits::timer_base::timer_stopped!(self.$tbxctl(), {
                     self.$tbxcctln().write(|w| unsafe { w.outmod().bits(outmod as u8) })
                 });
+            }
+
+            // The same write, of a stopped timer
+            #[inline(always)]
+            fn config_outmod_stopped(&self, outmod: Outmod) {
+                self.$tbxcctln().write(|w| unsafe { w.outmod().bits(outmod as u8) });
             }
 
             #[inline(always)]

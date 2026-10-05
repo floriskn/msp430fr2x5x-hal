@@ -607,7 +607,7 @@ where
         let timer = unsafe { T::steal() };
         // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.1.1, p. 371)
         timer.stop();
-        timer.set_ccrn(count);
+        timer.set_ccrn_stopped(count);
         timer.upmode();
         self.mode = RunningMode::Up;
     }
@@ -622,7 +622,7 @@ where
         let timer = unsafe { T::steal() };
         // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.4.1, p. 373)
         timer.stop();
-        timer.set_ccrn(count);
+        timer.set_ccrn_stopped(count);
         timer.updown_mode();
         self.mode = RunningMode::UpDown;
     }

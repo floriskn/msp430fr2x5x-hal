@@ -412,8 +412,13 @@ impl InterruptVectors {
     /// use through every reset but a BOR, see [`InterruptVectors`].
     #[inline]
     pub unsafe fn use_ram(&mut self) {
-        // The FRAM table, FF80h to FFFFh, 64 words
-        core::ptr::copy_nonoverlapping(0xFF80 as *const u16, ram_table(), 64);
+        // The FRAM table, FF80h to FFFFh, 64 words. Copied a word at a time with volatile accesses, which
+        // the compiler keeps as a loop: `copy_nonoverlapping` links the library's memcpy (186 bytes) for
+        // this one copy.
+        let fram_table = 0xFF80 as *const u16;
+        for i in 0..64 {
+            ram_table().add(i).write_volatile(fram_table.add(i).read_volatile());
+        }
         sys().sysctl().set_bits(|w| w.sysrivect().ram());
     }
 

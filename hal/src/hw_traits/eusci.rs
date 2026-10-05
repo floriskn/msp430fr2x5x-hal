@@ -656,6 +656,7 @@ macro_rules! eusci_spi_impl {
             fn iv_rd(&self) -> u16 { self.$ucxiv().read().bits() }
 
             // UCBUSY in UCxSTATW (SLAU445I Table 23-5, p. 615; SLAU445I Table 23-14, p. 622)
+            #[inline(always)]
             fn is_busy(&self) -> bool { self.$ucxstatw().read().ucbusy().bit() }
         }
 
@@ -1050,6 +1051,7 @@ macro_rules! eusci_i2c_impl {
             // UCBxI2COA0 to UCBxI2COA3: UCOAEN, the 10-bit address and, in UCBxI2COA0 only, UCGCEN
             // (SLAU445I Table 24-11, p. 656; SLAU445I Table 24-12, p. 657; SLAU445I Table 24-13, p. 657;
             // SLAU445I Table 24-14, p. 658)
+            #[inline(always)]
             fn i2coa_rd(&self, which: u8) -> UcbI2coa {
                 match which {
                     1 => {
@@ -1088,6 +1090,7 @@ macro_rules! eusci_i2c_impl {
             }
 
             // The same registers (SLAU445I Table 24-11, p. 656 to SLAU445I Table 24-14, p. 658)
+            #[inline(always)]
             fn i2coa_wr(&self, which: u8, reg: &UcbI2coa) {
                 match which {
                     1 => {

@@ -160,6 +160,7 @@ macro_rules! impl_adc_channel_pin {
         impl<DIR> Channel<Adc> for Pin<$port, $pin, $mode<DIR>> {
             type ID = u8;
 
+            #[inline(always)]
             fn channel() -> Self::ID { $channel }
         }
         // On the MSP430FR2433 and MSP430FR25x2 ADC functionality is done via ADCPCTLx instead of
@@ -181,6 +182,7 @@ macro_rules! impl_adc_channel_extra {
         impl Channel<Adc> for $type {
             type ID = u8;
 
+            #[inline(always)]
             fn channel() -> Self::ID { $channel }
         }
     };
@@ -198,6 +200,7 @@ impl_adc_channel_extra!(InternalVRef, 13);
 impl<PIN: Channel<Adc, ID = u8>> Channel<Adc> for VrefOutput<PIN> {
     type ID = u8;
 
+    #[inline(always)]
     fn channel() -> Self::ID { PIN::channel() }
 }
 
@@ -256,6 +259,7 @@ pub struct AdcConfig<STATE> {
 
 // Only implement Default for NoClockSet
 impl Default for AdcConfig<NoClockSet> {
+    #[inline]
     fn default() -> Self {
         Self {
             state: NoClockSet,
@@ -271,6 +275,7 @@ impl Default for AdcConfig<NoClockSet> {
 
 impl AdcConfig<NoClockSet> {
     /// Creates an ADC configuration. A default implementation is also available through `::default()`
+    #[inline]
     pub fn new(
         clock_divider: ClockDivider,
         predivider: Predivider,
@@ -289,6 +294,7 @@ impl AdcConfig<NoClockSet> {
         }
     }
     /// Configure the ADC to use SMCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
+    #[inline]
     pub fn use_smclk(self, _smclk: &Smclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::Smclk),
@@ -308,6 +314,7 @@ impl AdcConfig<NoClockSet> {
     /// The erratum's workarounds are SMCLK or MODCLK as the ADC clock ([`use_smclk()`](Self::use_smclk),
     /// [`use_modclk()`](Self::use_modclk)), with "A 100us sampling time" if the conversion is triggered
     /// from LPM3, or LPM0 or active mode (SLAZ664S ADC50, p. 6; SLAZ705H ADC50, p. 5).
+    #[inline]
     pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::Aclk),
@@ -328,6 +335,7 @@ impl AdcConfig<NoClockSet> {
     /// PMM32, p. 9 to p. 10; SLAZ664S PMM32, p. 11; SLAZ705H PMM32, p. 8 to p. 9). The [`lpm`](crate::lpm)
     /// functions [`request_lpm3()`](crate::lpm::request_lpm3) and
     /// [`request_lpm4()`](crate::lpm::request_lpm4) work around it.
+    #[inline]
     pub fn use_modclk(self) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::Modclk),
@@ -342,6 +350,7 @@ impl AdcConfig<NoClockSet> {
 }
 impl AdcConfig<ClockSet> {
     /// Applies this ADC configuration to hardware registers, and returns an ADC.
+    #[inline]
     pub fn configure(self, mut adc_reg: _pac::Adc) -> Adc {
         // Disable the ADC before we set the other bits. Some can only be set while the ADC is disabled.
         // (SLAU445I 21.2.1, p. 541: "the ADC control bits can be modified only when ADCENC = 0")
@@ -570,11 +579,10 @@ impl<REF> Adc<REF> {
     /// use to save power").
     pub fn disable(&mut self) { disable_adc_reg(&mut self.adc_reg); }
 
-    /// Selects which pin to sample (ADCINCHx: SLAU445I Table 21-8, p. 567).
-    fn set_pin<PIN>(&mut self, _pin: &PIN)
-    where PIN: Channel<Adc, ID = u8> {
+    /// Selects which channel to sample (ADCINCHx: SLAU445I Table 21-8, p. 567).
+    fn set_channel(&mut self, channel: u8) {
         self.adc_reg.adcmctl0().modify(|_, w|
-            unsafe { w.adcinch().bits(PIN::channel()) }
+            unsafe { w.adcinch().bits(channel) }
         );
     }
 
@@ -594,14 +602,20 @@ impl<REF> Adc<REF> {
     ///
     /// A conversion that is still pending for another channel is finished first and its result
     /// discarded.
-    pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
+    pub fn read_count<PIN>(&mut self, _pin: &mut PIN) -> nb::Result<u16, Infallible>
     where PIN: Channel<Adc, ID = u8> {
+        self.read_channel(PIN::channel())
+    }
+
+    // `read_count()` for a channel number: not generic over the pin, so the reads of different channels
+    // share this code
+    fn read_channel(&mut self, channel: u8) -> nb::Result<u16, Infallible> {
         if let Some(pending) = self.pending {
             if self.adc_is_busy() {
                 return Err(nb::Error::WouldBlock);
             }
             self.pending = None;
-            if pending == PIN::channel() {
+            if pending == channel {
                 return Ok(self.adc_get_result());
             }
         }
@@ -611,11 +625,11 @@ impl<REF> Adc<REF> {
         // SLAU445I Table 21-3, p. 561)
         self.adc_reg.adcctl1().modify(|_, w| w.adcshs().software().adcissh().clear_bit().adcconseq().single().adcshp().set_bit());
         self.adc_reg.adcctl0().modify(|_, w| w.adcmsc().clear_bit());
-        self.set_pin(pin);
+        self.set_channel(channel);
         self.enable();
 
         self.start_conversion();
-        self.pending = Some(PIN::channel());
+        self.pending = Some(channel);
         Err(nb::Error::WouldBlock)
     }
 
