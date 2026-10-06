@@ -127,7 +127,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `InfoMemory` no longer stores a pointer, and indexing it no longer links the panic and formatting code in debug builds.
 - ADC: reading several channels with `read_count()` shares one copy of its code, and a constant `AdcConfig` compiles to its register writes in debug builds too.
 - Batches from `Batch::new` write only the register bits that differ from their reset values, so a port whose pins all stay inputs costs no code. `Parts::batch()` still writes every register: configure a port whose registers the program wrote through the PAC before with `Batch::new(port).split(&pmm).batch()`. `Batch` has a new type parameter for this, `FromReset` (the default) or `FromParts` (breaking for code that names the type of a `Parts::batch()` result).
-- GPIO: setting, clearing and toggling port register bits, as `set_high()`, `toggle()` and `to_output()` do, is one instruction with the register's address in it, which the PAC gives at compile time, instead of loading the address into a CPU register first.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
