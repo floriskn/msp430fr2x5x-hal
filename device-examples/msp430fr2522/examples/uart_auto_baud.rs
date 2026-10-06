@@ -165,7 +165,7 @@ fn main() -> ! {
 }
 
 /// Wait until the receiver reports a break
-fn wait_for_break<USCI: SerialUsci>(receiver: &mut Rx<USCI>) {
+fn wait_for_break<USCI: SerialUsci>(receiver: &mut RxOnly<USCI>) {
     loop {
         // A plain UART at the wrong baud rate may read other things first
         if let Err(nb::Error::Other(RecvError::Break)) = receiver.read() {
@@ -175,7 +175,7 @@ fn wait_for_break<USCI: SerialUsci>(receiver: &mut Rx<USCI>) {
 }
 
 /// The next character or error from the receiver, or `None` if nothing comes within 10 ms
-fn read_within<USCI: SerialUsci>(receiver: &mut Rx<USCI>, delay: &mut impl DelayNs) -> Option<Result<u8, RecvError>> {
+fn read_within<USCI: SerialUsci>(receiver: &mut RxOnly<USCI>, delay: &mut impl DelayNs) -> Option<Result<u8, RecvError>> {
     for _ in 0..1000 {
         match receiver.read() {
             Ok(byte) => return Some(Ok(byte)),

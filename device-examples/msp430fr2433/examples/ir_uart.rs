@@ -74,7 +74,7 @@ fn main() -> ! {
 
     // eUSCI_A0 at 2400 baud, 8N1, with TXD on P1.4, P1SELx = 01 (SLASE59F Table 6-17, p. 55), in the pin
     // mapping whose TXD pin carries the modulator's output
-    let mut tx = SerialConfig::<_, _, IrMapping>::new(
+    let tx = SerialConfig::<_, _, IrMapping>::new(
         periph.e_usci_a0,
         BitOrder::LsbFirst,
         BitCount::EightBits,
@@ -87,7 +87,8 @@ fn main() -> ! {
     .tx_only(p1.pin4.to_alternate1());
     // In SYSCFG1: IREN = 1, IRMSEL = 0 for ASK, IRPSEL = 0 for normal polarity, IRDSSEL = 0 for the data
     // from eUSCI_A0 (SLAU445I Table 1-30, p. 81)
-    let _ir = IrModulator::with_uart_data(&carrier, &envelope, IrMode::Ask, false, &tx);
+    // The modulator holds `tx` and stands in for it, so the loop sends through it as through `tx`
+    let mut tx = IrModulator::with_uart_data(&carrier, &envelope, IrMode::Ask, false, tx);
 
     loop {
         block!(tx.write(b'U')).ok();

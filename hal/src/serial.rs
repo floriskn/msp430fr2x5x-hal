@@ -62,6 +62,7 @@
 #[cfg(feature = "eusci_aclk")]
 use crate::clock::Aclk;
 use crate::clock::{Clock, Smclk};
+use crate::gpio::{free_pin, FreePin, FreedPin};
 use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, UcaIrctl, Ucssel};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
@@ -353,9 +354,9 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// p. 593)
     type ClockPin;
     /// Pin used for Tx (UCAxTXD, SLAU445I 22.2, p. 575)
-    type TxPin;
+    type TxPin: FreePin;
     /// Pin used for Rx (UCAxRXD, SLAU445I 22.2, p. 575)
-    type RxPin;
+    type RxPin: FreePin;
 
     /// Additional configuration, such as the eUSCI_A0 remapping bit USCIA0RMP in SYSCFG3 (SLAU445I
     /// Table 1-32, p. 83)
@@ -365,15 +366,24 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
 
 // The pin's alternate function defaults to Alternate1 (PxSEL = 01b, the UCAxTXD, UCAxRXD and UCAxCLK
 // function in the port pin function tables, for example SLASEC4D Table 6-63, p. 96; SLASE59F Table 6-17,
-// p. 55; SLASEO7C Table 9-23, p. 65; SLASEE4C Table 6-15, p. 58)
+// p. 55; SLASEO7C Table 9-23, p. 65; SLASEE4C Table 6-15, p. 58). The pin is the one `free()` gives back.
+// `also` adds a further function of a pin given before, such as the inverted UART of eUSCI_A1 on the
+// MSP430FR2x5x.
 macro_rules! impl_serial_pin {
+    (also $struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
+            #[inline(always)]
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
+        }
+    };
     ($struct_name: ident, $port: ty, $pin: ty) => {
         impl_serial_pin!($struct_name, $port, $pin, Alternate1);
     };
     ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
-        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
-            #[inline(always)]
-            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
+        impl_serial_pin!(also $struct_name, $port, $pin, $alt);
+        impl $crate::gpio::FreePin for $struct_name {
+            type Port = $port;
+            type Pin = $pin;
         }
     };
 }
@@ -806,33 +816,102 @@ where
         self,
         _tx: T,
         _rx: R,
-    ) -> (Tx<USCI, M>, Rx<USCI, M>) {
+    ) -> (Tx<USCI, M, Pair>, Rx<USCI, M, Pair>) {
         self.config_hw();
-        (Tx(PhantomData, PhantomData), Rx(PhantomData, PhantomData))
+        (Tx(PhantomData, PhantomData, PhantomData), Rx(PhantomData, PhantomData, PhantomData))
     }
 
     /// Perform hardware configuration and create Tx pin from appropriate GPIO
     #[inline]
-    pub fn tx_only<T: Into<USCI::TxPin>>(self, _tx: T) -> Tx<USCI, M> {
+    pub fn tx_only<T: Into<USCI::TxPin>>(self, _tx: T) -> TxOnly<USCI, M> {
         self.config_hw();
-        Tx(PhantomData, PhantomData)
+        Tx(PhantomData, PhantomData, PhantomData)
     }
 
     /// Perform hardware configuration and create Rx pin from appropriate GPIO
     #[inline]
-    pub fn rx_only<R: Into<USCI::RxPin>>(self, _rx: R) -> Rx<USCI, M> {
+    pub fn rx_only<R: Into<USCI::RxPin>>(self, _rx: R) -> RxOnly<USCI, M> {
         self.config_hw();
-        Rx(PhantomData, PhantomData)
+        Rx(PhantomData, PhantomData, PhantomData)
     }
 }
 
-/// Serial transmitter pin
-pub struct Tx<USCI, M = DefaultMapping>(PhantomData<USCI>, PhantomData<M>)
+// The eUSCI of a `Tx` or `Rx` given back, held in reset: UCAxCTLW0 = 0001h, UCSWRST set and every other bit
+// cleared, its value after a PUC (SLAU445I Table 22-8, p. 593). "When set, the UCSWRST bit sets the UCTXIFG
+// bit and resets the UCRXIE, UCTXIE, ..." (SLAU445I 22.3.1, p. 577), so its interrupts are off too.
+#[inline(always)]
+fn reset_usci<USCI: SerialUsci<M>, M: PinMap>() -> USCI {
+    let usci = unsafe { USCI::steal() };
+    usci.ctl0_reset();
+    usci
+}
+
+impl<USCI, M> Tx<USCI, M, Solo>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Give back the eUSCI and the pin of a `Tx` from [`SerialConfig::tx_only`], so that the eUSCI can be
+    /// set up again, with other pins for example. The eUSCI is held in reset (UCSWRST = 1, as after a PUC:
+    /// SLAU445I 22.3.1, p. 577), which cuts a character still being sent short: call
+    /// [`flush`](embedded_io::Write::flush) first to send it. The pin comes back as a floating GPIO input,
+    /// see [`FreedPin`]. A pin given to [`use_uclk`](SerialConfig::use_uclk) stays in its clock function.
+    #[inline]
+    pub fn free(self) -> (USCI, FreedPin<USCI::TxPin>) {
+        let usci = reset_usci::<USCI, M>();
+        (usci, free_pin::<USCI::TxPin>())
+    }
+}
+
+impl<USCI, M> Tx<USCI, M, Pair>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Give back the eUSCI and both pins of the `Tx` and `Rx` from [`SerialConfig::split`], which share the
+    /// eUSCI, so only go back together, as [`Tx::free`] does for a `Tx` alone
+    #[inline]
+    pub fn free_with(self, _rx: Rx<USCI, M, Pair>) -> (USCI, FreedPin<USCI::TxPin>, FreedPin<USCI::RxPin>) {
+        let usci = reset_usci::<USCI, M>();
+        (usci, free_pin::<USCI::TxPin>(), free_pin::<USCI::RxPin>())
+    }
+}
+
+impl<USCI, M> Rx<USCI, M, Solo>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Give back the eUSCI and the pin of an `Rx` from [`SerialConfig::rx_only`], as [`Tx::free`] does. A
+    /// character still being received is lost.
+    #[inline]
+    pub fn free(self) -> (USCI, FreedPin<USCI::RxPin>) {
+        let usci = reset_usci::<USCI, M>();
+        (usci, free_pin::<USCI::RxPin>())
+    }
+}
+
+/// Typestate of a [`TxOnly`] or an [`RxOnly`]: it has the eUSCI to itself, and its `free()` gives it back
+pub struct Solo;
+/// Typestate of the [`Tx`] and [`Rx`] from [`SerialConfig::split`], the default: they share the eUSCI, which
+/// only both together give back, with [`Tx::free_with`]
+pub struct Pair;
+
+/// What [`SerialConfig::tx_only`] returns: a [`Tx`] that has the eUSCI to itself, so its [`free`](Tx::free)
+/// gives the eUSCI back
+pub type TxOnly<USCI, M = DefaultMapping> = Tx<USCI, M, Solo>;
+/// What [`SerialConfig::rx_only`] returns: an [`Rx`] that has the eUSCI to itself, so its [`free`](Rx::free)
+/// gives the eUSCI back
+pub type RxOnly<USCI, M = DefaultMapping> = Rx<USCI, M, Solo>;
+
+/// Serial transmitter pin, one of the two halves of [`SerialConfig::split`]. A `Tx` from
+/// [`SerialConfig::tx_only`] is a [`TxOnly`].
+pub struct Tx<USCI, M = DefaultMapping, H = Pair>(PhantomData<USCI>, PhantomData<M>, PhantomData<H>)
 where
     USCI: SerialUsci<M>,
     M: PinMap;
 
-impl<USCI, M> Tx<USCI, M>
+impl<USCI, M, H> Tx<USCI, M, H>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
@@ -953,13 +1032,14 @@ where
     }
 }
 
-/// Serial receiver pin
-pub struct Rx<USCI, M = DefaultMapping>(PhantomData<USCI>, PhantomData<M>)
+/// Serial receiver pin, one of the two halves of [`SerialConfig::split`]. An `Rx` from
+/// [`SerialConfig::rx_only`] is an [`RxOnly`].
+pub struct Rx<USCI, M = DefaultMapping, H = Pair>(PhantomData<USCI>, PhantomData<M>, PhantomData<H>)
 where
     USCI: SerialUsci<M>,
     M: PinMap;
 
-impl<USCI, M> Rx<USCI, M>
+impl<USCI, M, H> Rx<USCI, M, H>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
@@ -1106,7 +1186,7 @@ mod emb_io {
     use embedded_io::{Error, ErrorType, Read, ReadReady, Write, WriteReady};
     use nb::block;
 
-    impl<USCI, M> ErrorType for Rx<USCI, M>
+    impl<USCI, M, H> ErrorType for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1123,7 +1203,7 @@ mod emb_io {
             }
         }
     }
-    impl<USCI, M> Read for Rx<USCI, M>
+    impl<USCI, M, H> Read for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1139,7 +1219,7 @@ mod emb_io {
             Ok(1)
         }
     }
-    impl<USCI, M> ReadReady for Rx<USCI, M>
+    impl<USCI, M, H> ReadReady for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1151,7 +1231,7 @@ mod emb_io {
         }
     }
 
-    impl<USCI, M> ErrorType for Tx<USCI, M>
+    impl<USCI, M, H> ErrorType for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1159,7 +1239,7 @@ mod emb_io {
         type Error = Infallible;
     }
 
-    impl<USCI, M> Write for Tx<USCI, M>
+    impl<USCI, M, H> Write for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1203,7 +1283,7 @@ mod emb_io {
             Ok(())
         }
     }
-    impl<USCI, M> WriteReady for Tx<USCI, M>
+    impl<USCI, M, H> WriteReady for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1233,7 +1313,7 @@ mod ehal_nb1 {
             }
         }
     }
-    impl<USCI, M> ErrorType for Rx<USCI, M>
+    impl<USCI, M, H> ErrorType for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1241,7 +1321,7 @@ mod ehal_nb1 {
         type Error = RecvError;
     }
 
-    impl<USCI, M> Read<u8> for Rx<USCI, M>
+    impl<USCI, M, H> Read<u8> for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1254,7 +1334,7 @@ mod ehal_nb1 {
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
     }
 
-    impl<USCI, M> ErrorType for Tx<USCI, M>
+    impl<USCI, M, H> ErrorType for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1262,7 +1342,7 @@ mod ehal_nb1 {
         type Error = Infallible;
     }
 
-    impl<USCI, M> Write<u8> for Tx<USCI, M>
+    impl<USCI, M, H> Write<u8> for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1287,7 +1367,7 @@ mod ehal02 {
     use super::*;
     use embedded_hal_02::serial::{Read, Write};
 
-    impl<USCI, M> Read<u8> for Rx<USCI, M>
+    impl<USCI, M, H> Read<u8> for Rx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1302,7 +1382,7 @@ mod ehal02 {
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
     }
 
-    impl<USCI, M> Write<u8> for Tx<USCI, M>
+    impl<USCI, M, H> Write<u8> for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1327,7 +1407,7 @@ mod ehal02 {
         }
     }
 
-    impl<USCI, M> embedded_hal_02::blocking::serial::write::Default<u8> for Tx<USCI, M>
+    impl<USCI, M, H> embedded_hal_02::blocking::serial::write::Default<u8> for Tx<USCI, M, H>
     where
         USCI: SerialUsci<M>,
         M: PinMap,

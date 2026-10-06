@@ -113,7 +113,7 @@ fn main() -> ! {
     }
 }
 
-fn print_num<U: SerialUsci>(tx: &mut Tx<U>, num: u16) {
+fn print_num<U: SerialUsci>(tx: &mut TxOnly<U>, num: u16) {
     write(tx, '0');
     write(tx, 'x');
     print_hex(tx, num >> 12);
@@ -124,7 +124,7 @@ fn print_num<U: SerialUsci>(tx: &mut Tx<U>, num: u16) {
     write(tx, '\n');
 }
 
-fn print_hex<U: SerialUsci>(tx: &mut Tx<U>, h: u16) {
+fn print_hex<U: SerialUsci>(tx: &mut TxOnly<U>, h: u16) {
     let c = match h {
         0 => '0',
         1 => '1',
@@ -147,7 +147,7 @@ fn print_hex<U: SerialUsci>(tx: &mut Tx<U>, h: u16) {
     write(tx, c);
 }
 
-fn write<U: SerialUsci>(tx: &mut Tx<U>, ch: char) {
+fn write<U: SerialUsci>(tx: &mut TxOnly<U>, ch: char) {
     nb::block!(tx.write(ch as u8)).unwrap();
 }
 
