@@ -143,7 +143,7 @@ fn main() -> ! {
 }
 
 /// Whether the receiver reports a break within 10 ms
-fn wait_for_break<USCI: SerialUsci>(receiver: &mut RxOnly<USCI>, delay: &mut impl DelayNs) -> bool {
+fn wait_for_break<USCI: SerialUsci>(receiver: &mut Rx<USCI>, delay: &mut impl DelayNs) -> bool {
     loop {
         match read_within(receiver, delay) {
             Some(Err(RecvError::Break)) => return true,
@@ -155,7 +155,7 @@ fn wait_for_break<USCI: SerialUsci>(receiver: &mut RxOnly<USCI>, delay: &mut imp
 }
 
 /// The next character or error from the receiver, or `None` if nothing comes within 10 ms
-fn read_within<USCI: SerialUsci>(receiver: &mut RxOnly<USCI>, delay: &mut impl DelayNs) -> Option<Result<u8, RecvError>> {
+fn read_within<USCI: SerialUsci>(receiver: &mut Rx<USCI>, delay: &mut impl DelayNs) -> Option<Result<u8, RecvError>> {
     for _ in 0..1000 {
         match receiver.read() {
             Ok(byte) => return Some(Ok(byte)),

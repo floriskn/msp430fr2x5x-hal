@@ -28,6 +28,20 @@
 //! Table 6-15, p. 73 names P4.4 for RXD, but UCA1RXD is on P4.2 (SLASEC4D Table 6-14, p. 72 and SLASEC4D
 //! Table 6-66, p. 102); the HAL follows the pin function table, where P4.4 is UCB1STE.
 //!
+//! A pin's PxSEL bits choose its function, and P4.3 and P4.2 have the UART in two of them: in function 1
+//! (P4SELx = 01b) as usual, the line idling high, and in function 2 (P4SELx = 10b) "to transmit and receive
+//! data in inverted polarity" (SLASEC4D 6.10.8, p. 73), the line idling low. eUSCI_A1 itself is the same in
+//! both; [`SerialConfig::split`] takes the pins in either function:
+//!
+//! ```ignore
+//! // The usual polarity: P4.3 and P4.2 in function 1
+//! let (tx, rx) = config.split(p4.pin3.to_alternate1(), p4.pin2.to_alternate1());
+//! // Inverted: the same pins in function 2
+//! let (tx, rx) = config.split(p4.pin3.to_alternate2(), p4.pin2.to_alternate2());
+//! ```
+//!
+//! The MSP430FR2355 example `uart_inverted` tests both, and a mix of the two.
+//!
 //! Begin configuration by calling [`SerialConfig::new()`]. After configuration, [`Rx`] and/or [`Tx`] structs are produced by
 //! providing the corresponding GPIO pins.
 //!
@@ -353,9 +367,12 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// Pin used for serial UCLK (the UCAxCLK pin, the clock source with UCSSELx = 00b, SLAU445I Table 22-8,
     /// p. 593)
     type ClockPin;
-    /// Pin used for Tx (UCAxTXD, SLAU445I 22.2, p. 575)
+    /// Pin used for Tx (UCAxTXD, SLAU445I 22.2, p. 575). It takes the TXD pin in each function that has
+    /// it: `to_alternate1()`, and for eUSCI_A1 on the MSP430FR2x5x also `to_alternate2()`, inverted (see
+    /// the [module documentation](crate::serial)).
     type TxPin: FreePin;
-    /// Pin used for Rx (UCAxRXD, SLAU445I 22.2, p. 575)
+    /// Pin used for Rx (UCAxRXD, SLAU445I 22.2, p. 575). It takes the RXD pin in each function that has
+    /// it, as [`TxPin`](Self::TxPin) does.
     type RxPin: FreePin;
 
     /// Additional configuration, such as the eUSCI_A0 remapping bit USCIA0RMP in SYSCFG3 (SLAU445I
@@ -364,11 +381,20 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     fn configure_pin_mapping() {}
 }
 
-// The pin's alternate function defaults to Alternate1 (PxSEL = 01b, the UCAxTXD, UCAxRXD and UCAxCLK
-// function in the port pin function tables, for example SLASEC4D Table 6-63, p. 96; SLASE59F Table 6-17,
-// p. 55; SLASEO7C Table 9-23, p. 65; SLASEE4C Table 6-15, p. 58). The pin is the one `free()` gives back.
-// `also` adds a further function of a pin given before, such as the inverted UART of eUSCI_A1 on the
-// MSP430FR2x5x.
+// Declare a UART pin type, such as `UsciA0TxPin`, for one TXD, RXD or UCLK pin: the type takes the pin in
+// the given alternate function, Alternate1 (PxSEL = 01b) if none is given, the UCAxTXD, UCAxRXD and UCAxCLK
+// function in the port pin function tables (for example SLASEC4D Table 6-63, p. 96; SLASE59F Table 6-17,
+// p. 55; SLASEO7C Table 9-23, p. 65; SLASEE4C Table 6-15, p. 58). The pin is also the one `free()` gives
+// back.
+//
+// `also` lets a pin type take its pin in a second function, for pins that have the UART in two of their
+// functions. On the MSP430FR2x5x, P4.3 and P4.2 are eUSCI_A1's TXD and RXD in function 1 (PxSEL = 01b), and
+// again in function 2 (PxSEL = 10b) with the signal inverted between the eUSCI and the pin (SLASEC4D 6.10.8,
+// p. 73; SLASEC4D Table 6-66, p. 102). It only adds the conversion from the pin in that function: the pin
+// type and the pin `free()` gives back come from its first line.
+//
+//     impl_serial_pin!(UsciA1TxPin, P4, Pin3);                  // P4.3 in function 1
+//     impl_serial_pin!(also UsciA1TxPin, P4, Pin3, Alternate2); // and in function 2, inverted
 macro_rules! impl_serial_pin {
     (also $struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
         impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
@@ -816,23 +842,23 @@ where
         self,
         _tx: T,
         _rx: R,
-    ) -> (Tx<USCI, M, Pair>, Rx<USCI, M, Pair>) {
+    ) -> (Tx<USCI, M>, Rx<USCI, M>) {
         self.config_hw();
-        (Tx(PhantomData, PhantomData, PhantomData), Rx(PhantomData, PhantomData, PhantomData))
+        (Tx(PhantomData, PhantomData), Rx(PhantomData, PhantomData))
     }
 
     /// Perform hardware configuration and create Tx pin from appropriate GPIO
     #[inline]
     pub fn tx_only<T: Into<USCI::TxPin>>(self, _tx: T) -> TxOnly<USCI, M> {
         self.config_hw();
-        Tx(PhantomData, PhantomData, PhantomData)
+        TxOnly(Tx(PhantomData, PhantomData))
     }
 
     /// Perform hardware configuration and create Rx pin from appropriate GPIO
     #[inline]
     pub fn rx_only<R: Into<USCI::RxPin>>(self, _rx: R) -> RxOnly<USCI, M> {
         self.config_hw();
-        Rx(PhantomData, PhantomData, PhantomData)
+        RxOnly(Rx(PhantomData, PhantomData))
     }
 }
 
@@ -846,16 +872,39 @@ fn reset_usci<USCI: SerialUsci<M>, M: PinMap>() -> USCI {
     usci
 }
 
-impl<USCI, M> Tx<USCI, M, Solo>
+impl<USCI, M> Tx<USCI, M>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
 {
-    /// Give back the eUSCI and the pin of a `Tx` from [`SerialConfig::tx_only`], so that the eUSCI can be
-    /// set up again, with other pins for example. The eUSCI is held in reset (UCSWRST = 1, as after a PUC:
-    /// SLAU445I 22.3.1, p. 577), which cuts a character still being sent short: call
-    /// [`flush`](embedded_io::Write::flush) first to send it. The pin comes back as a floating GPIO input,
-    /// see [`FreedPin`]. A pin given to [`use_uclk`](SerialConfig::use_uclk) stays in its clock function.
+    /// Give back the eUSCI and both pins of the `Tx` and `Rx` from [`SerialConfig::split`], so that the eUSCI
+    /// can be set up again, with other pins for example. The two share the eUSCI, so they only go back
+    /// together. The eUSCI is held in reset (UCSWRST = 1, as after a PUC: SLAU445I 22.3.1, p. 577), which cuts
+    /// a character still being sent short: call [`flush`](embedded_io::Write::flush) first to send it, and a
+    /// character still being received is lost. The pins come back as floating GPIO inputs, see
+    /// [`FreedPin`]. A pin given to [`use_uclk`](SerialConfig::use_uclk) stays in its clock function.
+    #[inline]
+    pub fn free_with(self, _rx: Rx<USCI, M>) -> (USCI, FreedPin<USCI::TxPin>, FreedPin<USCI::RxPin>) {
+        let usci = reset_usci::<USCI, M>();
+        (usci, free_pin::<USCI::TxPin>(), free_pin::<USCI::RxPin>())
+    }
+}
+
+/// What [`SerialConfig::tx_only`] returns: a [`Tx`] that has the eUSCI to itself, so its
+/// [`free`](TxOnly::free) gives the eUSCI back. It derefs to the `Tx` in it, so it has all of the `Tx`'s
+/// methods, and a function that takes `&mut Tx<USCI, M>` takes `&mut TxOnly<USCI, M>` too. It implements the
+/// serial traits as the `Tx` does.
+pub struct TxOnly<USCI, M = DefaultMapping>(Tx<USCI, M>)
+where
+    USCI: SerialUsci<M>,
+    M: PinMap;
+
+impl<USCI, M> TxOnly<USCI, M>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Give back the eUSCI and the pin, as [`Tx::free_with`] does for both halves of a [`SerialConfig::split`]
     #[inline]
     pub fn free(self) -> (USCI, FreedPin<USCI::TxPin>) {
         let usci = reset_usci::<USCI, M>();
@@ -863,27 +912,30 @@ where
     }
 }
 
-impl<USCI, M> Tx<USCI, M, Pair>
-where
-    USCI: SerialUsci<M>,
-    M: PinMap,
-{
-    /// Give back the eUSCI and both pins of the `Tx` and `Rx` from [`SerialConfig::split`], which share the
-    /// eUSCI, so only go back together, as [`Tx::free`] does for a `Tx` alone
-    #[inline]
-    pub fn free_with(self, _rx: Rx<USCI, M, Pair>) -> (USCI, FreedPin<USCI::TxPin>, FreedPin<USCI::RxPin>) {
-        let usci = reset_usci::<USCI, M>();
-        (usci, free_pin::<USCI::TxPin>(), free_pin::<USCI::RxPin>())
-    }
+impl<USCI: SerialUsci<M>, M: PinMap> core::ops::Deref for TxOnly<USCI, M> {
+    type Target = Tx<USCI, M>;
+    #[inline(always)]
+    fn deref(&self) -> &Tx<USCI, M> { &self.0 }
 }
 
-impl<USCI, M> Rx<USCI, M, Solo>
+impl<USCI: SerialUsci<M>, M: PinMap> core::ops::DerefMut for TxOnly<USCI, M> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Tx<USCI, M> { &mut self.0 }
+}
+
+/// What [`SerialConfig::rx_only`] returns: an [`Rx`] that has the eUSCI to itself, so its
+/// [`free`](RxOnly::free) gives the eUSCI back, as [`TxOnly`] does
+pub struct RxOnly<USCI, M = DefaultMapping>(Rx<USCI, M>)
+where
+    USCI: SerialUsci<M>,
+    M: PinMap;
+
+impl<USCI, M> RxOnly<USCI, M>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
 {
-    /// Give back the eUSCI and the pin of an `Rx` from [`SerialConfig::rx_only`], as [`Tx::free`] does. A
-    /// character still being received is lost.
+    /// Give back the eUSCI and the pin, as [`TxOnly::free`] does. A character still being received is lost.
     #[inline]
     pub fn free(self) -> (USCI, FreedPin<USCI::RxPin>) {
         let usci = reset_usci::<USCI, M>();
@@ -891,27 +943,25 @@ where
     }
 }
 
-/// Typestate of a [`TxOnly`] or an [`RxOnly`]: it has the eUSCI to itself, and its `free()` gives it back
-pub struct Solo;
-/// Typestate of the [`Tx`] and [`Rx`] from [`SerialConfig::split`], the default: they share the eUSCI, which
-/// only both together give back, with [`Tx::free_with`]
-pub struct Pair;
+impl<USCI: SerialUsci<M>, M: PinMap> core::ops::Deref for RxOnly<USCI, M> {
+    type Target = Rx<USCI, M>;
+    #[inline(always)]
+    fn deref(&self) -> &Rx<USCI, M> { &self.0 }
+}
 
-/// What [`SerialConfig::tx_only`] returns: a [`Tx`] that has the eUSCI to itself, so its [`free`](Tx::free)
-/// gives the eUSCI back
-pub type TxOnly<USCI, M = DefaultMapping> = Tx<USCI, M, Solo>;
-/// What [`SerialConfig::rx_only`] returns: an [`Rx`] that has the eUSCI to itself, so its [`free`](Rx::free)
-/// gives the eUSCI back
-pub type RxOnly<USCI, M = DefaultMapping> = Rx<USCI, M, Solo>;
+impl<USCI: SerialUsci<M>, M: PinMap> core::ops::DerefMut for RxOnly<USCI, M> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Rx<USCI, M> { &mut self.0 }
+}
 
-/// Serial transmitter pin, one of the two halves of [`SerialConfig::split`]. A `Tx` from
-/// [`SerialConfig::tx_only`] is a [`TxOnly`].
-pub struct Tx<USCI, M = DefaultMapping, H = Pair>(PhantomData<USCI>, PhantomData<M>, PhantomData<H>)
+/// Serial transmitter pin, one of the two halves of [`SerialConfig::split`]. [`SerialConfig::tx_only`]
+/// returns one in a [`TxOnly`].
+pub struct Tx<USCI, M = DefaultMapping>(PhantomData<USCI>, PhantomData<M>)
 where
     USCI: SerialUsci<M>,
     M: PinMap;
 
-impl<USCI, M, H> Tx<USCI, M, H>
+impl<USCI, M> Tx<USCI, M>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
@@ -1032,14 +1082,14 @@ where
     }
 }
 
-/// Serial receiver pin, one of the two halves of [`SerialConfig::split`]. An `Rx` from
-/// [`SerialConfig::rx_only`] is an [`RxOnly`].
-pub struct Rx<USCI, M = DefaultMapping, H = Pair>(PhantomData<USCI>, PhantomData<M>, PhantomData<H>)
+/// Serial receiver pin, one of the two halves of [`SerialConfig::split`]. [`SerialConfig::rx_only`] returns
+/// one in an [`RxOnly`].
+pub struct Rx<USCI, M = DefaultMapping>(PhantomData<USCI>, PhantomData<M>)
 where
     USCI: SerialUsci<M>,
     M: PinMap;
 
-impl<USCI, M, H> Rx<USCI, M, H>
+impl<USCI, M> Rx<USCI, M>
 where
     USCI: SerialUsci<M>,
     M: PinMap,
@@ -1186,7 +1236,7 @@ mod emb_io {
     use embedded_io::{Error, ErrorType, Read, ReadReady, Write, WriteReady};
     use nb::block;
 
-    impl<USCI, M, H> ErrorType for Rx<USCI, M, H>
+    impl<USCI, M> ErrorType for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1203,7 +1253,7 @@ mod emb_io {
             }
         }
     }
-    impl<USCI, M, H> Read for Rx<USCI, M, H>
+    impl<USCI, M> Read for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1219,7 +1269,7 @@ mod emb_io {
             Ok(1)
         }
     }
-    impl<USCI, M, H> ReadReady for Rx<USCI, M, H>
+    impl<USCI, M> ReadReady for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1231,7 +1281,7 @@ mod emb_io {
         }
     }
 
-    impl<USCI, M, H> ErrorType for Tx<USCI, M, H>
+    impl<USCI, M> ErrorType for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1239,7 +1289,7 @@ mod emb_io {
         type Error = Infallible;
     }
 
-    impl<USCI, M, H> Write for Tx<USCI, M, H>
+    impl<USCI, M> Write for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1283,7 +1333,7 @@ mod emb_io {
             Ok(())
         }
     }
-    impl<USCI, M, H> WriteReady for Tx<USCI, M, H>
+    impl<USCI, M> WriteReady for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1313,7 +1363,7 @@ mod ehal_nb1 {
             }
         }
     }
-    impl<USCI, M, H> ErrorType for Rx<USCI, M, H>
+    impl<USCI, M> ErrorType for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1321,7 +1371,7 @@ mod ehal_nb1 {
         type Error = RecvError;
     }
 
-    impl<USCI, M, H> Read<u8> for Rx<USCI, M, H>
+    impl<USCI, M> Read<u8> for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1334,7 +1384,7 @@ mod ehal_nb1 {
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
     }
 
-    impl<USCI, M, H> ErrorType for Tx<USCI, M, H>
+    impl<USCI, M> ErrorType for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1342,7 +1392,7 @@ mod ehal_nb1 {
         type Error = Infallible;
     }
 
-    impl<USCI, M, H> Write<u8> for Tx<USCI, M, H>
+    impl<USCI, M> Write<u8> for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1367,7 +1417,7 @@ mod ehal02 {
     use super::*;
     use embedded_hal_02::serial::{Read, Write};
 
-    impl<USCI, M, H> Read<u8> for Rx<USCI, M, H>
+    impl<USCI, M> Read<u8> for Rx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1382,7 +1432,7 @@ mod ehal02 {
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
     }
 
-    impl<USCI, M, H> Write<u8> for Tx<USCI, M, H>
+    impl<USCI, M> Write<u8> for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
@@ -1407,9 +1457,82 @@ mod ehal02 {
         }
     }
 
-    impl<USCI, M, H> embedded_hal_02::blocking::serial::write::Default<u8> for Tx<USCI, M, H>
+    impl<USCI, M> embedded_hal_02::blocking::serial::write::Default<u8> for Tx<USCI, M>
     where
         USCI: SerialUsci<M>,
         M: PinMap,
     {}
+}
+
+// `TxOnly` and `RxOnly` implement the serial traits as the `Tx` and `Rx` in them do, so code that's generic over
+// the traits takes them too
+mod only_traits {
+    use super::*;
+
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::ErrorType for TxOnly<USCI, M> {
+        type Error = Infallible;
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::Write for TxOnly<USCI, M> {
+        #[inline]
+        fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> { embedded_io::Write::write(&mut self.0, buf) }
+        #[inline]
+        fn flush(&mut self) -> Result<(), Infallible> { embedded_io::Write::flush(&mut self.0) }
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), Infallible> {
+            embedded_io::Write::write_all(&mut self.0, buf)
+        }
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::WriteReady for TxOnly<USCI, M> {
+        #[inline]
+        fn write_ready(&mut self) -> Result<bool, Infallible> { embedded_io::WriteReady::write_ready(&mut self.0) }
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_nb::serial::ErrorType for TxOnly<USCI, M> {
+        type Error = Infallible;
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_nb::serial::Write<u8> for TxOnly<USCI, M> {
+        #[inline]
+        fn write(&mut self, word: u8) -> nb::Result<(), Infallible> {
+            embedded_hal_nb::serial::Write::write(&mut self.0, word)
+        }
+        #[inline]
+        fn flush(&mut self) -> nb::Result<(), Infallible> { embedded_hal_nb::serial::Write::flush(&mut self.0) }
+    }
+
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::ErrorType for RxOnly<USCI, M> {
+        type Error = RecvError;
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::Read for RxOnly<USCI, M> {
+        #[inline]
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize, RecvError> { embedded_io::Read::read(&mut self.0, buf) }
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_io::ReadReady for RxOnly<USCI, M> {
+        #[inline]
+        fn read_ready(&mut self) -> Result<bool, RecvError> { embedded_io::ReadReady::read_ready(&mut self.0) }
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_nb::serial::ErrorType for RxOnly<USCI, M> {
+        type Error = RecvError;
+    }
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_nb::serial::Read<u8> for RxOnly<USCI, M> {
+        #[inline]
+        fn read(&mut self) -> nb::Result<u8, RecvError> { embedded_hal_nb::serial::Read::read(&mut self.0) }
+    }
+
+    #[cfg(feature = "embedded-hal-02")]
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_02::serial::Write<u8> for TxOnly<USCI, M> {
+        type Error = void::Void;
+        #[inline]
+        fn write(&mut self, word: u8) -> nb::Result<(), void::Void> {
+            embedded_hal_02::serial::Write::write(&mut self.0, word)
+        }
+        #[inline]
+        fn flush(&mut self) -> nb::Result<(), void::Void> { embedded_hal_02::serial::Write::flush(&mut self.0) }
+    }
+    #[cfg(feature = "embedded-hal-02")]
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_02::blocking::serial::write::Default<u8> for TxOnly<USCI, M> {}
+    #[cfg(feature = "embedded-hal-02")]
+    impl<USCI: SerialUsci<M>, M: PinMap> embedded_hal_02::serial::Read<u8> for RxOnly<USCI, M> {
+        type Error = RecvError;
+        #[inline]
+        fn read(&mut self) -> nb::Result<u8, RecvError> { embedded_hal_02::serial::Read::read(&mut self.0) }
+    }
 }

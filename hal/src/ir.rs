@@ -47,7 +47,7 @@
 //! The output inverts with the `inverted` argument (IRPSEL, SLAU445I Table 1-25, p. 76 and SLAU445I
 //! Table 1-30, p. 81).
 
-use crate::{_pac, serial::{Pair, SerialUsci, Tx}};
+use crate::{_pac, serial::{SerialUsci, Tx, TxOnly}};
 use core::marker::PhantomData;
 
 pub use crate::device_specific::ir::{IrMapping, IrUsci};
@@ -84,9 +84,21 @@ pub use crate::_pac::sys::syscfg1::Irmsel as IrMode;
 /// p. 81)
 pub struct SoftwareData;
 /// Typestate for a modulator whose data comes from eUSCI_A0 (IRDSSEL = 0, SLAU445I Table 1-30, p. 81;
-/// "From UCA0TXD/UCA0SIMO" in SLAU445I Figure 1-8, p. 50). It holds the UART's [`Tx`], so the UART can't be
-/// given back while the modulator uses it.
-pub struct UartData<H = Pair>(Tx<IrUsci, IrMapping, H>);
+/// "From UCA0TXD/UCA0SIMO" in SLAU445I Figure 1-8, p. 50). It holds the UART's transmitter `T`, see
+/// [`IrUart`], so the UART can't be given back while the modulator uses it.
+pub struct UartData<T>(T);
+
+mod sealed {
+    pub trait IrUart {}
+}
+
+/// eUSCI_A0's transmitter in the pin mapping [`IrMapping`], which the modulator can take its data from: a
+/// [`Tx`] from `split()` or a [`TxOnly`] from `tx_only()`
+pub trait IrUart: sealed::IrUart {}
+impl sealed::IrUart for Tx<IrUsci, IrMapping> {}
+impl IrUart for Tx<IrUsci, IrMapping> {}
+impl sealed::IrUart for TxOnly<IrUsci, IrMapping> {}
+impl IrUart for TxOnly<IrUsci, IrMapping> {}
 
 // The IR bits of SYSCFG1 (SLAU445I Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81) are set and cleared
 // on their own: other bits of SYSCFG1 belong to other functions on some devices (SYNCSEL on CapTIvate
@@ -151,7 +163,7 @@ impl IrModulator<SoftwareData> {
     }
 }
 
-impl<H> IrModulator<UartData<H>> {
+impl<T: IrUart> IrModulator<UartData<T>> {
     /// Enable the modulator with the characters eUSCI_A0's UART sends as data (IRDSSEL = 0, SLAU445I
     /// Table 1-25, p. 76 and SLAU445I Table 1-30, p. 81; SLAU445I 1.12.2.2, p. 50: "In hardware data
     /// generation, the data comes from eUSCI_A"). The output inverts with `inverted` (IRPSEL). The UART has
@@ -164,7 +176,7 @@ impl<H> IrModulator<UartData<H>> {
         _second: &IrInput<S>,
         mode: IrMode,
         inverted: bool,
-        tx: Tx<IrUsci, IrMapping, H>,
+        tx: T,
     ) -> Self
     where
         F: IrFirstTimer,
@@ -177,20 +189,20 @@ impl<H> IrModulator<UartData<H>> {
     /// Disable the modulator, so the pin carries the eUSCI_A0 signal again, and give back the UART's `Tx`
     /// (IREN, see [`IrModulator::<SoftwareData>::disable`])
     #[inline]
-    pub fn disable(self) -> Tx<IrUsci, IrMapping, H> {
+    pub fn disable(self) -> T {
         disable();
         self.0 .0
     }
 }
 
 // The modulator stands in for the UART's `Tx`, which it holds
-impl<H> core::ops::Deref for IrModulator<UartData<H>> {
-    type Target = Tx<IrUsci, IrMapping, H>;
+impl<T: IrUart> core::ops::Deref for IrModulator<UartData<T>> {
+    type Target = T;
     #[inline(always)]
-    fn deref(&self) -> &Self::Target { &self.0 .0 }
+    fn deref(&self) -> &T { &self.0 .0 }
 }
 
-impl<H> core::ops::DerefMut for IrModulator<UartData<H>> {
+impl<T: IrUart> core::ops::DerefMut for IrModulator<UartData<T>> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 .0 }
 }
