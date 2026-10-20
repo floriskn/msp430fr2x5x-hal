@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - The MSP430FR25x2 capture and alternate examples capture on CCR2 and output SMCLK on P1.2.
 - Breaking: the SAC amplifier modes only accept the inputs the user's guide supports (SLAU445I Table 20-1). `PositiveInput`, for the open-loop and non-inverting modes, no longer has a `Dac` variant; the inverting amplifier takes a `BiasInput` (OA+ or the DAC) and the buffer a `BufferInput` (OA+, the DAC or the paired amplifier).
 - Add `DacConfig::configure_with_interrupts()` and `Dac::data_loaded()`, for the SAC DAC interrupt that requests new data after a timer-triggered load.
+- A pin in an alternate function can switch directly to another one with `to_alternate1()`, `to_alternate2()` and `to_alternate3()`, without passing through GPIO. Before, these methods existed but couldn't be called on a single pin.
+- Add the `gpio_alternate_switch` example for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
