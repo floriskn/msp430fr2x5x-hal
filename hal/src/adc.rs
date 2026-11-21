@@ -14,13 +14,35 @@
 //! Currently the only supported ADC voltage reference is `AVCC`, the operating voltage of the MSP430.
 //!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
-//! to ensure it's been correctly configured. The ADC may read from any of the following pins:
+//! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
 //!
-//! P1.0 - P1.7 (channels 0 to 7), P5.0 - P5.3 (channels 8 to 11).
+//! | Device       | Resolution | Channels 0 to 7 | Channels 8 to 11            | Pin mode          |
+//! |--------------|------------|-----------------|-----------------------------|-------------------|
+//! | MSP430FR2x5x | 12-bit     | P1.0 to P1.7    | P5.0 to P5.3                | `to_alternate3()` |
+//! | MSP430FR247x | 12-bit     | P1.0 to P1.7    | P4.3, P4.4, P5.3, P5.4      | `to_alternate3()` |
+//! | MSP430FR2433 | 10-bit     | P1.0 to P1.7    |                             | `to_adc_mode()`   |
+//! | MSP430FR25x2 | 10-bit     | P1.0 to P1.3, P2.2 to P2.5 |                  | `to_adc_mode()`   |
+//!
+//! The table follows each data sheet's ADC section with its ADC Channel Connections table, and its pin
+//! function tables (`to_alternate3()` is PxSELx = 11 there, the tertiary module function: SLAU445I
+//! Table 8-3, p. 314):
+//! - MSP430FR2x5x: SLASEC4D 6.10.12, p. 77; SLASEC4D Table 6-21, p. 77; SLASEC4D Table 6-63, p. 96;
+//!   SLASEC4D Table 6-67, p. 104
+//! - MSP430FR247x: SLASEO7C 9.10.12, p. 62; SLASEO7C Table 9-19, p. 62; SLASEO7C Table 9-23, p. 65;
+//!   SLASEO7C Table 9-26, p. 68; SLASEO7C Table 9-27, p. 69
+//! - MSP430FR2433: SLASE59F 6.10.12, p. 53; SLASE59F Table 6-15, p. 53; SLASE59F Table 6-17, p. 55
+//! - MSP430FR25x2: SLASEE4C 6.10.12, p. 55; SLASEE4C Table 6-13, p. 55 to p. 56; SLASEE4C Table 6-15,
+//!   p. 58; SLASEE4C Table 6-16, p. 60
+//!
+//! On the MSP430FR2433 and MSP430FR25x2 the analog inputs are enabled through SYSCFG2.ADCPCTLx instead of the
+//! pin's function select bits, which is what `to_adc_mode()` does (SLASE59F Table 6-17 note 2, p. 55;
+//! SLASEE4C Table 6-15, p. 58; SLAU445I Table 1-31, p. 82).
 //!
 //! ADC channels 12 to 15 are not associated with external pins, so instead channels 12 and 13 can be read by passing a
-//! reference to [`InternalVRef`] or [`InternalTempSensor`] respectively. Channels 14 and 15 require no prior
+//! reference to [`InternalTempSensor`] or [`InternalVRef`] respectively. Channels 14 and 15 require no prior
 //! configuration, so the two functions below provide a reference that can be used to read from these channels.
+//! The ADC channel tables listed above give channel 12 as the temperature sensor, 13 as the internal
+//! reference, 14 as DVSS and 15 as DVCC.
 
 use crate::_pac;
 use crate::{
@@ -64,14 +86,17 @@ pub trait Channel<ADC> {
     /// Get the specific ID that identifies this channel, for example `0_u8` for the first ADC channel
     fn channel() -> u8;
 }
-/// Marker trait that marks a pin as being capable of being an ADC input via ADCPCTLx.
+/// Marker trait that marks a pin as being capable of being an ADC input via ADCPCTLx (SYSCFG2: SLAU445I
+/// Table 1-31, p. 82).
 // This trait is used to mark a pin as being capable of moving between PxSEL modes and ADCPCTLx mode.
 pub trait AdcPctlCapable {
-    /// The corresponding ADCPCTL bit that represents this pin.
+    /// The corresponding ADCPCTL bit that represents this pin: ADCPCTLx enables input Ax (SLAU445I
+    /// Table 1-31, p. 82).
     const ADCPCTLX: u8;
 }
 
-/// How many ADCCLK cycles the ADC's sample-and-hold stage will last for.
+/// How many ADCCLK cycles the ADC's sample-and-hold stage will last for (ADCSHTx: SLAU445I Table 21-3,
+/// p. 561).
 ///
 /// Default: 8 cycles
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -97,11 +122,12 @@ pub enum SampleTime {
     _256 = 0b1000,
     /// Sample for 384 ADCCLK cycles
     _384 = 0b1001,
-    /// Sample for 512 ADCCLK cycles
+    /// Sample for 512 ADCCLK cycles (ADCSHTx = 1010b: SLAU445I Table 21-3, p. 561)
     _512 = 0b1010,
-    /// Sample for 768 ADCCLK cycles
+    /// Sample for 768 ADCCLK cycles (ADCSHTx = 1011b: SLAU445I Table 21-3, p. 561)
     _768 = 0b1011,
-    /// Sample for 1024 ADCCLK cycles
+    /// Sample for 1024 ADCCLK cycles (ADCSHTx = 1100b; 1101b to 1111b give 1024 cycles too: SLAU445I
+    /// Table 21-3, p. 561)
     _1024 = 0b1100,
 }
 
@@ -110,7 +136,8 @@ impl SampleTime {
     fn adcsht(self) -> u8 { self as u8 }
 }
 
-/// How much the ADC input clock will be divided by after being divided by the predivider
+/// How much the ADC input clock will be divided by after being divided by the predivider (ADCDIVx: SLAU445I
+/// Table 21-4, p. 563)
 ///
 /// Default: Divide by 1
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -139,6 +166,7 @@ impl ClockDivider {
     fn adcdiv(self) -> u8 { self as u8 }
 }
 
+// ADCSSELx (SLAU445I Table 21-4, p. 564)
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 enum ClockSource {
     /// Use MODCLK as the ADC input clock
@@ -155,7 +183,8 @@ impl ClockSource {
     fn adcssel(self) -> u8 { self as u8 }
 }
 
-/// How much the ADC input clock will be divided by prior to being divided by the ADC clock divider
+/// How much the ADC input clock will be divided by prior to being divided by the ADC clock divider (ADCPDIVx:
+/// SLAU445I Table 21-5, p. 565)
 ///
 /// Default: Divide by 1
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -174,7 +203,8 @@ impl Predivider {
     fn adcpdiv(self) -> u8 { self as u8 }
 }
 
-/// The output resolution of the ADC conversion. Also determines how many ADCCLK cycles the conversion step takes.
+/// The output resolution of the ADC conversion. Also determines how many ADCCLK cycles the conversion step takes
+/// (ADCRES: SLAU445I Table 21-5, p. 565).
 ///
 /// Default: 10-bit resolution
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -195,6 +225,7 @@ impl Resolution {
 }
 
 /// Selects the drive capability of the ADC reference buffer, which can increase the maximum sampling speed at the cost of increased power draw.
+/// (ADCSR: SLAU445I Table 21-5, p. 565, and SLAU445I 21.2.3.1, p. 542)
 ///
 /// Default: 200ksps
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -224,7 +255,10 @@ macro_rules! impl_adc_channel_pin {
 
             fn channel() -> Self::ID { $channel }
         }
-        // If the device doesn't have SAC, then ADC functionality is done via ADCPCTLx instead of Alternate1/2/3.
+        // On the MSP430FR2433 and MSP430FR25x2 ADC functionality is done via ADCPCTLx instead of
+        // Alternate1/2/3 (SLASE59F Table 6-17, p. 55; SLASEE4C Table 6-15, p. 58, and SLASEE4C Table 6-16,
+        // p. 60). The MSP430FR247x has no SAC either, but uses PxSELx = 11 (SLASEO7C Table 9-23, p. 65).
+        // ADCPCTLx enables input Ax (SLAU445I Table 1-31, p. 82).
         // Implement this for all modes
         #[cfg(feature = "adcpctl")]
         impl<MODE> AdcPctlCapable for Pin<$port, $pin, MODE> {
@@ -245,6 +279,9 @@ macro_rules! impl_adc_channel_extra {
     };
 }
 
+// Channel 12 is the temperature sensor, 13 the internal reference (SLASEC4D Table 6-21, p. 77; SLASEO7C
+// Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C Table 6-13, p. 55; ADCINCHx = 1100b for the
+// sensor: SLAU445I 21.2.7.8, p. 556)
 impl_adc_channel_extra!(InternalTempSensor<'_>, 12);
 impl_adc_channel_extra!(InternalVRef, 13);
 
@@ -252,14 +289,16 @@ impl_adc_channel_extra!(InternalVRef, 13);
 #[doc(hidden)]
 pub struct AdcVssChannel;
 impl_adc_channel_extra!(AdcVssChannel, 14);
-/// ADC channel 14, tied to VSS. Pass this function's output to `read_count()`.
+/// ADC channel 14, tied to VSS (DVSS: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F
+/// Table 6-15, p. 53; SLASEE4C Table 6-13, p. 56). Pass this function's output to `read_count()`.
 #[inline(always)]
 pub fn adc_ch14_vss() -> AdcVssChannel { AdcVssChannel }
 
 #[doc(hidden)]
 pub struct AdcVccChannel;
 impl_adc_channel_extra!(AdcVccChannel, 15);
-/// ADC channel 15, tied to VCC. Pass this function's output to `read_count()`.
+/// ADC channel 15, tied to VCC (DVCC: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F
+/// Table 6-15, p. 53; SLASEE4C Table 6-13, p. 56). Pass this function's output to `read_count()`.
 #[inline(always)]
 pub fn adc_ch15_vcc() -> AdcVccChannel { AdcVccChannel }
 
@@ -272,23 +311,28 @@ pub struct ClockSet(ClockSource);
 ///
 /// Currently the only supported voltage reference is AVCC.
 ///
-/// The default configuration is based on the default register values:
+/// The default configuration is based on the default register values (SLAU445I Table 21-3, p. 561 to
+/// p. 562; SLAU445I Table 21-4, p. 563 to p. 564; SLAU445I Table 21-5, p. 565):
 /// - Predivider = 1 and clock divider = 1
 /// - 10-bit resolution
-/// - 8 cycle sample time
+/// - 8 cycle sample time, the reset value of the 12-bit ADC (the 10-bit ADC of the MSP430FR2433 and
+///   MSP430FR25x2 resets to 4 cycles: SLAU445I Table 21-3 note 1, p. 561)
 /// - Max 200 ksps sample rate
 #[derive(Clone, PartialEq, Eq)]
 pub struct AdcConfig<STATE> {
     state: STATE,
-    /// How much the input clock is divided by, after the predivider.
+    /// How much the input clock is divided by, after the predivider (ADCDIVx: SLAU445I Table 21-4, p. 563).
     pub clock_divider: ClockDivider,
-    /// How much the input clock is initially divided by, before the clock divider.
+    /// How much the input clock is initially divided by, before the clock divider (ADCPDIVx: SLAU445I
+    /// Table 21-5, p. 565).
     pub predivider: Predivider,
     /// How many bits the conversion result is. Also defines the number of ADCCLK cycles required to do the conversion step.
+    /// (ADCRES: SLAU445I Table 21-5, p. 565)
     pub resolution: Resolution,
-    /// Sets the maximum sampling rate of the ADC. Lower values use less power.
+    /// Sets the maximum sampling rate of the ADC. Lower values use less power. (ADCSR: SLAU445I Table 21-5,
+    /// p. 565)
     pub sampling_rate: SamplingRate,
-    /// Determines the number of ADCCLK cycles the sampling time takes.
+    /// Determines the number of ADCCLK cycles the sampling time takes (ADCSHTx: SLAU445I Table 21-3, p. 561).
     pub sample_time: SampleTime,
 }
 
@@ -324,7 +368,7 @@ impl AdcConfig<NoClockSet> {
             sample_time,
         }
     }
-    /// Configure the ADC to use SMCLK
+    /// Configure the ADC to use SMCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     pub fn use_smclk(self, _smclk: &Smclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::SmClk),
@@ -335,7 +379,13 @@ impl AdcConfig<NoClockSet> {
             sample_time: self.sample_time,
         }
     }
-    /// Configure the ADC to use ACLK
+    /// Configure the ADC to use ACLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
+    ///
+    /// On the MSP430FR2433 and MSP430FR25x2, temperature sensor readings taken in LPM3 with ACLK as the
+    /// ADC clock may be wrong: "When ACLK is used as ADC clock source and device is in LPM3 mode while
+    /// sampling the on-chip temperature sensor, the ADC may generate erroneous conversion results". The
+    /// erratum's workarounds are SMCLK or MODCLK as the ADC clock, with "A 100us sampling time" if the
+    /// conversion is triggered from LPM3, or LPM0 or active mode (SLAZ664S ADC50; SLAZ705H ADC50).
     pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::AClk),
@@ -346,7 +396,7 @@ impl AdcConfig<NoClockSet> {
             sample_time: self.sample_time,
         }
     }
-    /// Configure the ADC to use MODCLK
+    /// Configure the ADC to use MODCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
     pub fn use_modclk(self) -> AdcConfig<ClockSet> {
         AdcConfig {
             state: ClockSet(ClockSource::ModClk),
@@ -362,6 +412,7 @@ impl AdcConfig<ClockSet> {
     /// Applies this ADC configuration to hardware registers, and returns an ADC.
     pub fn configure(self, mut adc_reg: _pac::Adc) -> Adc {
         // Disable the ADC before we set the other bits. Some can only be set while the ADC is disabled.
+        // (SLAU445I 21.2.1, p. 541: "the ADC control bits can be modified only when ADCENC = 0")
         disable_adc_reg(&mut adc_reg);
 
         let adcsht = self.sample_time.adcsht();
@@ -369,6 +420,7 @@ impl AdcConfig<ClockSet> {
 
         let adcssel = self.state.0.adcssel();
         let adcdiv = self.clock_divider.adcdiv();
+        // ADCSHP = 1: the sampling timer sets the sample time, pulse sample mode (SLAU445I 21.2.5.2, p. 544)
         adc_reg.adcctl1().write(|w| { unsafe { w
             .adcssel().bits(adcssel)
             .adcshp().set_bit()
@@ -396,25 +448,26 @@ pub struct Adc {
 }
 
 impl Adc {
-    /// Whether the ADC is currently sampling or converting.
+    /// Whether the ADC is currently sampling or converting (ADCBUSY: SLAU445I Table 21-4, p. 564).
     pub fn adc_is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
     }
 
-    /// Gets the latest ADC conversion result.
+    /// Gets the latest ADC conversion result (ADCMEM0: SLAU445I 21.3.4, p. 566).
     pub fn adc_get_result(&self) -> u16 { self.adc_reg.adcmem0().read().bits() }
 
-    /// Enables this ADC, ready to start conversions.
+    /// Enables this ADC, ready to start conversions (ADCON: SLAU445I Table 21-3, p. 561).
     pub fn enable(&mut self) {
         unsafe {
             self.adc_reg.adcctl0().set_bits(|w| w.adcon().set_bit());
         }
     }
 
-    /// Disables this ADC to save power.
+    /// Disables this ADC to save power (SLAU445I 21.2.1, p. 541: "The ADC can be turned off when not in
+    /// use to save power").
     pub fn disable(&mut self) { disable_adc_reg(&mut self.adc_reg); }
 
-    /// Selects which pin to sample.
+    /// Selects which pin to sample (ADCINCHx: SLAU445I Table 21-8, p. 567).
     fn set_pin<PIN>(&mut self, _pin: &PIN)
     where PIN: Channel<Self, ID = u8> {
         self.adc_reg.adcmctl0().modify(|_, w|
@@ -422,7 +475,8 @@ impl Adc {
         );
     }
 
-    /// Starts an ADC conversion.
+    /// Starts an ADC conversion (SLAU445I Table 21-3, p. 562: "ADCSC and ADCENC may be set together with one
+    /// instruction").
     fn start_conversion(&mut self) {
         unsafe {
             self.adc_reg.adcctl0().set_bits(|w| w
@@ -459,7 +513,8 @@ impl Adc {
 
     /// Convert an ADC count to a voltage value in millivolts.
     ///
-    /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts.
+    /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. As in the conversion formula of
+    /// SLAU445I 21.2.1, p. 541, the reference voltage corresponds to a count of 256, 1024 or 4096.
     pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
         let resolution = match self.adc_reg.adcctl2().read().adcres().variant() {
@@ -485,6 +540,7 @@ impl Adc {
     }
 }
 
+// Clears ADCON and ADCENC (SLAU445I Table 21-3, p. 561 to p. 562)
 fn disable_adc_reg(adc: &mut _pac::Adc) {
     unsafe {
         adc.adcctl0().clear_bits(|w| w

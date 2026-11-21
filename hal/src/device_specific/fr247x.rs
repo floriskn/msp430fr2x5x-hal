@@ -115,18 +115,21 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*};
 
-    impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);
-    impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);
-    impl_adc_channel_pin!(P1, Pin2, Alternate3 => 2);
-    impl_adc_channel_pin!(P1, Pin3, Alternate3 => 3);
-    impl_adc_channel_pin!(P1, Pin4, Alternate3 => 4);
-    impl_adc_channel_pin!(P1, Pin5, Alternate3 => 5);
-    impl_adc_channel_pin!(P1, Pin6, Alternate3 => 6);
-    impl_adc_channel_pin!(P1, Pin7, Alternate3 => 7);
-    impl_adc_channel_pin!(P4, Pin3, Alternate3 => 8);
-    impl_adc_channel_pin!(P4, Pin4, Alternate3 => 9);
-    impl_adc_channel_pin!(P5, Pin3, Alternate3 => 10);
-    impl_adc_channel_pin!(P5, Pin4, Alternate3 => 11);
+    // The 12 external inputs with their ADCINCHx value (SLASEO7C 9.10.12, p. 62;
+    // SLASEO7C Table 9-19, p. 62), each in its PxSELx = 11 function (SLASEO7C Table 9-23, p. 65;
+    // SLASEO7C Table 9-26, p. 68; SLASEO7C Table 9-27, p. 69)
+    impl_adc_channel_pin!(P1, Pin0, Alternate3 => 0);  // 11: A0
+    impl_adc_channel_pin!(P1, Pin1, Alternate3 => 1);  // 11: A1
+    impl_adc_channel_pin!(P1, Pin2, Alternate3 => 2);  // 11: A2
+    impl_adc_channel_pin!(P1, Pin3, Alternate3 => 3);  // 11: A3
+    impl_adc_channel_pin!(P1, Pin4, Alternate3 => 4);  // 11: A4
+    impl_adc_channel_pin!(P1, Pin5, Alternate3 => 5);  // 11: A5
+    impl_adc_channel_pin!(P1, Pin6, Alternate3 => 6);  // 11: A6
+    impl_adc_channel_pin!(P1, Pin7, Alternate3 => 7);  // 11: A7
+    impl_adc_channel_pin!(P4, Pin3, Alternate3 => 8);  // 11: A8
+    impl_adc_channel_pin!(P4, Pin4, Alternate3 => 9);  // 11: A9
+    impl_adc_channel_pin!(P5, Pin3, Alternate3 => 10); // 11: A10
+    impl_adc_channel_pin!(P5, Pin4, Alternate3 => 11); // 11: A11
 }
 
 /* Backup Memory */
