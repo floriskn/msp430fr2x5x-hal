@@ -581,6 +581,49 @@ pub enum NegativeReference<'a> {
     External(&'a dyn VeRefMinusPin),
 }
 
+bitflags::bitflags! {
+    /// ADC interrupt sources, for [`Adc::enable_interrupts()`] and [`Adc::interrupt_flags()`] (ADCIE, ADCIFG:
+    /// SLAU445I Table 21-13, p. 570, and SLAU445I Table 21-14, p. 571)
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub struct AdcInterruptFlags: u16 {
+        /// ADCIFG0. A conversion result is ready. Reading it clears this flag.
+        const ResultReady  = 1 << 0;
+        /// ADCINIFG. The result is inside the window: from the low threshold up to the high threshold
+        /// (SLAU445I 21.2.7.7, p. 555: "between the low threshold ... and the high threshold").
+        const InsideWindow = 1 << 1;
+        /// ADCLOIFG. The result is below the low threshold of the window.
+        const BelowWindow  = 1 << 2;
+        /// ADCHIIFG. The result is above the high threshold of the window.
+        const AboveWindow  = 1 << 3;
+        /// ADCOVIFG. A result overwrote one that hadn't been read.
+        const Overflow     = 1 << 4;
+        /// ADCTOVIFG. A trigger arrived before the conversion had finished.
+        const TimeOverflow = 1 << 5;
+    }
+}
+
+/// The highest-priority pending ADC interrupt, as read from ADCIV by [`Adc::interrupt_source()`] (SLAU445I
+/// Table 21-15, p. 572)
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AdcVector {
+    /// No interrupt pending
+    None,
+    /// A result overwrote one that hadn't been read
+    Overflow,
+    /// A trigger arrived before the conversion had finished
+    TimeOverflow,
+    /// The result is above the high threshold of the window
+    AboveWindow,
+    /// The result is below the low threshold of the window
+    BelowWindow,
+    /// The result is inside the window
+    InsideWindow,
+    /// A conversion result is ready. This flag stays set until the result is read (SLAU445I 21.2.7.10.1,
+    /// p. 558: "Only the ADCIFG0 is not reset by this ADCIV read access").
+    ResultReady,
+}
+
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
 ///
 /// `REF` tracks the reference selected with [`Adc::with_reference()`], and `FMT` the [`ResultFormat`].
@@ -718,6 +761,56 @@ impl<REF, FMT: ResultFormat> Adc<REF, FMT> {
         self.pending = None;
         self.adc_reg.adcmctl0().modify(|_, w| w.adcsref().set(vr_minus << 2 | vr_plus));
         Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData, format: PhantomData }
+    }
+
+    /// Set the window comparator thresholds (ADCLO, ADCHI), as counts in the [`ResultFormat`]. Each result
+    /// then sets one of the flags [`AdcInterruptFlags::BelowWindow`], [`InsideWindow`](AdcInterruptFlags::InsideWindow)
+    /// and [`AboveWindow`](AdcInterruptFlags::AboveWindow). (SLAU445I 21.2.7.7, p. 555: "The values in the
+    /// ADCHI and ADCLO registers must be in the correct data format"; registers: SLAU445I 21.3.7, p. 568, to
+    /// SLAU445I 21.3.10, p. 569)
+    ///
+    /// The ADC only sets these flags, so clear them with [`clear_interrupt_flags()`](Adc::clear_interrupt_flags())
+    /// once handled (SLAU445I 21.2.7.7, p. 555: "The interrupt flags must be reset by software").
+    pub fn set_window(&mut self, low: FMT::Count, high: FMT::Count) {
+        self.adc_reg.adclo().write(|w| unsafe { w.bits(FMT::to_bits(low)) });
+        self.adc_reg.adchi().write(|w| unsafe { w.bits(FMT::to_bits(high)) });
+    }
+
+    /// Request the `ADC` interrupt for `flags`, besides those already enabled (ADCIE: SLAU445I Table 21-13,
+    /// p. 570).
+    pub fn enable_interrupts(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() | flags.bits()) });
+    }
+
+    /// Stop requesting the `ADC` interrupt for `flags` (ADCIE: SLAU445I Table 21-13, p. 570).
+    pub fn disable_interrupts(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcie().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
+    }
+
+    /// The interrupt flags that are set, whether or not their interrupt is enabled (ADCIFG: SLAU445I
+    /// Table 21-14, p. 571).
+    pub fn interrupt_flags(&self) -> AdcInterruptFlags {
+        AdcInterruptFlags::from_bits_truncate(self.adc_reg.adcifg().read().bits())
+    }
+
+    /// Clear `flags` (ADCIFG: SLAU445I Table 21-14, p. 571).
+    pub fn clear_interrupt_flags(&mut self, flags: AdcInterruptFlags) {
+        self.adc_reg.adcifg().modify(|r, w| unsafe { w.bits(r.bits() & !flags.bits()) });
+    }
+
+    /// The highest-priority pending interrupt among the enabled ones (ADCIV). Reading it clears its flag,
+    /// except [`AdcVector::ResultReady`], which reading the result clears. (SLAU445I 21.2.7.10.1, p. 558)
+    pub fn interrupt_source(&mut self) -> AdcVector {
+        // ADCIV values (SLAU445I Table 21-15, p. 572)
+        match self.adc_reg.adciv().read().bits() {
+            0x02 => AdcVector::Overflow,
+            0x04 => AdcVector::TimeOverflow,
+            0x06 => AdcVector::AboveWindow,
+            0x08 => AdcVector::BelowWindow,
+            0x0A => AdcVector::InsideWindow,
+            0x0C => AdcVector::ResultReady,
+            _ => AdcVector::None,
+        }
     }
 }
 
