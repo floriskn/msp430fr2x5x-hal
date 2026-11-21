@@ -122,6 +122,43 @@ impl From<TransmissionMode> for bool {
 
 pub use crate::hw_traits::eusci::Ucglit as GlitchFilter;
 
+/// How long SCL may be held low before the clock low timeout flag is set (UCCLTO), counted in MODCLK cycles
+/// (SLAU445I 24.3.7.3, p. 643; SLAU445I Table 24-5, p. 651).
+///
+/// The cycle counts and times are the user's guide's. The time depends on MODCLK: the data sheets give
+/// typical times (tTIMEOUT) of 27, 30 and 33 ms (SLASE59F Table 5-19, p. 34; SLASEO7C 8.12.7.6, p. 39;
+/// SLASEE4C Table 5-19, p. 37), and of 36, 40 and 44 ms on the MSP430FR2x5x (SLASEC4D Table 5-19, p. 50).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum ClockLowTimeout {
+    /// No timeout, as after reset
+    #[default]
+    Disabled,
+    /// 135000 MODCLK cycles, about 28 ms
+    _28ms,
+    /// 150000 MODCLK cycles, about 31 ms
+    _31ms,
+    /// 165000 MODCLK cycles, about 34 ms
+    _34ms,
+}
+
+/// One of the three additional own addresses of a slave, UCBxI2COA1 to UCBxI2COA3.
+///
+/// Each own address has its own receive and transmit flags (user's guide, multiple slave addresses:
+/// SLAU445I 24.3.9.1, p. 644).
+/// [`poll()`](I2cRoleSlave::poll), [`read_rx_buf()`](I2cSlave::read_rx_buf) and
+/// [`write_tx_buf()`](I2cSlave::write_tx_buf) only check those of the first one, so serve the others with
+/// [`interrupt_source()`](I2cRoleCommon::interrupt_source) (`Slave1RxBufFull` to `Slave3TxBufEmpty`) and the
+/// `_unchecked` buffer methods.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OwnAddressSlot {
+    /// UCBxI2COA1
+    _1,
+    /// UCBxI2COA2
+    _2,
+    /// UCBxI2COA3
+    _3,
+}
+
 ///Struct used to configure a I2C bus
 pub struct I2cConfig<USCI, CLKSRC, ROLE, M: PinMap = DefaultMapping>
 where USCI: I2cUsci<M>
@@ -136,6 +173,8 @@ where USCI: I2cUsci<M>
     i2coa1: UcbI2coa,
     i2coa2: UcbI2coa,
     i2coa3: UcbI2coa,
+    addmask: u16,
+    tbcnt: u8,
     clk_src: PhantomData<CLKSRC>,
     role: PhantomData<ROLE>,
     _pin_map: PhantomData<M>,
@@ -223,6 +262,8 @@ macro_rules! return_self_config {
             i2coa1:  $self.i2coa1,
             i2coa2:  $self.i2coa2,
             i2coa3:  $self.i2coa3,
+            addmask: $self.addmask,
+            tbcnt:   $self.tbcnt,
             clk_src: PhantomData,
             role: PhantomData,
             _pin_map: PhantomData,
@@ -260,6 +301,9 @@ where
             i2coa1,
             i2coa2,
             i2coa3,
+            // All address bits compared, as after reset (03FFh, mask off: SLAU445I Table 24-16, p. 659)
+            addmask: 0x03FF,
+            tbcnt: 0,
             clk_src: PhantomData,
             role: PhantomData,
             _pin_map: PhantomData,
@@ -283,7 +327,7 @@ where
         self.ctlw0.uca10 = TenOrSevenBit::addr_type().into();
 
         self.i2coa0 = UcbI2coa {
-            ucgcen: false, // Not yet implemented
+            ucgcen: false, // Set by general_call()
             ucoaen: true,
             i2coa0: own_address.into(),
         };
@@ -319,7 +363,7 @@ where
         // Note: If you add support for the other 3 own addresses (or the mask) you will also have to upgrade the logic for checking
         // that the peripheral isn't addressing itself, i.e. I2cMasterSlaveErr::TriedAddressingSelf
         self.i2coa0 = UcbI2coa {
-            ucgcen: false, // Not yet implemented
+            ucgcen: false, // Set by general_call()
             ucoaen: true,
             i2coa0: own_address.into(),
         };
@@ -431,7 +475,8 @@ where
         self.usci.ifg_rst();
 
         self.usci.brw_wr(self.divisor);
-        self.usci.tbcnt_wr(0);
+        self.usci.tbcnt_wr(self.tbcnt as u16);
+        self.usci.addmask_wr(self.addmask);
 
         // 3. Configure ports: the caller passes the pins already in their eUSCI function, and the
         // remapping bits are set here
@@ -441,6 +486,155 @@ where
         self.usci.ctw0_clear_rst();
     }
 }
+
+impl<USCI, CLKSRC, ROLE, M> I2cConfig<USCI, CLKSRC, ROLE, M>
+where
+    USCI: I2cUsci<M>,
+    M: PinMap,
+{
+    /// Set the clock low timeout: if SCL is held low that long, the `ClockLowTimeout` interrupt flag is set
+    /// (UCCLTO, SLAU445I 24.3.7.3, p. 643; SLAU445I Table 24-5, p. 651).
+    pub fn clock_low_timeout(mut self, timeout: ClockLowTimeout) -> Self {
+        use crate::hw_traits::eusci::Ucclto;
+        self.ctlw1.ucclto = match timeout {
+            ClockLowTimeout::Disabled => Ucclto::Ucclto00b,
+            ClockLowTimeout::_28ms => Ucclto::Ucclto01b,
+            ClockLowTimeout::_31ms => Ucclto::Ucclto10b,
+            ClockLowTimeout::_34ms => Ucclto::Ucclto11b,
+        };
+        self
+    }
+
+}
+
+impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, SingleMaster, M>
+where
+    USCI: I2cUsci<M>,
+    M: PinMap,
+{
+    /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTPx = 01b,
+    /// UCBxTBCNT: SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651).
+    /// With `auto_stop`, the master then also sends the STOP condition itself (UCASTPx = 10b, SLAU445I
+    /// 24.3.8.2, p. 644); only use that with the non-blocking interface and fixed-length transactions,
+    /// without `schedule_stop()`.
+    /// The count can only change while the eUSCI is configured (UCBxTBCNT: "Modify only when UCSWRST = 1",
+    /// SLAU445I Table 24-8, p. 654).
+    pub fn byte_counter(mut self, count: u8, auto_stop: bool) -> Self {
+        use crate::hw_traits::eusci::Ucastp;
+        self.ctlw1.ucastp = if auto_stop { Ucastp::Ucastp10b } else { Ucastp::Ucastp01b };
+        self.tbcnt = count;
+        self
+    }
+}
+
+// The roles that can be in slave mode: addressed as a slave, or, with UCMM = 1, after losing arbitration
+// ("the UCMST bit is automatically cleared and the module acts as slave", SLAU445I Table 24-4, p. 649). The
+// automatic STOP isn't available to them (UCASTPx: "In slave mode, only settings 00b and 01b are available",
+// SLAU445I Table 24-5, p. 651).
+macro_rules! byte_counter_no_stop {
+    ($($role: ty),+) => {$(
+        impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, $role, M>
+        where
+            USCI: I2cUsci<M>,
+            M: PinMap,
+        {
+            /// Count data bytes: after `count` bytes the `ByteCounterZero` interrupt flag is set (UCASTPx = 01b,
+            /// UCBxTBCNT: SLAU445I 24.3.8, p. 643; SLAU445I Table 24-5, p. 651). The automatic STOP isn't
+            /// offered, because this role can be in slave mode, and "In slave mode, only settings 00b and 01b
+            /// are available" (SLAU445I Table 24-5, p. 651).
+            /// The count can only change while the eUSCI is configured (UCBxTBCNT: "Modify only when UCSWRST = 1",
+            /// SLAU445I Table 24-8, p. 654).
+            pub fn byte_counter(mut self, count: u8) -> Self {
+                self.ctlw1.ucastp = crate::hw_traits::eusci::Ucastp::Ucastp01b;
+                self.tbcnt = count;
+                self
+            }
+        }
+    )+};
+}
+byte_counter_no_stop!(Slave, MultiMaster, MasterSlave);
+
+macro_rules! slave_config {
+    ($role: ty) => {
+        impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, $role, M>
+        where
+            USCI: I2cUsci<M>,
+            M: PinMap,
+        {
+            /// Also respond to the general call address, 0 (UCGCEN, SLAU445I Table 24-11, p. 656).
+            pub fn general_call(mut self) -> Self {
+                self.i2coa0.ucgcen = true;
+                self
+            }
+        }
+    };
+}
+slave_config!(Slave);
+slave_config!(MasterSlave);
+
+impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, Slave, M>
+where
+    USCI: I2cUsci<M>,
+    M: PinMap,
+{
+    /// Respond to another own address too (UCBxI2COA1 to UCBxI2COA3, SLAU445I 24.3.9.1, p. 644), in the same
+    /// addressing mode (7 or 10 bits) as the first one (one UCA10 bit for all: SLAU445I Table 24-4, p. 649).
+    /// Its data has flags of its own, see [`OwnAddressSlot`].
+    pub fn own_address<TenOrSevenBit: AddressType>(mut self, slot: OwnAddressSlot, address: TenOrSevenBit) -> Self {
+        let oa = UcbI2coa { ucgcen: false, ucoaen: true, i2coa0: address.into() };
+        match slot {
+            OwnAddressSlot::_1 => self.i2coa1 = oa,
+            OwnAddressSlot::_2 => self.i2coa2 = oa,
+            OwnAddressSlot::_3 => self.i2coa3 = oa,
+        }
+        self
+    }
+
+    /// Ignore the address bits that are 0 in `mask` when comparing a received address with the first own
+    /// address (UCBxADDMASK, SLAU445I 24.3.9.2, p. 644; SLAU445I Table 24-16, p. 659).
+    /// [`I2cRoleSlave::received_address`] tells which address was received.
+    pub fn address_mask(mut self, mask: u16) -> Self {
+        self.addmask = mask & 0x03FF; // ADDMASKx is bits 9-0 (SLAU445I Table 24-16, p. 659)
+        self
+    }
+
+    /// Acknowledge addresses matching through the address mask from software, with
+    /// [`I2cRoleSlave::acknowledge_address`], instead of automatically (UCSWACK, SLAU445I 24.3.9.2, p. 644;
+    /// SLAU445I Table 24-5, p. 651).
+    pub fn software_address_ack(mut self) -> Self {
+        self.ctlw1.ucswack = true;
+        self
+    }
+
+    /// Request the Tx buffer (UCTXIFG0) at each START condition, before the address is known, to have the
+    /// first byte ready earlier (UCETXINT, SLAU445I 24.3.11.2, p. 645). Only with the first own address: don't
+    /// use [`own_address`](Self::own_address) (UCETXINT, SLAU445I Table 24-5, p. 651).
+    pub fn early_tx_interrupt(mut self) -> Self {
+        self.ctlw1.ucetxint = true;
+        self
+    }
+}
+
+macro_rules! master_config {
+    ($role: ty) => {
+        impl<USCI, CLKSRC, M> I2cConfig<USCI, CLKSRC, $role, M>
+        where
+            USCI: I2cUsci<M>,
+            M: PinMap,
+        {
+            /// Acknowledge the last received byte as a master receiver too, instead of sending the NACK before the
+            /// STOP that the I2C specification requires (UCSTPNACK, SLAU445I Table 24-5, p. 651). Only for
+            /// slaves that release SDA after a fixed number of bytes.
+            pub fn ack_last_byte(mut self) -> Self {
+                self.ctlw1.ucstpnack = true;
+                self
+            }
+        }
+    };
+}
+master_config!(SingleMaster);
+master_config!(MultiMaster);
+master_config!(MasterSlave);
 
 macro_rules! configure {
     ($role: ty, $out_type: path) => {
@@ -865,6 +1059,26 @@ where M: PinMap
     #[inline(always)]
     fn send_nack(&mut self) { self.usci().transmit_nack(); }
 
+    /// The address this device was last addressed with (UCBxADDRX, SLAU445I Table 24-15, p. 658), useful with
+    /// several own addresses or an address mask.
+    #[inline(always)]
+    fn received_address(&mut self) -> u16 { self.usci().addrx_rd() }
+
+    /// With [`software_address_ack`](I2cConfig::software_address_ack), acknowledge the received address or not,
+    /// after the start flag is set (UCTXACK, SLAU445I Table 24-4, p. 649). SCL is held low until this is
+    /// called. When not acknowledging a read, this also clears the Tx buffer flag, as the user's guide requires
+    /// (SLAU445I 24.3.9.2, p. 644: "TXIFG0 must be reset").
+    #[inline]
+    fn acknowledge_address(&mut self, ack: bool) {
+        if ack {
+            self.usci().transmit_ack();
+        } else {
+            // Any write to the low byte of UCBxCTLW0 with UCTXACK = 0 continues without an ACK ("The clock is
+            // stretched until the UCBxCTL1 register has been written", SLAU445I Table 24-4, p. 649)
+            self.usci().clear_txack();
+            self.usci().clear_txifg0();
+        }
+    }
 }
 
 /// Common methods available to all multi-master-aware I2C roles.

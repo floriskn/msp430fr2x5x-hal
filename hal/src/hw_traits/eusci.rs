@@ -270,6 +270,10 @@ pub trait EUsciI2C: Steal {
     type IfgOut: I2CUcbIfgOut;
 
     fn transmit_ack(&self);
+    /// Write UCBxCTLW0 with UCTXACK clear, which continues without acknowledging the address
+    /// (SLAU445I Table 24-4, p. 649: "0b = Do not acknowledge the slave address")
+    fn clear_txack(&self);
+    fn clear_txifg0(&self);
     fn transmit_nack(&self);
     fn transmit_start(&self);
     fn transmit_stop(&self);
@@ -772,6 +776,17 @@ macro_rules! eusci_i2c_impl {
             #[inline(always)]
             fn transmit_ack(&self) {
                 unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxack().set_bit()) }
+            }
+
+            #[inline(always)]
+            fn clear_txack(&self) {
+                unsafe { self.$ucbxctlw0().clear_bits(|w| w.uctxack().clear_bit()) }
+            }
+
+            // UCTXIFG0 in UCBxIFG (SLAU445I Table 24-19, p. 663)
+            #[inline(always)]
+            fn clear_txifg0(&self) {
+                unsafe { self.$ucbxifg().clear_bits(|w| w.uctxifg0().clear_bit()) }
             }
 
             #[inline(always)]
