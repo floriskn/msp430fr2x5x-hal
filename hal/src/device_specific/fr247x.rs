@@ -1015,7 +1015,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta2rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.ta2rmp().clear_bit()) };
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta2 {
@@ -1023,7 +1023,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta2rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.ta2rmp().set_bit()) };
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta2 {}
@@ -1034,7 +1034,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta3rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.ta3rmp().clear_bit()) };
         }
     }
     impl TimerPeriph<RemappedMapping> for Ta3 {
@@ -1042,7 +1042,7 @@ mod timer {
 
         fn configure_pin_mapping() {
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.ta3rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.ta3rmp().set_bit()) };
         }
     }
     impl CapCmpTimer3<DefaultMapping> for Ta3 {}
