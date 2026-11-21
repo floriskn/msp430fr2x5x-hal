@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - Fixed `Spi::change_mode()` disabling the SPI interrupts, and SPI `interrupt_source()` clearing the flag it reports, so that the next checked read or write blocked.
+- Add `SerialConfig::deglitch()` and `SerialConfig::break_interrupts()`, which reports received breaks as the new `RecvError::Break` (breaking for exhaustive matches).
 - Fixed UART `flush()` returning while the last character was still being sent. It now waits until the eUSCI is idle.
 - Fixed UART reads missing an overrun between the status and buffer reads. They now check UCOE again after reading UCAxRXBUF and report `RecvError::Overrun`.
 - The UART and I2C configuration now panics on clock settings the eUSCI can't run: a UART baud rate above a third of the clock in low-frequency mode (the divider was clamped to 1 before), and an I2C master clock divider below 4, or 8 with several masters.

@@ -142,6 +142,23 @@ impl Loopback {
     }
 }
 
+/// How short a pulse on RXD the receiver ignores (UCGLIT). The "about" times are the user's guide's
+/// approximate ones (SLAU445I Table 22-9, p. 594); the data sheets give typical deglitch times tt of 12, 40,
+/// 68 and 110 ns instead (SLASEC4D Table 5-15, p. 45; SLASE59F Table 5-15, p. 30; SLASEO7C 8.12.7.2, p. 35;
+/// SLASEE4C Table 5-15, p. 32). The variant names follow the user's guide's register table.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum UartDeglitch {
+    /// About 2 ns (tt typically 12 ns)
+    _2ns = 0,
+    /// About 50 ns (tt typically 40 ns)
+    _50ns = 1,
+    /// About 100 ns (tt typically 68 ns)
+    _100ns = 2,
+    /// About 200 ns, as after reset (tt typically 110 ns)
+    #[default]
+    _200ns = 3,
+}
+
 /// Marks a USCI type that can be used as a serial UART
 pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// Pin used for serial UCLK
@@ -196,6 +213,8 @@ where USCI: SerialUsci<M>
     stopbits: StopBits,
     parity: Parity,
     loopback: Loopback,
+    deglitch: UartDeglitch,
+    break_interrupts: bool,
     state: S,
     _map: PhantomData<M>,
 }
@@ -209,10 +228,35 @@ macro_rules! serial_config {
             stopbits: $conf.stopbits,
             parity: $conf.parity,
             loopback: $conf.loopback,
+            deglitch: $conf.deglitch,
+            break_interrupts: $conf.break_interrupts,
             state: $state,
             _map: core::marker::PhantomData,
         }
     };
+}
+
+impl<USCI, S, M> SerialConfig<USCI, S, M>
+where
+    USCI: SerialUsci<M>,
+    M: PinMap,
+{
+    /// Set how short a pulse on RXD the receiver ignores. After reset that's about 200 ns (UCGLITx = 3,
+    /// SLAU445I Table 22-9, p. 594; see [`UartDeglitch`] for the data sheets' times).
+    #[inline]
+    pub fn deglitch(mut self, deglitch: UartDeglitch) -> Self {
+        self.deglitch = deglitch;
+        self
+    }
+
+    /// Report received breaks: a break then reads as [`RecvError::Break`] (UCBRKIE, SLAU445I Table 22-8,
+    /// p. 593). In automatic baud-rate mode, the break and synch field are reported that way (SLAU445I
+    /// 22.3.4, p. 580: "If the UCBRKIE bit is set, reception of the break/synch sets the UCRXIFG").
+    #[inline]
+    pub fn break_interrupts(mut self) -> Self {
+        self.break_interrupts = true;
+        self
+    }
 }
 
 impl<USCI, M> SerialConfig<USCI, NoClockSet, M>
@@ -239,6 +283,8 @@ where
             parity,
             loopback,
             usci,
+            deglitch: UartDeglitch::_200ns,
+            break_interrupts: false,
             state: NoClockSet { baudrate: NonZeroU32::new(baudrate).unwrap_or(ONE) },
             _map: PhantomData,
         }
@@ -432,6 +478,8 @@ where
         usci.brw_settings(baud_config.br);
         usci.mctlw_settings(baud_config.ucos16, baud_config.brs, baud_config.brf);
         usci.loopback(self.loopback.to_bool());
+        // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
+        usci.ctl1_settings(self.deglitch as u8);
         // UCAxCTLW0, with UCSWRST still set (SLAU445I Table 22-8, p. 593 to p. 594)
         usci.ctl0_settings(UcaCtlw0 {
             ucpen: self.parity.ucpen(),
@@ -442,6 +490,7 @@ where
             ucssel: clksel,
             // We want erroneous bytes to trigger RXIFG so all errors can be caught
             ucrxeie: true,
+            ucbrkie: self.break_interrupts,
         });
         // Configure the ports (SLAU445I 22.3.1, p. 577, step 3): the caller passes the pins already in
         // their eUSCI function, and the remapping bits are set here
@@ -586,7 +635,10 @@ where
             // after reading UCAxRXBUF to detect this condition" (SLAU445I 22.3.6, p. 582)
             let overrun_between_reads = usci.statw_rd().ucoe();
 
-            if statw.ucfe() {
+            // UCBRK, UCFE, UCPE and UCOE in UCAxSTATW (SLAU445I Table 22-12, p. 596)
+            if statw.ucbrk() {
+                Err(nb::Error::Other(RecvError::Break))
+            } else if statw.ucfe() {
                 Err(nb::Error::Other(RecvError::Framing))
             } else if statw.ucpe() {
                 Err(nb::Error::Other(RecvError::Parity))
@@ -605,6 +657,9 @@ where
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub enum RecvError {
+    /// A break was received: all bits low, see [`SerialConfig::break_interrupts`] (UCBRK, SLAU445I
+    /// Table 22-1, p. 582)
+    Break,
     /// Framing error
     Framing,
     /// Parity error
@@ -635,6 +690,7 @@ mod emb_io {
     impl Error for RecvError {
         fn kind(&self) -> embedded_io::ErrorKind {
             match self {
+                RecvError::Break        => embedded_io::ErrorKind::Other,
                 RecvError::Framing      => embedded_io::ErrorKind::Other,
                 RecvError::Parity       => embedded_io::ErrorKind::Other,
                 RecvError::Overrun(_)   => embedded_io::ErrorKind::Other,
@@ -742,6 +798,7 @@ mod ehal_nb1 {
     impl Error for RecvError {
         fn kind(&self) -> ErrorKind {
             match self {
+                RecvError::Break        => ErrorKind::FrameFormat,
                 RecvError::Framing      => ErrorKind::FrameFormat,
                 RecvError::Parity       => ErrorKind::Parity,
                 RecvError::Overrun(_)   => ErrorKind::Overrun,

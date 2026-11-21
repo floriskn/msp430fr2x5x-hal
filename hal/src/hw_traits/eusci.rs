@@ -114,6 +114,7 @@ pub struct UcaCtlw0 {
     pub ucspb: bool,
     pub ucssel: Ucssel,
     pub ucrxeie: bool,
+    pub ucbrkie: bool,
 }
 
 reg_struct! {
@@ -212,6 +213,9 @@ pub trait EUsciUart: Steal {
     fn txie_clear(&self);
     fn rxie_set(&self);
     fn rxie_clear(&self);
+
+    /// UCGLITx in UCAxCTLW1, the deglitch time (SLAU445I Table 22-9, p. 594)
+    fn ctl1_settings(&self, ucglit: u8);
 }
 
 pub trait EUsciI2C: Steal {
@@ -510,6 +514,7 @@ macro_rules! eusci_uart_impl {
                     .ucspb().bit(reg.ucspb)
                     .ucssel().bits(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
+                    .ucbrkie().bit(reg.ucbrkie)
                     .ucswrst().set_bit()
                 });
             }
@@ -576,6 +581,10 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn iv_rd(&self) -> u16 { self.$ucaxiv().read().bits() }
+
+            // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
+            #[inline(always)]
+            fn ctl1_settings(&self, ucglit: u8) { self.$ucaxctlw1().write(|w| unsafe { w.ucglit().bits(ucglit) }); }
         }
 
         impl UartUcxStatw for $Statw {
