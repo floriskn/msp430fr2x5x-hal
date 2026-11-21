@@ -384,14 +384,15 @@ impl AdcConfig<ClockSet> {
             .adcsr().bit(adcsr) 
         }});
 
-        Adc { adc_reg, is_waiting: false }
+        Adc { adc_reg, pending: None }
     }
 }
 
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
 pub struct Adc {
     adc_reg: _pac::Adc,
-    is_waiting: bool,
+    /// Channel of the conversion that was started but not read yet
+    pending: Option<u8>,
 }
 
 impl Adc {
@@ -433,13 +434,17 @@ impl Adc {
     /// Begins a single ADC conversion if one isn't already underway, enabling the ADC in the process.
     ///
     /// If the result is ready it is returned as an ADC count, otherwise returns `WouldBlock`
+    ///
+    /// A conversion that is still pending for another channel is finished first and its result
+    /// discarded.
     pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
     where PIN: Channel<Self, ID = u8> {
-        if self.is_waiting {
+        if let Some(pending) = self.pending {
             if self.adc_is_busy() {
                 return Err(nb::Error::WouldBlock);
-            } else {
-                self.is_waiting = false;
+            }
+            self.pending = None;
+            if pending == PIN::channel() {
                 return Ok(self.adc_get_result());
             }
         }
@@ -448,7 +453,7 @@ impl Adc {
         self.enable();
 
         self.start_conversion();
-        self.is_waiting = true;
+        self.pending = Some(PIN::channel());
         Err(nb::Error::WouldBlock)
     }
 
