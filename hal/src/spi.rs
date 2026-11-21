@@ -361,14 +361,27 @@ macro_rules! spi_common {
             }
         }
 
-        /// Get the source of the interrupt currently being serviced.
+        /// Get the source of the interrupt currently being serviced: the highest-priority pending interrupt
+        /// among the enabled ones, in the order of UCxIV, UCRXIFG before UCTXIFG (SLAU445I Table 23-10,
+        /// p. 618; SLAU445I Table 23-19, p. 625; "Disabled interrupts do not affect the UCxIV value",
+        /// SLAU445I 23.3.8.3, p. 611).
+        ///
+        /// It's worked out from UCxIFG and UCxIE instead of read from UCxIV, because "any access, read or
+        /// write, of the UCxIV register automatically resets the highest-pending interrupt flag" (SLAU445I
+        /// 23.3.8.3, p. 611), after which the checked read and write methods would block. The flags stay set
+        /// until UCxRXBUF is read or UCxTXBUF written (SLAU445I 23.3.8.2 and 23.3.8.1, p. 611), so the
+        /// Tx interrupt keeps firing until a byte is written or Tx interrupts are disabled.
         #[inline]
         pub fn interrupt_source(&mut self) -> SpiVector {
-            match self.usci.iv_rd() {
-                0 => SpiVector::None,
-                2 => SpiVector::RxBufferFull,
-                4 => SpiVector::TxBufferEmpty,
-                _ => unsafe { core::hint::unreachable_unchecked() },
+            // UCRXIE is bit 0 and UCTXIE bit 1 of UCxIE (SLAU445I Table 23-8, p. 617; SLAU445I Table 23-17,
+            // p. 624)
+            let ie = self.usci.ie_rd();
+            if ie & 1 << 0 != 0 && self.usci.receive_flag() {
+                SpiVector::RxBufferFull
+            } else if ie & 1 << 1 != 0 && self.usci.transmit_flag() {
+                SpiVector::TxBufferEmpty
+            } else {
+                SpiVector::None
             }
         }
     };
@@ -401,12 +414,15 @@ where
 
     #[inline(always)]
     /// Change the SPI mode. This requires resetting the peripheral, which also sets TXIFG and clears RXIFG, UCOE, and UCFE.
+    /// (UCCKPH and UCCKPL are "Modify only when UCSWRST = 1", SLAU445I Table 23-3, p. 613 and
+    /// SLAU445I Table 23-12, p. 620; what UCSWRST resets: SLAU445I 23.3.1, p. 606.)
     pub fn change_mode(&mut self, mode: Mode) {
         let intrs = self.usci.ie_rd();
         self.usci.ctw0_set_rst();
         self.usci.set_spi_mode(mode);
-        self.usci.ie_wr(intrs);
         self.usci.ctw0_clear_rst();
+        // The interrupt enables are held cleared while the eUSCI is in reset (SLAU445I 23.3.1, p. 606)
+        self.usci.ie_wr(intrs);
     }
 }
 

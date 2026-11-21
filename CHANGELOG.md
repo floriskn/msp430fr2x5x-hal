@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - A pin in an alternate function can switch directly to another one with `to_alternate1()`, `to_alternate2()` and `to_alternate3()`, without passing through GPIO. Before, these methods existed but couldn't be called on a single pin.
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
+- Fixed `Spi::change_mode()` disabling the SPI interrupts, and SPI `interrupt_source()` clearing the flag it reports, so that the next checked read or write blocked.
 - Fixed on the MSP430FR25x2: the remapped eUSCI_B0 pins use alternate function 2. Added the eUSCI_A1 SPI STE pin (P3.1) on the MSP430FR2433, and the inverted eUSCI_A1 UART pins (P4.2 and P4.3 in alternate function 2) on the MSP430FR2x5x.
 - Fixed the eUSCI pin remapping: the UART, SPI and I2C drivers now set it while the eUSCI is in reset, as the user's guide initializes an eUSCI, and on the MSP430FR247x it no longer clears the other bits of SYSCFG2 and SYSCFG3, such as the remap bit of another eUSCI.
 
