@@ -819,4 +819,13 @@ mod timer {
         type Tbxclk = Pin<P6, Pin6, Alternate1<Input<Floating>>>;
     }
     impl CapCmpTimer7 for Tb3 {}
+
+    // INCLK is the CCR2 output of TB0 on TB1 ("Timer0_B3 CCR2B output", SLASEC4D Table 6-17, p. 74).
+    // It isn't connected on TB0 (SLASEC4D Table 6-16, p. 73: "N/A"), and on TB2 and TB3 it is the
+    // TBxCLK pin inverted (TB2CLK and TB3CLK written with an overline, SLASEC4D Table 6-18, p. 74 and
+    // SLASEC4D Table 6-19, p. 75): the pin of `TimerConfig::tbclk`, counted on its falling edges, as
+    // TBxR counts "with each rising edge of the clock signal" (SLAU445I 14.2.1, p. 393).
+    impl CascadedTimer for Tb1 {
+        type Source = Tb0;
+    }
 }

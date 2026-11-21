@@ -8,7 +8,7 @@
 //! `Capture` and `Pwm`.
 
 use crate::clock::{Aclk, Smclk};
-use crate::hw_traits::timer_base::{CCRn, RunningMode, Tbssel, TimerBase};
+use crate::hw_traits::timer_base::{CCRn, Outmod, RunningMode, Tbssel, TimerBase};
 use crate::pin_mapping::*;
 use core::convert::Infallible;
 use core::marker::PhantomData;
@@ -62,6 +62,44 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
 /// | MSP430FR2512, MSP430FR2522 | TA0      | SLASEE4C Figure 6-2, p. 54; SLASEE4C Table 6-8, p. 49  |
 /// | Other devices              | None     | SLASEC4D Table 6-9, p. 68; SLASE59F Table 6-7, p. 46   |
 pub trait VloclkTimer: TimerBase {}
+
+/// Trait indicating that the timer can be clocked by another timer, see [`TimerConfig::cascade`]
+///
+/// A timer's fourth clock input, INCLK, is wired differently on each device and each timer. These
+/// timers have the CCR2 output of their `Source` timer on it (data sheets, timer signal
+/// connections):
+///
+/// | Device                     | Timer ← `Source`     | Reference                                              |
+/// |----------------------------|----------------------|--------------------------------------------------------|
+/// | MSP430FR2475, MSP430FR2476 | TA1 ← TA0, TA3 ← TA2 | SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58 |
+/// | MSP430FR2512, MSP430FR2522 | TA1 ← TA0            | SLASEE4C Figure 6-2, p. 54                             |
+/// | MSP430FR2x5x               | TB1 ← TB0            | SLASEC4D Table 6-17, p. 74                             |
+/// | MSP430FR2433               | None                 | SLASE59F Tables 6-11 to 6-14, p. 50 to p. 52           |
+pub trait CascadedTimer: TimerBase {
+    /// Timer whose CCR2 output clocks this timer
+    type Source: CapCmp<CCR2>;
+}
+
+/// The CCR2 output of timer `T`, set up to clock a [`CascadedTimer`] with
+/// [`TimerConfig::cascade`]
+///
+/// While `T` runs, the output is high for the first count of each period, so the cascaded timer,
+/// which counts on the rising edges of its clock (SLAU445I 13.2.1, p. 370), counts as `T` wraps around
+/// to 0. This needs a period of at least 2 counts.
+pub struct CascadeOutput<T>(PhantomData<T>);
+
+impl<T: CapCmp<CCR2>> CascadeOutput<T> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        let timer = unsafe { T::steal() };
+        // Reset/set mode sets the output as the timer wraps around to 0, and resets it when the
+        // timer reaches CCR2 (SLAU445I Table 13-2, p. 376; 13.2.5.1.1, p. 377). With CCR2 at 0 both
+        // happen at once and the output stays low.
+        CCRn::<CCR2>::set_ccrn(&timer, 1);
+        CCRn::<CCR2>::config_outmod(&timer, Outmod::ResetSet);
+        CascadeOutput(PhantomData)
+    }
+}
 
 /// Configuration object for the TimerB peripheral
 ///
@@ -132,6 +170,23 @@ where
     /// p. 384).
     #[inline]
     pub fn vloclk() -> Self { Self::with_clock(Tbssel::Inclk) }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + CascadedTimer,
+    M: PinMap,
+{
+    /// Configure the timer to be clocked by its source timer (cascading): it counts once per
+    /// period of the source timer, while that timer runs. Only some timers have this option, see
+    /// [`CascadedTimer`]. It selects INCLK (TASSEL/TBSSEL = 11b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409).
+    ///
+    /// `source` is the source timer's CCR2 output, from [`SubTimer::into_cascade_output`] or
+    /// [`PwmUninit::into_cascade_output`](crate::pwm::PwmUninit::into_cascade_output). For
+    /// example, a source timer with a period of 1 s lets this timer count seconds.
+    #[inline]
+    pub fn cascade(_source: &CascadeOutput<T::Source>) -> Self { Self::with_clock(Tbssel::Inclk) }
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
@@ -395,6 +450,14 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
     }
+}
+
+impl<T: CapCmp<CCR2>> SubTimer<T, CCR2> {
+    #[inline]
+    /// Use CCR2 to clock a cascaded timer instead, see [`TimerConfig::cascade`]. The CCR2 output drives the
+    /// cascaded timer's INCLK (SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14,
+    /// p. 58; SLASEE4C Figure 6-2, p. 54).
+    pub fn into_cascade_output(self) -> CascadeOutput<T> { CascadeOutput::new() }
 }
 
 #[cfg(feature = "embedded-hal-02")]

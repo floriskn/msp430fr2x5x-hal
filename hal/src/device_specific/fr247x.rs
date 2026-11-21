@@ -1057,4 +1057,10 @@ mod timer {
     // isn't connected on TB0. (SLASEO7C Tables 9-12 to 9-15, p. 55 to p. 59)
     impl VloclkTimer for Ta0 {}
     impl VloclkTimer for Ta2 {}
+    impl CascadedTimer for Ta1 {
+        type Source = Ta0;
+    }
+    impl CascadedTimer for Ta3 {
+        type Source = Ta2;
+    }
 }
