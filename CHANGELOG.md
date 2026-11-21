@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed UART `flush()` returning while the last character was still being sent. It now waits until the eUSCI is idle.
 - Fixed UART reads missing an overrun between the status and buffer reads. They now check UCOE again after reading UCAxRXBUF and report `RecvError::Overrun`.
 - The UART and I2C configuration now panics on clock settings the eUSCI can't run: a UART baud rate above a third of the clock in low-frequency mode (the divider was clamped to 1 before), and an I2C master clock divider below 4, or 8 with several masters.
+- Fixed `I2cRoleSlave::poll()` panicking when the start flag had been cleared, by reading the interrupt vector say, while a received byte was still unread and the master had started reading. It now reports `OverrunWrite`.
 - Fixed on the MSP430FR25x2: the remapped eUSCI_B0 pins use alternate function 2. Added the eUSCI_A1 SPI STE pin (P3.1) on the MSP430FR2433, and the inverted eUSCI_A1 UART pins (P4.2 and P4.3 in alternate function 2) on the MSP430FR2x5x.
 - Fixed the eUSCI pin remapping: the UART, SPI and I2C drivers now set it while the eUSCI is in reset, as the user's guide initializes an eUSCI, and on the MSP430FR247x it no longer clears the other bits of SYSCFG2 and SYSCFG3, such as the remap bit of another eUSCI.
 - Fixed the MSP430FR2355 `spi_slave_interrupt` example for erratum USCI47: it sets up the SPI master before the slave, so that SCLK is idle when the slave leaves reset. `SpiConfig::to_slave()` documents the erratum.

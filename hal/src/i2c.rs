@@ -840,10 +840,11 @@ where M: PinMap
             (false, false, true ) => Ok(I2cEvent::Read),
             // Rx buffer filled, then repeated start then Tx buffer empty. (Can't be reverse because empty Tx buf stalls the bus).
             (true,  true,  true ) => Ok(I2cEvent::OverrunWrite), // Don't clear the start flag yet.
+            // The same, with the start flag already cleared, by reading the interrupt vector say
+            // (reading UCBxIV resets the highest pending flag: SLAU445I 24.3.11.5, p. 646)
+            (false, true,  true ) => Ok(I2cEvent::OverrunWrite),
             // Start flag but no Rx / Tx events yet. Don't clear the flag yet.
             (_,     false, false) => Err(WouldBlock),
-            // I don't believe this is ever reachable.
-            (false, true,  true ) => unreachable!(), // TODO: Test and replace with unchecked
         }
     }
 
