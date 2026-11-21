@@ -558,12 +558,16 @@ where
         if usci.rxifg_rd() {
             let statw = usci.statw_rd();
             let data = usci.rx_rd();
+            // Reading UCAxRXBUF "clears all error flags except UCOE, if UCAxRXBUF was overwritten between
+            // the read access to UCAxSTATW and to UCAxRXBUF. Therefore, the UCOE flag should be checked
+            // after reading UCAxRXBUF to detect this condition" (SLAU445I 22.3.6, p. 582)
+            let overrun_between_reads = usci.statw_rd().ucoe();
 
             if statw.ucfe() {
                 Err(nb::Error::Other(RecvError::Framing))
             } else if statw.ucpe() {
                 Err(nb::Error::Other(RecvError::Parity))
-            } else if statw.ucoe() {
+            } else if statw.ucoe() || overrun_between_reads {
                 Err(nb::Error::Other(RecvError::Overrun(data)))
             } else {
                 Ok(data)
