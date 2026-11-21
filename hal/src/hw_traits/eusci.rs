@@ -120,6 +120,19 @@ pub struct UcaCtlw0 {
     pub ucbrkie: bool,
 }
 
+/// The UCAxIFG flags whose interrupt is enabled in UCAxIE (SLAU445I Table 22-18, p. 601; SLAU445I
+/// Table 22-17, p. 600)
+pub struct UartPending {
+    /// UCRXIFG and UCRXIE
+    pub rx: bool,
+    /// UCTXIFG and UCTXIE
+    pub tx: bool,
+    /// UCSTTIFG and UCSTTIE
+    pub start_bit: bool,
+    /// UCTXCPTIFG and UCTXCPTIE
+    pub tx_complete: bool,
+}
+
 reg_struct! {
 pub struct UcbCtlw0, UcbCtlw0_rd, UcbCtlw0_wr {
     flags{
@@ -238,6 +251,19 @@ pub trait EUsciUart: Steal {
     // UCBTOE and UCSTOE in UCAxABCTL (SLAU445I Table 22-15, p. 598)
     fn btoe_rd(&self) -> bool;
     fn stoe_rd(&self) -> bool;
+
+    // UCSTTIE and UCTXCPTIE in UCAxIE (SLAU445I Table 22-17, p. 600)
+    fn sttie_set(&self);
+    fn sttie_clear(&self);
+    fn txcptie_set(&self);
+    fn txcptie_clear(&self);
+
+    // UCSTTIFG and UCTXCPTIFG in UCAxIFG (SLAU445I Table 22-18, p. 601)
+    fn sttifg_clear(&self);
+    fn txcptifg_clear(&self);
+
+    // UCAxIFG and UCAxIE, each read once (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
+    fn pending_rd(&self) -> UartPending;
 }
 
 pub trait EUsciI2C: Steal {
@@ -518,6 +544,13 @@ macro_rules! eusci_spi_impl {
 }
 pub(crate) use eusci_spi_impl;
 
+// UCAxIE and UCAxIFG bit masks (SLAU445I Table 22-17, p. 600; SLAU445I Table 22-18, p. 601) and the
+// UCADDR/UCIDLE flag of UCAxSTATW (SLAU445I Table 22-12, p. 596). These are raw masks as not every PAC has
+// fields for UCSTTIE and UCTXCPTIE, nor names UCADDR_UCIDLE the same.
+pub(crate) const UCRXIE: u8 = 1 << 0;
+pub(crate) const UCTXIE: u8 = 1 << 1;
+pub(crate) const UCSTTIE: u8 = 1 << 2;
+pub(crate) const UCTXCPTIE: u8 = 1 << 3;
 pub(crate) const UCADDR_UCIDLE: u8 = 1 << 1;
 
 /// Whether any bit of `mask` is set in a register value of either 8 or 16 bits
@@ -652,6 +685,43 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn stoe_rd(&self) -> bool { self.$ucaxabctl().read().ucstoe().bit() }
+
+            // UCSTTIE and UCTXCPTIE in UCAxIE (SLAU445I Table 22-17, p. 600)
+            #[inline(always)]
+            fn sttie_set(&self) { unsafe { self.$ucaxie().set_bits(|w| w.bits($crate::hw_traits::eusci::UCSTTIE.into())) }; }
+
+            #[inline(always)]
+            fn sttie_clear(&self) { unsafe { self.$ucaxie().clear_bits(|w| w.bits($crate::hw_traits::eusci::UCSTTIE.into())) }; }
+
+            #[inline(always)]
+            fn txcptie_set(&self) { unsafe { self.$ucaxie().set_bits(|w| w.bits($crate::hw_traits::eusci::UCTXCPTIE.into())) }; }
+
+            #[inline(always)]
+            fn txcptie_clear(&self) {
+                unsafe { self.$ucaxie().clear_bits(|w| w.bits($crate::hw_traits::eusci::UCTXCPTIE.into())) };
+            }
+
+            // UCSTTIFG and UCTXCPTIFG in UCAxIFG (SLAU445I Table 22-18, p. 601)
+            #[inline(always)]
+            fn sttifg_clear(&self) { unsafe { self.$ucaxifg().clear_bits(|w| w.bits($crate::hw_traits::eusci::UCSTTIE.into())) }; }
+
+            #[inline(always)]
+            fn txcptifg_clear(&self) {
+                unsafe { self.$ucaxifg().clear_bits(|w| w.bits($crate::hw_traits::eusci::UCTXCPTIE.into())) };
+            }
+
+            // UCAxIFG and UCAxIE (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
+            #[inline(always)]
+            fn pending_rd(&self) -> UartPending {
+                let ifg = self.$ucaxifg().read();
+                let ie = self.$ucaxie().read();
+                UartPending {
+                    rx: $crate::hw_traits::eusci::flag_set(ifg.bits() & ie.bits(), $crate::hw_traits::eusci::UCRXIE),
+                    tx: $crate::hw_traits::eusci::flag_set(ifg.bits() & ie.bits(), $crate::hw_traits::eusci::UCTXIE),
+                    start_bit: $crate::hw_traits::eusci::flag_set(ifg.bits() & ie.bits(), $crate::hw_traits::eusci::UCSTTIE),
+                    tx_complete: $crate::hw_traits::eusci::flag_set(ifg.bits() & ie.bits(), $crate::hw_traits::eusci::UCTXCPTIE),
+                }
+            }
         }
 
         impl UartUcxStatw for $Statw {

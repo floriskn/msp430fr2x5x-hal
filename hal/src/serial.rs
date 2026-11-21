@@ -215,6 +215,52 @@ impl UartMode {
     }
 }
 
+/// The highest-priority pending UART interrupt among the enabled ones, in the order of UCAxIV, as
+/// returned by `interrupt_source()` (SLAU445I 22.3.15.4, p. 591 and SLAU445I Table 22-19, p. 602)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UartVector {
+    /// No interrupt pending
+    None,
+    /// A character was received (UCRXIFG). Reading it clears the flag (SLAU445I 22.3.15.2, p. 591:
+    /// "UCRXIFG is automatically reset when UCAxRXBUF is read").
+    RxBufFull,
+    /// The Tx buffer is empty (UCTXIFG). Writing to it clears the flag (SLAU445I 22.3.15.1, p. 590:
+    /// "UCTXIFG is automatically reset if a character is written to UCAxTXBUF"), so the interrupt keeps
+    /// firing until a character is written or Tx interrupts are disabled.
+    TxBufEmpty,
+    /// A start bit was received (UCSTTIFG, SLAU445I Table 22-6, p. 591)
+    StartBit,
+    /// A character was sent completely (UCTXCPTIFG, SLAU445I Table 22-6, p. 591)
+    TxComplete,
+}
+
+// The highest-priority pending interrupt among the enabled ones, in the priority order of UCAxIV:
+// UCRXIFG, UCTXIFG, UCSTTIFG, UCTXCPTIFG (SLAU445I Table 22-19, p. 602; "Disabled interrupts do not affect
+// the UCAxIV value", SLAU445I 22.3.15.4, p. 591). It's worked out from UCAxIFG and UCAxIE (SLAU445I
+// Table 22-18, p. 601; SLAU445I Table 22-17, p. 600) instead of read from UCAxIV, because a UCAxIV read
+// "automatically resets the highest-pending Interrupt condition and flag" (SLAU445I 22.3.15.4, p. 591):
+// UCRXIFG and UCTXIFG would then be clear, and read() and write(), which test them, would block. Reading
+// UCAxRXBUF and writing UCAxTXBUF clear those two flags (SLAU445I 22.3.15.2, p. 591; SLAU445I 22.3.15.1,
+// p. 590). UCSTTIFG and UCTXCPTIFG have no such access, so they're cleared here, as a UCAxIV read would.
+#[inline(always)]
+fn uart_vector<USCI: EUsciUart>(usci: &USCI) -> UartVector {
+    let pending = usci.pending_rd();
+    if pending.rx {
+        UartVector::RxBufFull
+    } else if pending.tx {
+        UartVector::TxBufEmpty
+    } else if pending.start_bit {
+        usci.sttifg_clear();
+        UartVector::StartBit
+    } else if pending.tx_complete {
+        usci.txcptifg_clear();
+        UartVector::TxComplete
+    } else {
+        UartVector::None
+    }
+}
+
 /// Marks a USCI type that can be used as a serial UART
 pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// Pin used for serial UCLK
@@ -627,6 +673,33 @@ where
         usci.txie_clear();
     }
 
+    /// Enable interrupts when a character has been sent completely (UCTXCPTIE, SLAU445I Table 22-17, p. 600).
+    /// Due to erratum USCI42 the flag is set after each character, even while the next one waits in the Tx
+    /// buffer (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and SLAZ705H USCI42).
+    #[inline(always)]
+    pub fn enable_tx_complete_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.txcptie_set();
+    }
+
+    /// Disable interrupts when a character has been sent completely (UCTXCPTIE, SLAU445I Table 22-17, p. 600)
+    #[inline(always)]
+    pub fn disable_tx_complete_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.txcptie_clear();
+    }
+
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
+    /// (SLAU445I Table 22-19, p. 602), shared with [`Rx::interrupt_source`]. It clears `StartBit` and
+    /// `TxComplete`, as a UCAxIV read does (SLAU445I 22.3.15.4, p. 591), but leaves the flags of `RxBufFull`
+    /// and `TxBufEmpty` for reading or writing the character to clear, so the read and write methods work
+    /// after it.
+    #[inline(always)]
+    pub fn interrupt_source(&mut self) -> UartVector {
+        let usci = unsafe { USCI::steal() };
+        uart_vector(&usci)
+    }
+
     /// Send an address character, in the multiprocessor modes (UCTXADDR): preceded by an idle line in the
     /// idle-line format, with the address bit set in the address-bit format (SLAU445I 22.3.3.1.1, p. 578 and
     /// SLAU445I 22.3.3.2, p. 579). Returns `WouldBlock` until the Tx buffer is free.
@@ -721,6 +794,35 @@ where
     pub fn disable_rx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
         usci.rxie_clear();
+    }
+
+    /// Enable interrupts when a start bit is received (UCSTTIE, SLAU445I Table 22-17, p. 600 and SLAU445I
+    /// Table 22-6, p. 591), for example to wake up from a low-power mode in time for the character (SLAU445I
+    /// 22.2, p. 575: "Receiver start-edge detection for automatic wake up from LPMx modes")
+    #[inline(always)]
+    pub fn enable_start_bit_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        // Clear an old UCSTTIFG, then set UCSTTIE (SLAU445I Table 22-18, p. 601; SLAU445I Table 22-17, p. 600)
+        usci.sttifg_clear();
+        usci.sttie_set();
+    }
+
+    /// Disable interrupts when a start bit is received (UCSTTIE, SLAU445I Table 22-17, p. 600)
+    #[inline(always)]
+    pub fn disable_start_bit_interrupts(&mut self) {
+        let usci = unsafe { USCI::steal() };
+        usci.sttie_clear();
+    }
+
+    /// The highest-priority pending interrupt of this eUSCI among the enabled ones, in the order of UCAxIV
+    /// (SLAU445I Table 22-19, p. 602), shared with [`Tx::interrupt_source`]. It clears `StartBit` and
+    /// `TxComplete`, as a UCAxIV read does (SLAU445I 22.3.15.4, p. 591), but leaves the flags of `RxBufFull`
+    /// and `TxBufEmpty` for reading or writing the character to clear, so the read and write methods work
+    /// after it.
+    #[inline(always)]
+    pub fn interrupt_source(&mut self) -> UartVector {
+        let usci = unsafe { USCI::steal() };
+        uart_vector(&usci)
     }
 
     /// In the multiprocessor and automatic baud-rate modes, receive only address characters, or the character
