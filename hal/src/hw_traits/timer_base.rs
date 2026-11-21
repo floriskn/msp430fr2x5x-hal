@@ -76,6 +76,8 @@ pub trait TimerBase: Steal {
     fn continuous(&self);
     /// Set to up/down mode, reset timer, and clear interrupts
     fn updown_mode(&self);
+    /// The counting mode (MC: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
+    fn mode_rd(&self) -> u8;
     /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none
     /// (SLAU445I Table 14-6, p. 409; SLAU445I 14.1.1, p. 391).
     fn set_cntl(&self, cntl: u8);
@@ -144,6 +146,27 @@ pub trait CCRn<C>: Steal {
 
     fn cov_ccifg_rd(&self) -> (bool, bool);
     fn cov_ccifg_clr(&self);
+    fn cov_clr(&self);
+
+    /// The output mode (OUTMOD: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
+    fn outmod_rd(&self) -> u8;
+    /// Switch between an output mode and its inverse (set ↔ reset, toggle/reset ↔ toggle/set,
+    /// set/reset ↔ reset/set: SLAU445I Table 13-2, p. 376) by setting or clearing the top OUTMOD bit. The
+    /// other two bits stay, so this never passes through mode 0 (SLAU445I 13.2.5.1.3, p. 379; 14.2.5.1.3,
+    /// p. 404, note "Switching between output modes").
+    fn set_outmod_high_bit(&self, set: bool);
+    /// Switch the capture input between GND and VCC (CCIS bit 0), for a software capture (SLAU445I
+    /// 13.2.4.1.1, p. 376; 14.2.4.1.1, p. 399)
+    fn toggle_ccis_low_bit(&self);
+    /// Set when the compare latch loads (Timer_B CLLD: 0 = at once, 1 = when the timer counts to 0,
+    /// 2 = also when it counts to the top in up/down mode, 3 = when it counts to the old latch value).
+    /// Timer_A has no compare latch (SLAU445I Table 14-2, p. 400; SLAU445I Table 14-8, p. 411; SLAU445I
+    /// 14.1.1, p. 391). In up mode 1 and 2 load at once on the MSP430FR2x5x and MSP430FR247x (SLAZ695J
+    /// TB25, p. 11; SLAZ726B TB25, p. 8).
+    fn set_clld(&self, clld: u8);
+    /// When the compare latch loads, see [`CCRn::set_clld`]. 0 on a Timer_A, which has no compare latch
+    /// (SLAU445I 14.1.1, p. 391).
+    fn clld_rd(&self) -> u8;
 }
 
 /// Label for capture-compare register 0
@@ -170,6 +193,13 @@ macro_rules! timer_b_field {
     };
 }
 pub(crate) use timer_b_field;
+
+// Read a Timer_B-only field, or 0 for Timer_A, which lacks it
+macro_rules! timer_b_read {
+    (A, $value:expr) => { 0 };
+    (B, $value:expr) => { $value };
+}
+pub(crate) use timer_b_read;
 
 // Run `$body` with the timer stopped (MC = 0) and its mode set back afterwards. The user's guide lists
 // OUTMOD among the controls "designed not to be dynamically updated while the timer is running", to be
@@ -269,6 +299,13 @@ macro_rules! ccrn_impl {
                 (cctl.cov().bit(), cctl.ccifg().bit())
             }
 
+            // COV in TAxCCTLn/TBxCCTLn, which "must be reset with software" (SLAU445I Table 13-6, p. 387;
+            // SLAU445I Table 14-8, p. 412)
+            #[inline(always)]
+            fn cov_clr(&self) {
+                unsafe { self.$tbxcctln().clear_bits(|w| w.cov().clear_bit()) };
+            }
+
             #[inline(always)]
             fn cov_ccifg_clr(&self) {
                 unsafe {
@@ -276,6 +313,41 @@ macro_rules! ccrn_impl {
                         .ccifg().clear_bit()
                         .cov().clear_bit())
                 };
+            }
+
+            // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
+            #[inline(always)]
+            fn outmod_rd(&self) -> u8 { (self.$tbxcctln().read().bits() >> 5) as u8 & 0b111 }
+
+            #[inline(always)]
+            fn set_outmod_high_bit(&self, set: bool) {
+                // OUTMOD is bits 7..5 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411), changed
+                // with the timer stopped (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7, p. 407)
+                $crate::hw_traits::timer_base::timer_stopped!(self.$tbxctl(), {
+                    if set {
+                        unsafe { self.$tbxcctln().set_bits(|w| w.bits(1 << 7)) };
+                    } else {
+                        unsafe { self.$tbxcctln().clear_bits(|w| w.bits(!(1 << 7))) };
+                    }
+                });
+            }
+
+            #[inline(always)]
+            fn toggle_ccis_low_bit(&self) {
+                // CCIS is bits 13..12 (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
+                self.$tbxcctln().modify(|r, w| unsafe { w.bits(r.bits() ^ (1 << 12)) });
+            }
+
+            // CLLD is a Timer_B field (SLAU445I Table 14-8, p. 411)
+            #[inline(always)]
+            fn set_clld(&self, clld: u8) {
+                $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxcctln(), clld, clld);
+            }
+
+            // CLLD is bits 10-9 of TBxCCTLn (SLAU445I Table 14-8, p. 411)
+            #[inline(always)]
+            fn clld_rd(&self) -> u8 {
+                $crate::hw_traits::timer_base::timer_b_read!($kind, (self.$tbxcctln().read().bits() >> 9) as u8 & 0b11)
             }
         }
     };
@@ -334,6 +406,12 @@ macro_rules! timer_base_impl {
                         .mc().bits(Mode::UpDown as u8)
                     }
                 });
+            }
+
+            // MC in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
+            #[inline(always)]
+            fn mode_rd(&self) -> u8 {
+                self.$tbxctl().read().mc().bits()
             }
 
             // CNTL in TBxCTL, Timer_B only (SLAU445I Table 14-6, p. 409)
