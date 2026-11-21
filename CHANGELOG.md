@@ -44,12 +44,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - Add ADC reference selection: `Adc::with_reference()` measures against the internal reference or external references on the VeREF+ and VeREF- pins instead of AVCC and AVSS.
+- Add ADC sequences, repeated conversions and hardware triggers: `Adc::start_sequence()` takes a `ConversionConfig` (conversion mode, trigger source among software, the RTC, a timer and eCOMP0, pulse or extended sampling, back-to-back conversions), and `Adc::try_get_result()` and `Adc::stop_sequence()` go with it.
 - Add the ADC window comparator, `Adc::set_window()`, and ADC interrupts: `Adc::enable_interrupts()`, `Adc::interrupt_flags()` and `Adc::interrupt_source()`.
 - Add signed ADC results: after `AdcConfig::signed()`, the ADC returns its results as `i16`.
 - The MSP430FR2433 and MSP430FR25x2 ADC examples sample long enough for their data sheets, and the MSP430FR2476 ADC examples moved off P1.1, which the LaunchPad's temperature sensor drives.
 - Fixed `Adc::read_count()` returning the result of another pin when it was called for a second pin while the first pin's conversion was still pending.
 - Breaking: `Adc::adc_get_result()` and `Adc::adc_is_busy()` are renamed to `get_result()` and `is_busy()`.
-- Add the `adc_reference` and `vref_output` examples for the MSP430FR2476.
+- Add the `adc_comparator_trigger`, `adc_reference`, `adc_sequence` and `vref_output` examples for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

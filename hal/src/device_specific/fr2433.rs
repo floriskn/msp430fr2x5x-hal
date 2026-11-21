@@ -66,6 +66,11 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
 
+    // The timer whose CCR1 output triggers conversions (SLASE59F Table 6-16, p. 53: ADCSHSx = 10 is
+    // "TA1.1B"; SLASE59F Table 6-12, p. 51: the TA1 CCR1 output goes "to ADC trigger"; ADCSHSx is in
+    // ADCCTL1, SLAU445I Table 21-4, p. 563)
+    impl AdcTriggerTimer for crate::pac::Timer1A3 {}
+
     // External reference inputs and the VREF+ output, each selected with its ADCPCTLx bit (SLASE59F
     // Table 6-15, p. 53; SLASE59F Table 6-17, p. 55). ADCSREFx picks VEREF+ and VEREF- as references
     // (SLAU445I Table 21-8, p. 567). The 1.2-V reference goes out on P1.4 when EXTREFEN = 1 (SLASE59F

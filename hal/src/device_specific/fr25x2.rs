@@ -76,6 +76,10 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
 
+    // The timer whose CCR1 output triggers conversions (SLASEE4C Table 6-14, p. 56, ADC trigger signal
+    // connections: ADCSHSx = 10 is TA1.1B; SLASEE4C Figure 6-2, p. 54)
+    impl AdcTriggerTimer for crate::pac::Ta1 {}
+
     // External reference inputs and the VREF+ output, selected with SYSCFG2.ADCPCTLx like the channels:
     // A0/Veref+ on P1.0 and A2/Veref- on P1.2 (SLASEE4C Table 6-13, p. 55, ADC channel connections);
     // VREF+ on P1.1, where the 1.2-V reference "can be output to P1.1/../A1/VREF+"

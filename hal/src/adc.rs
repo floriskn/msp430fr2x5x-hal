@@ -17,6 +17,14 @@
 //! VeREF+ (P1.0) and VeREF- (P1.2) pins (ADCSREFx, reset to AVCC and AVSS: SLAU445I Table 21-8, p. 567; the
 //! pins are A0/Veref+ and A2/Veref- in the ADC channel tables listed below).
 //!
+//! Besides single conversions with [`read_count()`](Adc::read_count()),
+//! [`start_sequence()`](Adc::start_sequence()) converts a sequence of channels and repeats conversions, started
+//! by software, the RTC, a timer or the comparator. The window comparator ([`set_window()`](Adc::set_window()))
+//! flags results outside or inside a range, and [`enable_interrupts()`](Adc::enable_interrupts()) requests the
+//! `ADC` interrupt for these events (SLAU445I 21.2.7, p. 546: conversion modes; SLAU445I Table 21-4, p. 563,
+//! and the trigger tables cited at `TriggerSource`: triggers; SLAU445I 21.2.7.7, p. 555: window comparator;
+//! SLAU445I 21.2.7.10, p. 558: interrupts).
+//!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
 //! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
 //!
@@ -581,6 +589,103 @@ pub enum NegativeReference<'a> {
     External(&'a dyn VeRefMinusPin),
 }
 
+/// How conversions repeat (ADCCONSEQ, SLAU445I 21.2.7, p. 546, and SLAU445I Table 21-1, p. 546).
+/// [`ConversionConfig`] defaults to `Single`.
+///
+/// - `Single`: convert the channel once. With a hardware trigger, start again for the next conversion
+///   (SLAU445I 21.2.7.1, p. 547: "When any other trigger source is used, ADCENC must be toggled between
+///   each conversion").
+/// - `Sequence`: convert the channels from the selected one down to channel 0, once (SLAU445I 21.2.7.2,
+///   p. 549).
+/// - `RepeatSingle`: convert the channel once for each trigger, until stopped (SLAU445I 21.2.7.3, p. 551).
+/// - `RepeatSequence`: convert the channels from the selected one down to channel 0 for each trigger,
+///   until stopped (SLAU445I 21.2.7.4, p. 553).
+// The PACs name the ADCCONSEQ values differently, so this enum is written as its 2 bits.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum ConversionMode {
+    /// One channel, once
+    #[default]
+    Single = 0b00,
+    /// A sequence of channels, once
+    Sequence = 0b01,
+    /// One channel, repeatedly
+    RepeatSingle = 0b10,
+    /// A sequence of channels, repeatedly
+    RepeatSequence = 0b11,
+}
+
+/// Marker trait for the timer whose capture/compare register 1 output starts conversions with
+/// [`TriggerSource::Timer`]: TB1 on the MSP430FR2x5x, TA1 on the other devices (ADC Trigger Signal
+/// Connections: SLASEC4D Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62; SLASE59F Table 6-16, p. 53; SLASEE4C
+/// Table 6-14, p. 56)
+pub trait AdcTriggerTimer {}
+
+/// What starts conversions (ADCSHS: SLAU445I Table 21-4, p. 563; ADC Trigger Signal Connections: SLASEC4D
+/// Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62; SLASE59F Table 6-16, p. 53; SLASEE4C Table 6-14, p. 56)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TriggerSource {
+    /// Software, through [`Adc::start_sequence()`] (ADCSC: SLAU445I Table 21-3, p. 562)
+    #[default]
+    Software,
+    /// RTC counter overflows (SLASEC4D 6.10.11, p. 76; SLASEO7C 9.10.11, p. 61; SLASE59F 6.10.11, p. 52;
+    /// SLASEE4C 6.10.11, p. 55: "The RTC overflow events trigger ... ADC conversion trigger")
+    Rtc,
+    /// The output of capture/compare register 1 of TB1 on the MSP430FR2x5x, or TA1 on the other devices. Set
+    /// that timer up for PWM, with a pin or with
+    /// [`PwmUninit::into_adc_trigger()`](crate::pwm::PwmUninit::into_adc_trigger).
+    /// (CCR1 "To ADC trigger": SLASEC4D Table 6-17, p. 74; SLASEO7C Table 9-13, p. 56; SLASE59F Table 6-12,
+    /// p. 51; SLASEE4C Figure 6-2, p. 54)
+    Timer,
+    /// The output of eCOMP0 (eCOMP0 COUT: SLASEC4D Table 6-22, p. 77; SLASEO7C Table 9-20, p. 62)
+    #[cfg(feature = "ecomp")]
+    Comparator,
+}
+
+/// How a trigger controls the sampling (ADCSHP, ADCISSH, SLAU445I 21.2.5, p. 542 to p. 543, and SLAU445I
+/// Table 21-4, p. 563)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SampleMode {
+    /// A rising edge starts sampling for the configured sample time (pulse sample mode, SLAU445I 21.2.5.2,
+    /// p. 544)
+    #[default]
+    RisingEdge,
+    /// A falling edge starts sampling for the configured sample time (pulse sample mode, inverted trigger)
+    FallingEdge,
+    /// Sample while the trigger is high, and convert when it goes low (extended sample mode). The trigger must
+    /// stay high for at least 4 ADCCLK cycles. Hardware triggers only. (SLAU445I 21.2.5.1, p. 543: "The SHI
+    /// signal requires at least 4 ADCCLK cycles")
+    WhileHigh,
+    /// Sample while the trigger is low, and convert when it goes high (extended sample mode, inverted trigger).
+    /// Hardware triggers only.
+    WhileLow,
+}
+
+/// Settings for [`Adc::start_sequence()`]. The default converts once, started by software.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ConversionConfig {
+    /// How conversions repeat
+    pub mode: ConversionMode,
+    /// What starts the conversions
+    pub trigger: TriggerSource,
+    /// How the trigger controls sampling
+    pub sample_mode: SampleMode,
+    /// In the sequence and repeat modes, convert back to back after the first trigger, as fast as possible,
+    /// instead of waiting for a trigger for each conversion (ADCMSC). In the repeat modes the conversions
+    /// then continue until stopped. (SLAU445I 21.2.7.5, p. 555)
+    pub back_to_back: bool,
+}
+
+impl Default for ConversionConfig {
+    fn default() -> Self {
+        ConversionConfig {
+            mode: ConversionMode::Single,
+            trigger: TriggerSource::default(),
+            sample_mode: SampleMode::default(),
+            back_to_back: false,
+        }
+    }
+}
+
 bitflags::bitflags! {
     /// ADC interrupt sources, for [`Adc::enable_interrupts()`] and [`Adc::interrupt_flags()`] (ADCIE, ADCIFG:
     /// SLAU445I Table 21-13, p. 570, and SLAU445I Table 21-14, p. 571)
@@ -691,6 +796,11 @@ impl<REF, FMT: ResultFormat> Adc<REF, FMT> {
             }
         }
         self.disable();
+        // A single conversion started by software, as `start_sequence()` may have set otherwise
+        // (ADCSHSx = 00, ADCISSH = 0, ADCCONSEQx = 00, ADCSHP = 1: SLAU445I Table 21-4, p. 563 to p. 564;
+        // ADCMSC = 0: SLAU445I Table 21-3, p. 561)
+        self.adc_reg.adcctl1().modify(|_, w| w.adcshs().set(0).adcissh().clear_bit().adcconseq().set(0).adcshp().set_bit());
+        self.adc_reg.adcctl0().modify(|_, w| w.adcmsc().clear_bit());
         self.set_pin(pin);
         self.enable();
 
@@ -761,6 +871,76 @@ impl<REF, FMT: ResultFormat> Adc<REF, FMT> {
         self.pending = None;
         self.adc_reg.adcmctl0().modify(|_, w| w.adcsref().set(vr_minus << 2 | vr_plus));
         Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData, format: PhantomData }
+    }
+
+    /// Start conversions of `pin`'s channel, or in the sequence modes of the channels from it down to
+    /// channel 0, as `config` describes (ADCINCHx: SLAU445I Table 21-8, p. 567). Read the results with
+    /// [`try_get_result()`](Adc::try_get_result()).
+    ///
+    /// A sequence converts every channel down to 0, so their pins should be in their analog mode too.
+    /// Conversions already running are stopped first, and their results discarded (SLAU445I 21.2.7.1, p. 547:
+    /// resetting ADCON within a conversion returns the ADC to the 'ADC off' state).
+    pub fn start_sequence<PIN>(&mut self, _pin: &mut PIN, config: ConversionConfig)
+    where PIN: Channel<Adc, ID = u8> {
+        self.disable();
+        self.pending = None;
+
+        // ADCSHSx (SLAU445I Table 21-4, p. 563), with the sources of the trigger tables cited at
+        // `TriggerSource`
+        let shs: u8 = match config.trigger {
+            TriggerSource::Software => 0b00,
+            TriggerSource::Rtc => 0b01,
+            TriggerSource::Timer => 0b10,
+            #[cfg(feature = "ecomp")]
+            TriggerSource::Comparator => 0b11,
+        };
+        // ADCSHP and ADCISSH (SLAU445I Table 21-4, p. 563)
+        let (shp, issh) = match (config.trigger, config.sample_mode) {
+            // The software trigger is a pulse (SLAU445I Table 21-3, p. 562: "ADCSC is reset automatically")
+            (TriggerSource::Software, _) => (true, false),
+            (_, SampleMode::RisingEdge) => (true, false),
+            (_, SampleMode::FallingEdge) => (true, true),
+            (_, SampleMode::WhileHigh) => (false, false),
+            (_, SampleMode::WhileLow) => (false, true),
+        };
+        // With ADCCONSEQx (SLAU445I Table 21-4, p. 564)
+        self.adc_reg.adcctl1().modify(|_, w| unsafe { w.adcshs().set(shs).adcshp().bit(shp).adcissh().bit(issh).adcconseq().bits(config.mode as u8) });
+        self.adc_reg.adcctl0().modify(|_, w| w.adcmsc().bit(config.back_to_back));
+        self.adc_reg.adcmctl0().modify(|_, w| w.adcinch().set(PIN::channel()));
+        // Discard results and flags of earlier conversions (ADCIFG: SLAU445I Table 21-14, p. 571)
+        self.adc_reg.adcifg().write(|w| unsafe { w.bits(0) });
+
+        self.enable();
+        // Hardware triggers start conversions once ADCENC is set (SLAU445I Figure 21-10, p. 547); ADCSC may
+        // be set with ADCENC (SLAU445I Table 21-3, p. 562)
+        let software = matches!(config.trigger, TriggerSource::Software);
+        self.adc_reg.adcctl0().modify(|_, w| w.adcenc().set_bit().adcsc().bit(software));
+    }
+
+    /// The next result of the conversions started with [`start_sequence()`](Adc::start_sequence()), or
+    /// `WouldBlock` if none is ready (ADCIFG0). Reading a result clears the flag (SLAU445I Table 21-14,
+    /// p. 571).
+    ///
+    /// Results that aren't read before the next one arrives are lost, see
+    /// [`AdcInterruptFlags::Overflow`] (SLAU445I 21.2.7.10, p. 558).
+    pub fn try_get_result(&mut self) -> nb::Result<FMT::Count, Infallible> {
+        if self.adc_reg.adcifg().read().adcifg0().bit_is_clear() {
+            return Err(nb::Error::WouldBlock);
+        }
+        Ok(self.get_result())
+    }
+
+    /// Stop the conversions started with [`start_sequence()`](Adc::start_sequence()), after the current
+    /// conversion in the single modes and after the current sequence in the sequence modes (SLAU445I 21.2.7.6,
+    /// p. 555).
+    pub fn stop_sequence(&mut self) {
+        let single = self.adc_reg.adcctl1().read().adcconseq().bits() == 0;
+        if single {
+            // Clearing ADCENC would cut a single conversion short (SLAU445I 21.2.7.6, p. 555: "poll the busy
+            // bit until reset before clearing ADCENC")
+            while self.is_busy() {}
+        }
+        self.adc_reg.adcctl0().modify(|_, w| w.adcenc().clear_bit());
     }
 
     /// Set the window comparator thresholds (ADCLO, ADCHI), as counts in the [`ResultFormat`]. Each result

@@ -109,6 +109,10 @@ pub mod gpio {
 mod adc {
     use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
 
+    // The timer whose CCR1 output triggers conversions (SLASEC4D Table 6-22, p. 77: ADCSHSx = 10b is
+    // TB1.1B; SLASEC4D Table 6-17, p. 74: the TB1 CCR1 output goes "To ADC trigger")
+    impl AdcTriggerTimer for crate::pac::Tb1 {}
+
     // External reference inputs and the VREF+ output, each in its P1SELx = 11 function (SLASEC4D
     // Table 6-63, p. 96; SLASEC4D Table 4-2, p. 22 to p. 23)
     impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {} // 11: Veref+, "ADC positive reference"
