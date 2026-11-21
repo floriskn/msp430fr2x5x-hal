@@ -474,6 +474,19 @@ mod timer {
     }
     impl CapCmpTimer3 for Timer1A3 {}
 
+    // TA2 and TA3 aren't connected to any pins, so they have no clock pin, no PWM output and no capture
+    // pins (SLASE59F 6.10.8, p. 51: "only internally connected and do not support PWM output"; SLASE59F
+    // Table 6-13, p. 51, and SLASE59F Table 6-14, p. 52)
+    impl TimerPeriph for Timer2A2 {
+        type Tbxclk = NoTbxclkPin;
+    }
+    impl CapCmpTimer2 for Timer2A2 {}
+
+    impl TimerPeriph for Timer3A2 {
+        type Tbxclk = NoTbxclkPin;
+    }
+    impl CapCmpTimer2 for Timer3A2 {}
+
     // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (SLASE59F Tables
     // 6-11 to 6-14, p. 50 to p. 52, list no INCLK input. SLAU445I Figure 1-8, p. 50, still draws INCLK on
     // the TA0 and TA1 clock selects, TA0's "from CapTouchIO", which SLASE59F doesn't list.)

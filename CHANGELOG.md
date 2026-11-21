@@ -45,10 +45,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - Add `TimerConfig::vloclk()`, for the timers that can be clocked from the VLO: TA0 and TA2 on the MSP430FR247x, and TA0 on the MSP430FR25x2.
 - Add timer cascading: `TimerConfig::cascade()` clocks a timer from the CCR2 output of another timer, set up with `SubTimer::into_cascade_output()` or `PwmUninit::into_cascade_output()`, so that it counts the periods of that timer. Available for TA1 (from TA0) and TA3 (from TA2) on the MSP430FR247x, TA1 (from TA0) on the MSP430FR25x2, and TB1 (from TB0) on the MSP430FR2x5x.
+- Add `TimerParts2` for timers with two capture/compare registers: TA2 and TA3 on the MSP430FR2433, which couldn't be used before. They aren't connected to any pins, so they work as timers only.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
 - Fixed timer registers being written while the timer runs: a timer now stops while its output mode (OUTMOD) changes, and a Timer_A also while a new compare value (TAxCCRn) is written, as the user's guide recommends. A Timer_B keeps running, since its compare latches buffer the new TBxCCRn values.
-- Add the `timer_cascade` example for the MSP430FR2355, the `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
+- Add the `timer_cascade` example for the MSP430FR2355, the `timer` example for the MSP430FR2433, the `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

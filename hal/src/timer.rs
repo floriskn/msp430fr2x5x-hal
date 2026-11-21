@@ -25,7 +25,8 @@ impl<T: CCRn<C>, C> CapCmp<C> for T {}
 // Trait effectively sealed by TimerB
 /// Trait indicating that the peripheral can be used as a timer
 pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
-    /// Pin type used for external TBxCLK of this timer
+    /// Pin type used for external TBxCLK of this timer, or [`NoTbxclkPin`] if it has none (TASSEL/TBSSEL =
+    /// 00b: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     type Tbxclk;
 
     /// Additional configuration
@@ -33,7 +34,16 @@ pub trait TimerPeriph<M: PinMap = DefaultMapping>: TimerBase + CapCmp<CCR0> {
     fn configure_pin_mapping() {}
 }
 
+/// The external TBxCLK pin of timers that don't have one, such as TA2 and TA3 on the
+/// MSP430FR2433 (SLASE59F Table 6-13, p. 51; SLASE59F Table 6-14, p. 52)
+///
+/// It has no values, so [`TimerConfig::tbclk`] can't be called for these timers.
+pub enum NoTbxclkPin {}
+
 // Traits effectively sealed by CCRn
+/// Trait indicating that the peripheral has 2 capture compare registers: TA2 and TA3 on the MSP430FR2433
+/// (SLASE59F 6.10.8, p. 51: "two capture/compare registers each")
+pub trait CapCmpTimer2<M: PinMap = DefaultMapping>: TimerPeriph<M> + CapCmp<CCR1> {}
 /// Trait indicating that the peripheral has 3 capture compare registers
 pub trait CapCmpTimer3<M: PinMap = DefaultMapping>:
     TimerPeriph<M> + CapCmp<CCR1> + CapCmp<CCR2>
@@ -187,6 +197,40 @@ where
     /// example, a source timer with a period of 1 s lets this timer count seconds.
     #[inline]
     pub fn cascade(_source: &CascadeOutput<T::Source>) -> Self { Self::with_clock(Tbssel::Inclk) }
+}
+
+/// Main timer and sub-timer for timer peripherals with 2 capture-compare registers
+///
+/// The timers with 2 capture/compare registers are TA2 and TA3 on the MSP430FR2433 (SLASE59F Table 6-13,
+/// p. 51; SLASE59F Table 6-14, p. 52).
+pub struct TimerParts2<T, M = DefaultMapping>
+where
+    T: CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Main timer
+    pub timer: Timer<T, M>,
+    /// Timer interrupt vector (TAxIV: SLAU445I Table 13-8, p. 388)
+    pub tbxiv: TBxIV<T>,
+    /// Sub-timer 1 (derived from CCR1 register, TAxCCR1: SLAU445I Table 13-7, p. 388)
+    pub subtimer1: SubTimer<T, CCR1>,
+}
+
+impl<T, M> TimerParts2<T, M>
+where
+    T: CapCmpTimer2<M>,
+    M: PinMap,
+{
+    /// Create new set of timers out of a TBx peripheral
+    #[inline(always)]
+    pub fn new(_timer: T, config: TimerConfig<T, M>) -> Self {
+        config.write_regs(unsafe { &T::steal() });
+        Self {
+            timer: Timer::new(),
+            tbxiv: TBxIV(PhantomData),
+            subtimer1: SubTimer::new(),
+        }
+    }
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
