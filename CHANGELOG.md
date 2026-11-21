@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
+- Fixed timer registers being written while the timer runs: a timer now stops while its output mode (OUTMOD) changes, and a Timer_A also while a new compare value (TAxCCRn) is written, as the user's guide recommends. A Timer_B keeps running, since its compare latches buffer the new TBxCCRn values.
 - Add the `timer_external_clock` example for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14

@@ -346,9 +346,16 @@ where
 impl<T: CapCmp<C>, C> SubTimer<T, C> {
     #[inline]
     /// Set the threshold for one of the sub-timers. Once the main timer counts to this threshold
-    /// the sub-timer will fire. Note that the main timer resets once it counts to its own
-    /// threshold, not the sub-timer thresholds. It follows that the sub-timer threshold must be
-    /// less than the main threshold for it to fire.
+    /// the sub-timer will fire (SLAU445I 13.2.4.2, p. 376; 14.2.4.2, p. 399). Note that the main timer
+    /// resets once it counts to its own threshold, not the sub-timer thresholds. It follows that the
+    /// sub-timer threshold must not be more than the main threshold for it to fire: the main timer
+    /// counts up to and including its threshold (SLAU445I 13.2.3.1, p. 371; 14.2.3.1, p. 394).
+    ///
+    /// It writes TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413) and clears
+    /// CCIFG (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412). A Timer_A is stopped for the write,
+    /// as the user's guide says "the timer should be stopped by writing the MC bits to zero (MC = 0) before
+    /// writing new data to TAxCCRn" (SLAU445I 13.2.4.2, p. 376), so the main timer misses the few timer
+    /// clocks that takes.
     pub fn set_count(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
         timer.set_ccrn(count);
