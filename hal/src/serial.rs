@@ -246,6 +246,11 @@ where
 
     /// Configure serial UART to use external UCLK, passing in the appropriately configured pin
     /// used as the clock signal as well as the frequency of the clock.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (SLAU445I
+    /// 22.3.9.1, p. 584).
     #[inline(always)]
     pub fn use_uclk<P: Into<USCI::ClockPin>>(
         self,
@@ -263,6 +268,11 @@ where
 
     #[cfg(feature = "eusci_aclk")]
     /// Configure serial UART to use ACLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (SLAU445I
+    /// 22.3.9.1, p. 584).
     #[inline(always)]
     pub fn use_aclk(self, aclk: &Aclk) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -276,6 +286,11 @@ where
 
     #[cfg(feature = "eusci_modclk")]
     /// Configure serial UART to use MODCLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (SLAU445I
+    /// 22.3.9.1, p. 584).
     #[inline(always)]
     pub fn use_modclk(self) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -291,6 +306,11 @@ where
     }
 
     /// Configure serial UART to use SMCLK.
+    ///
+    /// # Panics
+    ///
+    /// If the baud rate is above a third of the clock frequency, the most the eUSCI supports (SLAU445I
+    /// 22.3.9.1, p. 584).
     #[inline(always)]
     pub fn use_smclk(self, smclk: &Smclk) -> SerialConfig<USCI, ClockSet, M> {
         serial_config!(
@@ -312,8 +332,11 @@ struct BaudConfig {
 
 #[inline]
 fn calculate_baud_config(clk_freq: u32, bps: NonZeroU32) -> BaudConfig {
+    // In low-frequency mode the baud rate can be at most a third of the clock (SLAU445I 22.3.9.1,
+    // p. 584)
+    assert!(clk_freq / bps.get() >= 3, "baud rate above a third of the UART clock");
     // Ensure n stays within the 16 bit boundary
-    let n = (clk_freq / bps).clamp(1, 0xFFFF);
+    let n = (clk_freq / bps).min(0xFFFF);
 
     let brs = lookup_brs(clk_freq, bps);
 

@@ -197,6 +197,21 @@ impl I2cMarker for MultiMaster {}
 pub struct MasterSlave;
 impl I2cMarker for MasterSlave {}
 
+/// The smallest clock divider for a master role: the bit clock can be at most BRCLK/4 for a single master, and BRCLK/8
+/// with several masters on the bus (user's guide, I2C clock generation: SLAU445I 24.3.7, p. 642)
+trait MinClkDivisor {
+    const MIN_CLK_DIVISOR: u16;
+}
+impl MinClkDivisor for SingleMaster {
+    const MIN_CLK_DIVISOR: u16 = 4;
+}
+impl MinClkDivisor for MultiMaster {
+    const MIN_CLK_DIVISOR: u16 = 8;
+}
+impl MinClkDivisor for MasterSlave {
+    const MIN_CLK_DIVISOR: u16 = 8;
+}
+
 macro_rules! return_self_config {
     ($self: ident) => {
         I2cConfig {
@@ -314,46 +329,70 @@ where
 }
 
 #[allow(private_bounds)]
-impl<USCI, M, ROLE: I2cMarker> I2cConfig<USCI, NoClockSet, ROLE, M>
+impl<USCI, M, ROLE: I2cMarker + MinClkDivisor> I2cConfig<USCI, NoClockSet, ROLE, M>
 where
     USCI: I2cUsci<M>,
     M: PinMap,
 {
+    #[inline(always)]
+    fn set_clock(&mut self, ucssel: Ucssel, clk_divisor: u16) {
+        assert!(clk_divisor >= ROLE::MIN_CLK_DIVISOR, "I2C clock divisor too small for this role");
+        self.ctlw0.ucssel = ucssel;
+        self.divisor = clk_divisor;
+    }
+
     /// Configures this peripheral to use SMCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_smclk(
         mut self,
         _smclk: &Smclk,
         clk_divisor: u16,
     ) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::Smclk;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::Smclk, clk_divisor);
         return_self_config!(self)
     }
 
     #[cfg(feature = "eusci_aclk")]
     /// Configures this peripheral to use ACLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_aclk(
         mut self,
         _aclk: &Aclk,
         clk_divisor: u16,
     ) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::DeviceSpecific;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::DeviceSpecific, clk_divisor);
         return_self_config!(self)
     }
 
     #[cfg(feature = "eusci_modclk")]
     /// Configures this peripheral to use MODCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_modclk(mut self, clk_divisor: u16) -> I2cConfig<USCI, ClockSet, ROLE, M> {
-        self.ctlw0.ucssel = Ucssel::DeviceSpecific;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::DeviceSpecific, clk_divisor);
         return_self_config!(self)
     }
 
     /// Configures this peripheral to use UCLK
+    ///
+    /// # Panics
+    ///
+    /// If `clk_divisor` is below the user's guide minimum (SLAU445I 24.3.7, p. 642): 4 for a single master,
+    /// 8 with several masters.
     #[inline]
     pub fn use_uclk<Pin>(
         mut self,
@@ -362,8 +401,7 @@ where
     ) -> I2cConfig<USCI, ClockSet, ROLE, M>
     where Pin: Into<USCI::ExternalClockPin>,
     {
-        self.ctlw0.ucssel = Ucssel::Uclk;
-        self.divisor = clk_divisor;
+        self.set_clock(Ucssel::Uclk, clk_divisor);
         return_self_config!(self)
     }
 }
