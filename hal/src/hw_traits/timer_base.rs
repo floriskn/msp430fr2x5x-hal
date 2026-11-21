@@ -74,6 +74,11 @@ pub trait TimerBase: Steal {
     fn upmode(&self);
     /// Set to continuous mode, reset timer, and clear interrupts
     fn continuous(&self);
+    /// Set to up/down mode, reset timer, and clear interrupts
+    fn updown_mode(&self);
+    /// Set the counter length (Timer_B CNTL: 0 = 16-bit, 1 = 12-bit, 2 = 10-bit, 3 = 8-bit). Timer_A has none
+    /// (SLAU445I Table 14-6, p. 409; SLAU445I 14.1.1, p. 391).
+    fn set_cntl(&self, cntl: u8);
 
     /// Apply clock select settings
     fn config_clock(&self, tbssel: Tbssel, div: TimerDiv);
@@ -106,6 +111,7 @@ pub trait TimerBase: Steal {
     fn get_tbxr(&self) -> u16;
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RunningMode {
     Up = 0b01,
@@ -152,6 +158,16 @@ pub struct CCR5;
 /// Label for capture-compare register 6
 pub struct CCR6;
 
+// Write a Timer_B-only field, or nothing for Timer_A: CLLD in TBxCCTLn (SLAU445I Table 14-8, p. 411) or
+// CNTL in TBxCTL (SLAU445I Table 14-6, p. 409), which Timer_A lacks (SLAU445I 14.1.1, p. 391)
+macro_rules! timer_b_field {
+    (A, $reg:expr, $field:ident, $value:expr) => { let _ = $value; };
+    (B, $reg:expr, $field:ident, $value:expr) => {
+        $reg.modify(|_, w| unsafe { w.$field().bits($value) });
+    };
+}
+pub(crate) use timer_b_field;
+
 // Run `$body` with the timer stopped (MC = 0) and its mode set back afterwards. The user's guide lists
 // OUTMOD among the controls "designed not to be dynamically updated while the timer is running", to be
 // changed after "Write zero to the mode control bits (MC = 0)" (SLAU445I 13.2.7, p. 382; SLAU445I 14.2.7,
@@ -187,6 +203,13 @@ macro_rules! timer_a_stopped {
     (A, $ctl:expr, $body:expr) => { $crate::hw_traits::timer_base::timer_stopped!($ctl, $body) };
 }
 pub(crate) use timer_a_stopped;
+
+// Mark Timer_B peripherals
+macro_rules! timer_b_marker {
+    (A, $TBx:ident) => {};
+    (B, $TBx:ident) => { impl crate::timer::TimerB for $TBx {} };
+}
+pub(crate) use timer_b_marker;
 
 macro_rules! ccrn_impl {
     ($kind:ident, $TBx:ident, $tbxctl:ident, $CCRn:ident, $tbxcctln:ident, $tbxccrn:ident) => {
@@ -298,6 +321,24 @@ macro_rules! timer_base_impl {
                 });
             }
 
+            // TBxCTL: TBCLR, TBIFG and MC = 11b (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
+            #[inline(always)]
+            fn updown_mode(&self) {
+                self.$tbxctl().modify(|r, w| {
+                    unsafe { w.bits(r.bits())
+                        .$txclr().set_bit()
+                        .$txifg().clear_bit()
+                        .mc().bits(Mode::UpDown as u8)
+                    }
+                });
+            }
+
+            // CNTL in TBxCTL, Timer_B only (SLAU445I Table 14-6, p. 409)
+            #[inline(always)]
+            fn set_cntl(&self, cntl: u8) {
+                $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), cntl, cntl);
+            }
+
             #[inline(always)]
             fn config_clock(&self, tbssel: Tbssel, div: TimerDiv) {
                 self.$tbxctl()
@@ -362,6 +403,9 @@ macro_rules! timer_base_impl {
                 self.$tbxr().read().bits()
             }
         }
+
+        // Timer_B only: CLLD and CNTL (SLAU445I 14.1.1, p. 391)
+        $crate::hw_traits::timer_base::timer_b_marker!($kind, $TBx);
 
         $($crate::hw_traits::timer_base::ccrn_impl!($kind, $TBx, $tbxctl, $CCRn, $tbxcctln, $tbxccrn);)*
     };

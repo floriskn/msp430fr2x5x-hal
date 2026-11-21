@@ -59,6 +59,29 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     + CapCmp<CCR6>
 {}
 
+// Trait effectively sealed by TimerBase
+/// Trait indicating a Timer_B. Its counter length can be changed, see [`TimerConfig::counter_length`], and its
+/// compare registers are buffered, which PWM uses so that a duty cycle change never spoils a period
+/// (SLAU445I 14.1.1, p. 391; 14.2.4.2.1, p. 400). Erratum TB25 makes two of the load modes load at once in up
+/// mode on the MSP430FR2x5x and MSP430FR247x, so edge-aligned PWM uses one it doesn't list (SLAZ695J TB25,
+/// p. 11; SLAZ726B TB25, p. 8; see [`crate::pwm`]).
+pub trait TimerB: TimerBase {}
+
+/// The number of bits a Timer_B counts with (CNTL), which sets its highest count in continuous mode
+/// (SLAU445I 14.2.1.1, p. 393; SLAU445I Table 14-6, p. 409)
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CounterLength {
+    /// 16 bits, up to 0xFFFF, as after reset (CNTL = 00b, reset value 0h: SLAU445I Table 14-6, p. 409)
+    #[default]
+    _16Bit = 0,
+    /// 12 bits, up to 0x0FFF (CNTL = 01b: SLAU445I Table 14-6, p. 409)
+    _12Bit = 1,
+    /// 10 bits, up to 0x03FF (CNTL = 10b: SLAU445I Table 14-6, p. 409)
+    _10Bit = 2,
+    /// 8 bits, up to 0x00FF (CNTL = 11b: SLAU445I Table 14-6, p. 409)
+    _8Bit = 3,
+}
+
 // Traits effectively sealed by TimerBase
 /// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
 ///
@@ -123,6 +146,7 @@ where
     sel: Tbssel,
     div: TimerDiv,
     ex_div: TimerExDiv,
+    cntl: u8,
     _pin_map: PhantomData<M>,
 }
 
@@ -138,6 +162,7 @@ where
             sel,
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
+            cntl: CounterLength::_16Bit as u8,
             _pin_map: PhantomData,
         }
     }
@@ -166,7 +191,19 @@ where
         timer.reset();
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
+        timer.set_cntl(self.cntl);
     }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + TimerB,
+    M: PinMap,
+{
+    /// Set how many bits this Timer_B counts with (CNTL). In continuous mode it then counts up to 0xFF,
+    /// 0x3FF, 0xFFF or 0xFFFF before it starts over (SLAU445I 14.2.1.1, p. 393; 14.2.3.2, p. 395).
+    #[inline]
+    pub fn counter_length(self, length: CounterLength) -> Self { TimerConfig { cntl: length as u8, ..self } }
 }
 
 impl<T, M> TimerConfig<T, M>
@@ -314,14 +351,19 @@ where
 }
 
 /// Main periodic countdown timer
-pub struct Timer<T: TimerPeriph<M>, M: PinMap = DefaultMapping>(PhantomData<T>, PhantomData<M>);
+pub struct Timer<T: TimerPeriph<M>, M: PinMap = DefaultMapping> {
+    /// The mode it counts in once started, for `resume()`
+    mode: RunningMode,
+    _timer: PhantomData<T>,
+    _pin_map: PhantomData<M>,
+}
 
 impl<T, M> Timer<T, M>
 where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    fn new() -> Self { Self(PhantomData, PhantomData) }
+    fn new() -> Self { Self { mode: RunningMode::Up, _timer: PhantomData, _pin_map: PhantomData } }
 }
 
 /// Sub-timer associated with a main timer
@@ -407,10 +449,29 @@ where
         timer.stop();
         timer.set_ccrn(count);
         timer.upmode();
+        self.mode = RunningMode::Up;
+    }
+
+    #[inline]
+    /// Clears the timer and starts it counting up to `count` and back down to 0 (up/down mode), so a
+    /// period lasts `2 * count` timer cycles. [`wait()`](Timer::wait) returns once per period, when the
+    /// count gets back to 0 (SLAU445I 13.2.3.4, p. 373; 14.2.3.4, p. 396), and sub-timers fire twice per
+    /// period, on the way up and on the way down (SLAU445I Figure 13-14, p. 379; SLAU445I Figure 14-14,
+    /// p. 404).
+    pub fn start_up_down(&mut self, count: u16) {
+        let timer = unsafe { T::steal() };
+        // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.4.1, p. 373)
+        timer.stop();
+        timer.set_ccrn(count);
+        timer.updown_mode();
+        self.mode = RunningMode::UpDown;
     }
 
     #[inline]
     /// Checks if the timer has reached the target value. Returns `Ok(())` if so, otherwise `WouldBlock`.
+    ///
+    /// It checks TBIFG, which is set as the count goes from the target value to 0 (SLAU445I 13.2.3.1,
+    /// p. 371; 14.2.3.1, p. 394), or in up/down mode as it gets back down to 0.
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let timer = unsafe { T::steal() };
         if timer.tbifg_rd() {
@@ -429,10 +490,11 @@ where
     }
 
     #[inline]
-    /// Resume counting from the current value
+    /// Resume counting from the current value, in the direction and mode it was counting in (the
+    /// count direction is latched: SLAU445I 13.2.3.4, p. 373; 14.2.3.4, p. 396)
     pub fn resume(&mut self) {
         let timer = unsafe { T::steal() };
-        timer.resume(RunningMode::Up);
+        timer.resume(self.mode);
     }
 
     #[inline]

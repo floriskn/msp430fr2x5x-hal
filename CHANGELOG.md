@@ -49,7 +49,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
 - Fixed timer registers being written while the timer runs: a timer now stops while its output mode (OUTMOD) changes, and a Timer_A also while a new compare value (TAxCCRn) is written, as the user's guide recommends. A Timer_B keeps running, since its compare latches buffer the new TBxCCRn values.
-- Add the `timer_cascade` example for the MSP430FR2355, the `timer` example for the MSP430FR2433, the `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
+- Add `TimerConfig::counter_length()` for Timer_B, and `Timer::start_up_down()` for up/down counting. `Timer::resume()` now keeps the counting mode instead of switching to up mode.
+- Add the `timer_cascade` example for the MSP430FR2355, the `timer` example for the MSP430FR2433, the `timer_b_modes`, `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
