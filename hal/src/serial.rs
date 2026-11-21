@@ -480,11 +480,15 @@ where
         usci.txie_clear();
     }
 
-    // Internal flush function
+    // Internal flush function: done once the Tx buffer is empty and the last character has left the
+    // shift register. UCBUSY also covers a character being received, so this can wait for that too
+    // (UCTXIFG, UCBUSY: SLAU445I Table 22-18, p. 601 and SLAU445I Table 22-12, p. 596).
+    // (UCTXCPTIFG can't be used: erratum USCI42 sets it after each character; SLAZ695J USCI42, SLAZ664S
+    // USCI42, SLAZ726B USCI42 and SLAZ705H USCI42.)
     #[inline]
     fn flush(&mut self) -> nb::Result<(), Infallible> {
         let usci = unsafe { USCI::steal() };
-        if usci.txifg_rd() {
+        if usci.txifg_rd() && !usci.statw_rd().ucbusy() {
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -651,8 +655,10 @@ mod emb_io {
         M: PinMap,
     {
         /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered. Thus, the implementation uses UCTXIFG instead. When
-        /// `flush()` completes, the Tx buffer will be empty but the FIFO may still be sending.
+        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
+        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
+        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
+        /// SLAU445I Table 22-12, p. 596).
         ///
         /// As the error type is `Infallible`, this can be safely unwrapped.
         #[inline]
@@ -749,8 +755,10 @@ mod ehal_nb1 {
         M: PinMap,
     {
         /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered. Thus, the implementation uses UCTXIFG instead. When
-        /// `flush()` completes, the Tx buffer will be empty but the FIFO may still be sending.
+        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
+        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
+        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
+        /// SLAU445I Table 22-12, p. 596).
         #[inline]
         fn flush(&mut self) -> nb::Result<(), Self::Error> { self.flush() }
 
@@ -787,8 +795,10 @@ mod ehal02 {
         type Error = void::Void;
 
         /// Due to errata USCI42, UCTXCPTIFG will fire every time a byte is done transmitting,
-        /// even if there's still more buffered. Thus, the implementation uses UCTXIFG instead. When
-        /// `flush()` completes, the Tx buffer will be empty but the FIFO may still be sending.
+        /// even if there's still more buffered (SLAZ695J USCI42, SLAZ664S USCI42, SLAZ726B USCI42 and
+        /// SLAZ705H USCI42). Thus, the implementation uses UCTXIFG and UCBUSY instead. When `flush()`
+        /// completes, the Tx buffer is empty and the last character has left the shift register (UCBUSY,
+        /// SLAU445I Table 22-12, p. 596).
         #[inline]
         fn flush(&mut self) -> nb::Result<(), Self::Error> {
             self.flush().map_err(|_| nb::Error::WouldBlock)
