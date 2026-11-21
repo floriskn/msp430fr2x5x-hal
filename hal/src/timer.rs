@@ -6,6 +6,15 @@
 //!
 //! This module also contains traits used by other HAL modules that depend on TimerB, such as
 //! `Capture` and `Pwm`.
+//!
+//! # Timer_B outputs and the comparators
+//!
+//! After reset the output of an eCOMP comparator switches all outputs of a Timer_B to high impedance while
+//! it is high: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (SLASEC4D Table 6-20, p. 76; SLASEO7C
+//! Table 9-17, p. 61). SYSCFG2.TBxTRGSEL resets to 0, "Internal source selected" (SLAU445I Table 1-26,
+//! p. 77; SLAU445I Table 1-31, p. 82). Measured on an MSP430FR2476, a TB0 PWM output stops whenever
+//! eCOMP0's output is high, even with the comparator used for something else.
+//! [`TimerConfig::high_impedance_trigger`] selects the TBxTRG pin instead, or nothing.
 
 use crate::clock::{Aclk, Smclk};
 use crate::hw_traits::timer_base::{CCRn, Outmod, RunningMode, Tbssel, TimerBase};
@@ -105,6 +114,75 @@ pub enum CompareLatchGroups {
     All = 3,
 }
 
+/// What switches all outputs of a Timer_B to high impedance (TBxOUTH, SYSCFG2.TBxTRGSEL: SLAU445I 14.2.5,
+/// p. 401; SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82; data sheets: SLASEC4D Table 6-20,
+/// p. 76; SLASEO7C Table 9-17, p. 61), for example to stop a motor driver on a fault
+pub enum HighImpedanceTrigger<'a, T> {
+    /// The output of an eCOMP comparator: eCOMP0 for TB0 and TB1, eCOMP1 for TB2 and TB3 (SLASEC4D
+    /// Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61). This is the setting after reset (TBxTRGSEL = 0:
+    /// SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82), so the outputs stop whenever that
+    /// comparator's output is high, even if it's used for something else.
+    Comparator,
+    /// The timer's TBxTRG pin, in its trigger function: the outputs stop while it's high (SLAU445I 14.2.5,
+    /// p. 401: "When the TBOUTH pin function is selected for the pin ... and when the pin is pulled high").
+    /// TB3 on the MSP430FR2x5x has no such pin (SLASEC4D Table 6-20, p. 76: "TB3TRGSEL = 1", "N/A").
+    Pin(&'a dyn HighImpedancePin<T>),
+    /// Nothing switches the outputs to high impedance.
+    None,
+}
+
+/// Marker trait for the TBxTRG pin of a Timer_B in its trigger function, see [`HighImpedanceTrigger::Pin`]
+///
+/// The pins: on the MSP430FR2x5x P1.2 is TB0TRG (SLASEC4D Table 6-63, p. 96), P2.3 is TB1TRG (SLASEC4D
+/// Table 6-64, p. 98) and P5.3 is TB2TRG (SLASEC4D Table 6-67, p. 104); on the MSP430FR247x P3.5 is TB0TRG
+/// (SLASEO7C Table 9-25, p. 67). Each is an input in its trigger function.
+pub trait HighImpedancePin<T> {}
+
+/// Trait indicating a Timer_B whose outputs can be switched to high impedance, see
+/// [`TimerConfig::high_impedance_trigger`]: TB0 to TB3 on the MSP430FR2x5x, TB0 on the MSP430FR247x
+/// (SLASEC4D Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61)
+pub trait HighImpedanceTimer: TimerB {
+    #[doc(hidden)]
+    /// Set (`true`, the TBxTRG pin) or clear (`false`, the comparator) this timer's TBxTRGSEL bit in
+    /// SYSCFG2 (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
+    fn set_trgsel(external: bool);
+}
+
+/// Implement [`HighImpedanceTimer`] for the Timer_B `$timer`, whose trigger select bit is the SYSCFG2 field
+/// `$trgsel` (SLAU445I Table 1-26, p. 77; SLAU445I Table 1-31, p. 82)
+#[cfg(feature = "timer_b")]
+macro_rules! high_impedance_timer_impl {
+    ($timer:ty, $trgsel:ident) => {
+        impl $crate::timer::HighImpedanceTimer for $timer {
+            #[inline(always)]
+            fn set_trgsel(external: bool) {
+                let sys = unsafe { &*$crate::_pac::Sys::ptr() };
+                if external {
+                    unsafe { sys.syscfg2().set_bits(|w| w.$trgsel().set_bit()) };
+                } else {
+                    unsafe { sys.syscfg2().clear_bits(|w| w.$trgsel().clear_bit()) };
+                }
+            }
+        }
+    };
+    // The TBxTRGSEL bit by its number in SYSCFG2, for a PAC that doesn't name it
+    ($timer:ty, bit $bit:literal) => {
+        impl $crate::timer::HighImpedanceTimer for $timer {
+            #[inline(always)]
+            fn set_trgsel(external: bool) {
+                let sys = unsafe { &*$crate::_pac::Sys::ptr() };
+                if external {
+                    unsafe { sys.syscfg2().set_bits(|w| w.bits(1 << $bit)) };
+                } else {
+                    unsafe { sys.syscfg2().clear_bits(|w| w.bits(!(1 << $bit))) };
+                }
+            }
+        }
+    };
+}
+#[cfg(feature = "timer_b")]
+pub(crate) use high_impedance_timer_impl;
+
 // Traits effectively sealed by TimerBase
 /// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
 ///
@@ -171,6 +249,9 @@ where
     ex_div: TimerExDiv,
     cntl: u8,
     tbclgrp: u8,
+    /// The timer's TBxTRGSEL setter, and whether to select the pin (SLAU445I Table 1-26, p. 77; SLAU445I
+    /// Table 1-31, p. 82)
+    trgsel: Option<(fn(bool), bool)>,
     _pin_map: PhantomData<M>,
 }
 
@@ -188,6 +269,7 @@ where
             ex_div: TimerExDiv::_1,
             cntl: CounterLength::_16Bit as u8,
             tbclgrp: CompareLatchGroups::Independent as u8,
+            trgsel: None,
             _pin_map: PhantomData,
         }
     }
@@ -218,6 +300,11 @@ where
         timer.config_clock(self.sel, self.div);
         timer.set_cntl(self.cntl);
         timer.set_tbclgrp(self.tbclgrp);
+        // TBxTRGSEL: 0 = internal source (eCOMP), 1 = external source (TBxTRG pin) (SLAU445I Table 1-26,
+        // p. 77; SLAU445I Table 1-31, p. 82)
+        if let Some((set_trgsel, external)) = self.trgsel {
+            set_trgsel(external);
+        }
     }
 }
 
@@ -251,6 +338,23 @@ where
     #[inline]
     pub fn compare_latch_groups(self, groups: CompareLatchGroups) -> Self {
         TimerConfig { tbclgrp: groups as u8, ..self }
+    }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + HighImpedanceTimer,
+    M: PinMap,
+{
+    /// Select what switches all outputs of this Timer_B to high impedance, see [`HighImpedanceTrigger`].
+    #[inline]
+    pub fn high_impedance_trigger(self, trigger: HighImpedanceTrigger<T>) -> Self {
+        // TBxTRGSEL selects the comparator (0) or the pin (1) (SLAU445I Table 1-26, p. 77; SLAU445I
+        // Table 1-31, p. 82; SLASEC4D Table 6-20, p. 76; SLASEO7C Table 9-17, p. 61). Selecting the pin
+        // without putting it in its trigger function disables the trigger: only the selected TBOUTH pin
+        // function triggers (SLAU445I 14.2.5, p. 401).
+        let external = !matches!(trigger, HighImpedanceTrigger::Comparator);
+        TimerConfig { trgsel: Some((T::set_trgsel, external)), ..self }
     }
 }
 

@@ -1063,4 +1063,12 @@ mod timer {
     impl CascadedTimer for Ta3 {
         type Source = Ta2;
     }
+
+    // The TB0OUTH trigger is eCOMP0 or the TB0TRG pin, P3.5 (SLASEO7C Table 9-17, p. 61: TB0TRGSEL = 0
+    // selects the eCOMP0 output, 1 selects P3.5). TB0TRGSEL is SYSCFG2 bit 15, "1b = External source
+    // selected" (SLAU445I Table 1-31, p. 82). The multiplexer in SLASEO7C Figure 9-3, p. 60 shows the
+    // inputs the other way round; the code follows SLASEO7C Table 9-17, p. 61.
+    high_impedance_timer_impl!(Tb0, tb0trgsel);
+    // P3.5 TB0TRG, P3SELx = 10, P3DIR.5 = 0 (SLASEO7C Table 9-25, p. 67)
+    impl<PULL> HighImpedancePin<Tb0> for Pin<P3, Pin5, Alternate2<Input<PULL>>> {}
 }

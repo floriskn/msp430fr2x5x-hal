@@ -49,9 +49,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
 - Fixed timer registers being written while the timer runs: a timer now stops while its output mode (OUTMOD) changes, and a Timer_A also while a new compare value (TAxCCRn) is written, as the user's guide recommends. A Timer_B keeps running, since its compare latches buffer the new TBxCCRn values.
+- Add `TimerConfig::high_impedance_trigger()`. After reset, a high eCOMP output switches the outputs of some Timer_B peripherals to high impedance (eCOMP0 those of TB0 and TB1, eCOMP1 those of TB2 and TB3), which stops their PWM; this selects the TBxTRG pin instead, or nothing.
 - Add `TimerConfig::counter_length()` for Timer_B, and `Timer::start_up_down()` for up/down counting. `Timer::resume()` now keeps the counting mode instead of switching to up mode.
 - Add `TimerConfig::compare_latch_groups()` for Timer_B (TBCLGRP), which loads the compare latches of a group of capture/compare registers together, once all of them are written, for example PWM duty cycles that must change in the same period. Measured on an MSP430FR2476, the grouping works with center-aligned PWM, and not with edge-aligned PWM, whose compare latches load when the timer reaches the old duty cycle. The MSP430FR2476 example `pwm_center_aligned` groups the two outputs of its half bridge.
-- Add the `timer_cascade` example for the MSP430FR2355, the `timer` example for the MSP430FR2433, the `timer_b_modes`, `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
+- Add the `timer_cascade` example for the MSP430FR2355, the `timer` example for the MSP430FR2433, the `timer_b_high_impedance`, `timer_b_modes`, `timer_cascade`, `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_cascade` and `timer_vloclk` examples for the MSP430FR2522.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

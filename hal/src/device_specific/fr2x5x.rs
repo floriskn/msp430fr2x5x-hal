@@ -828,4 +828,20 @@ mod timer {
     impl CascadedTimer for Tb1 {
         type Source = Tb0;
     }
+
+    // The TBxOUTH trigger is eCOMP0 or the TBxTRG pin for TB0 and TB1, eCOMP1 or the pin for TB2,
+    // and only eCOMP1 for TB3 (SLASEC4D Table 6-20, p. 76). TB0TRGSEL to TB3TRGSEL are SYSCFG2
+    // bits 15 to 12, 0 for the internal and 1 for the external source (SLAU445I 1.16.1.3, Table 1-26,
+    // p. 77).
+    // The msp430fr2355 PAC doesn't have the TBxTRGSEL fields yet, so they are written by bit number. This
+    // can use `high_impedance_timer_impl!(Tb0, tb0trgsel)` and so on once the PAC has them.
+    high_impedance_timer_impl!(Tb0, bit 15);
+    high_impedance_timer_impl!(Tb1, bit 14);
+    high_impedance_timer_impl!(Tb2, bit 13);
+    high_impedance_timer_impl!(Tb3, bit 12);
+    // The TBxTRG pins, inputs (SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-64, p. 98; SLASEC4D
+    // Table 6-67, p. 104). TB3 has none: TB3TRGSEL = 1 is "N/A" (SLASEC4D Table 6-20, p. 76).
+    impl<PULL> HighImpedancePin<Tb0> for Pin<P1, Pin2, Alternate2<Input<PULL>>> {} // TB0TRG, P1SELx = 10
+    impl<PULL> HighImpedancePin<Tb1> for Pin<P2, Pin3, Alternate1<Input<PULL>>> {} // TB1TRG, P2SELx = 01
+    impl<PULL> HighImpedancePin<Tb2> for Pin<P5, Pin3, Alternate1<Input<PULL>>> {} // TB2TRG, P5SELx = 01
 }
