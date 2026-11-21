@@ -1,6 +1,29 @@
 //! Serial UART
 //!
-//! The peripherals E_USCI_A0 and E_USCI_A1 can be used as serial UARTs.
+//! The eUSCI_A peripherals can be used as serial UARTs (SLAU445I 22.1, p. 575). Pins used (pins with
+//! `RemappedMapping` in brackets):
+//!
+//! | Device       | eUSCI | TXD             | RXD             | External clock  |
+//! |:-------------|:-----:|:---------------:|:---------------:|:---------------:|
+//! | MSP430FR2x5x | A0    | `P1.7`          | `P1.6`          | `P1.5`          |
+//! | MSP430FR2x5x | A1    | `P4.3`          | `P4.2`          | `P4.1`          |
+//! | MSP430FR2433 | A0    | `P1.4`          | `P1.5`          | `P1.6`          |
+//! | MSP430FR2433 | A1    | `P2.6`          | `P2.5`          | `P2.4`          |
+//! | MSP430FR247x | A0    | `P1.4` (`P5.2`) | `P1.5` (`P5.1`) | `P1.6` (`P5.0`) |
+//! | MSP430FR247x | A1    | `P2.6`          | `P2.5`          | `P2.4`          |
+//! | MSP430FR25x2 | A0    | `P1.4` (`P2.0`) | `P1.5` (`P2.1`) | `P1.6`          |
+//!
+//! - MSP430FR2x5x: SLASEC4D Table 6-14, p. 72; port pin functions, including UCA0CLK and UCA1CLK:
+//!   SLASEC4D Table 6-63, p. 96 (P1) and SLASEC4D Table 6-66, p. 102 (P4).
+//! - MSP430FR2433: SLASE59F Table 6-10, p. 49; port pin functions, including UCA0CLK and UCA1CLK: SLASE59F
+//!   Table 6-17, p. 55 (P1) and SLASE59F Table 6-19, p. 58 (P2).
+//! - MSP430FR247x: SLASEO7C Table 9-11, p. 54; port pin functions, including UCA0CLK and UCA1CLK: SLASEO7C
+//!   Table 9-23, p. 65 (P1), SLASEO7C Table 9-24, p. 66 (P2) and SLASEO7C Table 9-27, p. 69 (P5).
+//! - MSP430FR25x2: SLASEE4C Table 6-11, p. 53; port pin functions, including UCA0CLK: SLASEE4C Table 6-15,
+//!   p. 58 (P1) and SLASEE4C Table 6-16, p. 60 (P2).
+//!
+//! On the MSP430FR2433 the PAC exposes each eUSCI once per mode, for example `usci_a0_uart_mode` and
+//! `usci_a0_spi_mode`. Both are the same hardware, so only use one of them for each eUSCI.
 //!
 //! On the MSP430FR2x5x, eUSCI_A1's pins in alternate function 2 (`to_alternate2()`) invert the polarity of
 //! TXD and RXD, and a rising edge then starts a character (SLASEC4D 6.10.8, p. 73; SLASEC4D Table 6-15,
@@ -14,7 +37,8 @@
 //! The [`Tx`] and [`Rx`] structs are used to send and receive bytes via serial. They implement both [`embedded-io`](embedded_io)'s
 //! serial traits (which are buffer-based, blocking), and the single-byte-based non-blocking [`embedded-hal-nb`](embedded_hal_nb::serial) version.
 //!
-//! As the MSP430 has only a single byte buffer, `embedded-io`'s buffer-based traits can be a bit unwieldy -
+//! As the MSP430 has only a single byte buffer (UCAxTXBUF and UCAxRXBUF, SLAU445I 22.4.6, p. 597 and
+//! SLAU445I 22.4.7, p. 597), `embedded-io`'s buffer-based traits can be a bit unwieldy -
 //! [`emb_io::Write::write`](embedded_io::Write::write) and [`emb_io::Read::read`](embedded_io::Read::read) will
 //! always only send or recieve a single byte, despite taking slices as inputs.
 //!
@@ -41,16 +65,18 @@ use core::fmt::Display;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 
-/// Bit order of transmit and receive
+/// Bit order of transmit and receive (UCMSB, SLAU445I Table 22-8, p. 593)
 #[derive(Clone, Copy)]
 pub enum BitOrder {
-    /// LSB first (typically the default)
+    /// LSB first (typically the default; SLAU445I 22.3.2, p. 577: "LSB first is typically required for UART
+    /// communication")
     LsbFirst,
     /// MSB first
     MsbFirst,
 }
 
 impl BitOrder {
+    // UCMSB: 0 = LSB first, 1 = MSB first (SLAU445I Table 22-8, p. 593)
     #[inline(always)]
     fn to_bool(self) -> bool {
         match self {
@@ -60,7 +86,7 @@ impl BitOrder {
     }
 }
 
-/// Number of bits per transaction
+/// Number of bits per transaction (UC7BIT, SLAU445I Table 22-8, p. 593)
 #[derive(Clone, Copy)]
 pub enum BitCount {
     /// 8 bits
@@ -70,6 +96,7 @@ pub enum BitCount {
 }
 
 impl BitCount {
+    // UC7BIT: 0 = 8-bit data, 1 = 7-bit data (SLAU445I Table 22-8, p. 593)
     #[inline(always)]
     fn to_bool(self) -> bool {
         match self {
@@ -79,7 +106,7 @@ impl BitCount {
     }
 }
 
-/// Number of stop bits at end of each byte
+/// Number of stop bits at end of each byte (UCSPB, SLAU445I Table 22-8, p. 593)
 #[derive(Clone, Copy)]
 pub enum StopBits {
     /// 1 stop bit
@@ -89,6 +116,7 @@ pub enum StopBits {
 }
 
 impl StopBits {
+    // UCSPB: 0 = one stop bit, 1 = two stop bits (SLAU445I Table 22-8, p. 593)
     #[inline(always)]
     fn to_bool(self) -> bool {
         match self {
@@ -98,7 +126,7 @@ impl StopBits {
     }
 }
 
-/// Parity bit for error checking
+/// Parity bit for error checking (UCPEN and UCPAR, SLAU445I Table 22-8, p. 593)
 #[derive(Clone, Copy)]
 pub enum Parity {
     /// No parity
@@ -110,6 +138,7 @@ pub enum Parity {
 }
 
 impl Parity {
+    // UCPEN: 1 = parity enabled; UCPAR: 0 = odd, 1 = even (SLAU445I Table 22-8, p. 593)
     #[inline(always)]
     fn ucpen(self) -> bool {
         match self {
@@ -128,16 +157,17 @@ impl Parity {
     }
 }
 
-/// Loopback settings
+/// Loopback settings (UCLISTEN, SLAU445I Table 22-12, p. 596)
 #[derive(Clone, Copy)]
 pub enum Loopback {
     /// No loopback
     NoLoop,
-    /// Tx feeds into Rx
+    /// Tx feeds into Rx (UCLISTEN, SLAU445I Table 22-12, p. 596)
     Loopback,
 }
 
 impl Loopback {
+    // UCLISTEN: 1 = UCAxTXD fed back to the receiver (SLAU445I Table 22-12, p. 596)
     #[inline(always)]
     fn to_bool(self) -> bool {
         match self {
@@ -263,14 +293,16 @@ fn uart_vector<USCI: EUsciUart>(usci: &USCI) -> UartVector {
 
 /// Marks a USCI type that can be used as a serial UART
 pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
-    /// Pin used for serial UCLK
+    /// Pin used for serial UCLK (the UCAxCLK pin, the clock source with UCSSELx = 00b, SLAU445I Table 22-8,
+    /// p. 593)
     type ClockPin;
-    /// Pin used for Tx
+    /// Pin used for Tx (UCAxTXD, SLAU445I 22.2, p. 575)
     type TxPin;
-    /// Pin used for Rx
+    /// Pin used for Rx (UCAxRXD, SLAU445I 22.2, p. 575)
     type RxPin;
 
-    /// Additional configuration
+    /// Additional configuration, such as the eUSCI_A0 remapping bit USCIA0RMP in SYSCFG3 (SLAU445I
+    /// Table 1-32, p. 83)
     #[inline(always)]
     fn configure_pin_mapping() {}
 }
@@ -406,7 +438,8 @@ where
     }
 
     /// Configure serial UART to use external UCLK, passing in the appropriately configured pin
-    /// used as the clock signal as well as the frequency of the clock.
+    /// used as the clock signal as well as the frequency of the clock (UCSSELx = 00b, SLAU445I Table 22-8,
+    /// p. 593).
     ///
     /// # Panics
     ///
@@ -428,7 +461,8 @@ where
     }
 
     #[cfg(feature = "eusci_aclk")]
-    /// Configure serial UART to use ACLK.
+    /// Configure serial UART to use ACLK (UCSSELx = 01b on these devices: SLASEC4D Table 6-9, p. 68;
+    /// SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49).
     ///
     /// # Panics
     ///
@@ -446,7 +480,7 @@ where
     }
 
     #[cfg(feature = "eusci_modclk")]
-    /// Configure serial UART to use MODCLK.
+    /// Configure serial UART to use MODCLK (UCSSELx = 01b on the MSP430FR2433, SLASE59F Table 6-7, p. 46).
     ///
     /// # Panics
     ///
@@ -466,7 +500,7 @@ where
         )
     }
 
-    /// Configure serial UART to use SMCLK.
+    /// Configure serial UART to use SMCLK (UCSSELx = 10b, SLAU445I Table 22-8, p. 593).
     ///
     /// # Panics
     ///
@@ -496,11 +530,17 @@ fn calculate_baud_config(clk_freq: u32, bps: NonZeroU32) -> BaudConfig {
     // In low-frequency mode the baud rate can be at most a third of the clock (SLAU445I 22.3.9.1,
     // p. 584)
     assert!(clk_freq / bps.get() >= 3, "baud rate above a third of the UART clock");
-    // Ensure n stays within the 16 bit boundary
+    // Ensure n stays within the 16 bit boundary (UCBRx, SLAU445I Table 22-10, p. 595)
     let n = (clk_freq / bps).min(0xFFFF);
 
     let brs = lookup_brs(clk_freq, bps);
 
+    // N = fBRCLK / baud rate. Oversampling (UCOS16 = 1) when N >= 16, with UCBRx = INT(N / 16) and
+    // UCBRFx = INT((N / 16 - INT(N / 16)) * 16); otherwise UCBRx = INT(N) (SLAU445I 22.3.10, p. 586: "If N
+    // is equal or greater than 16, it is recommended to use the oversampling baud-rate generation mode";
+    // SLAU445I 22.3.10.1, p. 586; SLAU445I 22.3.10.2, p. 587). The quick set-up note on the same page says
+    // "if N > 16" instead; this follows the text, so N = 16 also oversamples, within the 1/16 limit of
+    // SLAU445I 22.3.9.2, p. 585.
     if (n >= 16) && (bps.get() < u32::MAX / 16) {
         //  div = bps * 16
         const SIXTEEN: NonZeroU32 = NonZeroU32::new(16).unwrap();
@@ -513,14 +553,18 @@ fn calculate_baud_config(clk_freq: u32, bps: NonZeroU32) -> BaudConfig {
         let brf = ((clk_freq % div) / bps) as u8;
         BaudConfig { ucos16: true, br, brf, brs }
     } else {
+        // UCBRFx is ignored with UCOS16 = 0 (SLAU445I Table 22-11, p. 595)
         BaudConfig { ucos16: false, br: n as u16, brf: 0, brs }
     }
 }
 
 #[inline(always)]
 fn lookup_brs(clk_freq: u32, bps: NonZeroU32) -> u8 {
-    // bps is between [1, 5_000_000] (datasheet max)
-    // clk_freq is between [0, 24_000_000] (datasheet max)
+    // bps is between [1, 5_000_000] (datasheet max: fBITCLK 5 MHz in SLASEC4D Table 5-14, p. 45,
+    // SLASE59F Table 5-14, p. 30, SLASEO7C 8.12.7.1, p. 35 and SLASEE4C Table 5-14, p. 32)
+    // clk_freq is between [0, 24_000_000] (datasheet max: feUSCI 24 MHz on the MSP430FR2x5x, SLASEC4D
+    // Table 5-14, p. 45; 16 MHz on the others, SLASE59F Table 5-14, p. 30, SLASEO7C 8.12.7.1, p. 35 and
+    // SLASEE4C Table 5-14, p. 32)
 
     // modulo = clk_freq % bps => modulo is between [0, 4_999_999]
     let modulo = clk_freq % bps;
@@ -533,11 +577,12 @@ fn lookup_brs(clk_freq: u32, bps: NonZeroU32) -> u8 {
         // Most accurate
         ((modulo * 10_000) / bps) as u16
     } else {
-        // Avoid overflow if modulo is large. Assume modulo < 5_000_000 from datasheet max
+        // Avoid overflow if modulo is large. Assume modulo < 5_000_000 from datasheet max (fBITCLK, above)
         (((modulo * 500) / bps) * 20) as u16
     };
 
-    // See Table 22-4 from MSP430FR4xx and MSP430FR2xx family user's guide (Rev. I)
+    // See SLAU445I Table 22-4, p. 586, in the MSP430FR4xx and MSP430FR2xx family user's guide (Rev. I).
+    // A row's UCBRSx is valid from its fractional portion up to the next row's.
     match fraction_as_ten_thousandths {
         0..529     => 0x00,
         529..715   => 0x01,
@@ -590,8 +635,11 @@ where
 
         // Set UCSWRST, then initialize the registers (SLAU445I 22.3.1, p. 577, steps 1 and 2)
         usci.ctl0_reset();
+        // UCAxBRW holds UCBRx; UCAxMCTLW holds UCBRSx, UCBRFx and UCOS16 (SLAU445I Table 22-10, p. 595;
+        // SLAU445I Table 22-11, p. 595)
         usci.brw_settings(baud_config.br);
         usci.mctlw_settings(baud_config.ucos16, baud_config.brs, baud_config.brf);
+        // UCLISTEN in UCAxSTATW (SLAU445I Table 22-12, p. 596)
         usci.loopback(self.loopback.to_bool());
         // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
         usci.ctl1_settings(self.deglitch as u8);
@@ -609,7 +657,8 @@ where
             ucspb: self.stopbits.to_bool(),
             ucmode: self.mode.ucmode(),
             ucssel: clksel,
-            // We want erroneous bytes to trigger RXIFG so all errors can be caught
+            // We want erroneous bytes to trigger RXIFG so all errors can be caught (UCRXEIE, SLAU445I
+            // Table 22-8, p. 593)
             ucrxeie: true,
             ucbrkie: self.break_interrupts,
         });
@@ -659,14 +708,14 @@ where
     USCI: SerialUsci<M>,
     M: PinMap,
 {
-    /// Enable Tx interrupts, which fire when ready to send.
+    /// Enable Tx interrupts, which fire when ready to send (UCTXIE, SLAU445I 22.3.15.1, p. 590).
     #[inline(always)]
     pub fn enable_tx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
         usci.txie_set();
     }
 
-    /// Disable Tx interrupts
+    /// Disable Tx interrupts (UCTXIE, SLAU445I Table 22-17, p. 600)
     #[inline(always)]
     pub fn disable_tx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
@@ -752,13 +801,16 @@ where
     #[inline(always)]
     /// Writes a byte into the Tx buffer with no checks for validity
     /// # Safety
-    /// May clobber unsent data still in the buffer
+    /// May clobber unsent data still in the buffer (UCAxTXBUF holds the data waiting to be moved into the
+    /// shift register, SLAU445I Table 22-14, p. 597)
     pub unsafe fn write_no_check(&mut self, data: u8) {
         let usci = unsafe { USCI::steal() };
         usci.tx_wr(data);
     }
 
-    // Internal send function
+    // Internal send function. It writes UCAxTXBUF only while UCTXIFG is set: "UCTXIFG is set when new data
+    // can be written into UCAxTXBUF" (SLAU445I 22.3.8, p. 583), and writing clears it (SLAU445I Table 22-14,
+    // p. 597).
     #[inline]
     fn send(&mut self, data: u8) -> nb::Result<(), Infallible> {
         let usci = unsafe { USCI::steal() };
@@ -782,14 +834,14 @@ where
     USCI: SerialUsci<M>,
     M: PinMap,
 {
-    /// Enable Rx interrupts, which fire when ready to read
+    /// Enable Rx interrupts, which fire when ready to read (UCRXIE, SLAU445I 22.3.15.2, p. 591)
     #[inline(always)]
     pub fn enable_rx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
         usci.rxie_set();
     }
 
-    /// Disable Rx interrupts
+    /// Disable Rx interrupts (UCRXIE, SLAU445I Table 22-17, p. 600)
     #[inline(always)]
     pub fn disable_rx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
@@ -858,7 +910,7 @@ where
 
     /// Reads raw value from Rx buffer with no checks for validity
     /// # Safety
-    /// May read duplicate data
+    /// May read duplicate data (UCAxRXBUF keeps the last received character, SLAU445I Table 22-13, p. 597)
     #[inline(always)]
     pub unsafe fn read_no_check(&mut self) -> u8 {
         let usci = unsafe { USCI::steal() };
@@ -870,6 +922,7 @@ where
         let usci = unsafe { USCI::steal() };
 
         if usci.rxifg_rd() {
+            // UCAxSTATW first: reading UCAxRXBUF clears the error flags (SLAU445I 22.3.6, p. 582)
             let statw = usci.statw_rd();
             let data = usci.rx_rd();
             // Reading UCAxRXBUF "clears all error flags except UCOE, if UCAxRXBUF was overwritten between
@@ -902,11 +955,12 @@ pub enum RecvError {
     /// A break was received: all bits low, see [`SerialConfig::break_interrupts`] (UCBRK, SLAU445I
     /// Table 22-1, p. 582)
     Break,
-    /// Framing error
+    /// Framing error (UCFE, SLAU445I Table 22-1, p. 582)
     Framing,
-    /// Parity error
+    /// Parity error (UCPE, SLAU445I Table 22-1, p. 582)
     Parity,
-    /// Buffer overrun error. Contains the most recently read byte, which is still valid.
+    /// Buffer overrun error. Contains the most recently read byte, which is still valid (UCOE: the character
+    /// was loaded into UCAxRXBUF before the prior one was read, SLAU445I Table 22-1, p. 582).
     Overrun(u8),
 }
 // embedded-io requires this
@@ -962,6 +1016,7 @@ mod emb_io {
     {
         fn read_ready(&mut self) -> Result<bool, Self::Error> {
             let usci = unsafe { USCI::steal() };
+            // UCRXIFG: UCAxRXBUF has received a complete character (SLAU445I Table 22-18, p. 601)
             Ok(usci.rxifg_rd())
         }
     }
@@ -1024,6 +1079,7 @@ mod emb_io {
         M: PinMap,
     {
         /// Whether the writer is ready for immediate writing. If this returns `true`, the next call to [`Write::write`] will not block.
+        /// (UCTXIFG: the Tx buffer is empty, SLAU445I Table 22-18, p. 601.)
         ///
         /// As the error type is `Infallible`, this can be safely unwrapped.
         fn write_ready(&mut self) -> Result<bool, Self::Error> {
@@ -1061,7 +1117,8 @@ mod ehal_nb1 {
         M: PinMap,
     {
         #[inline]
-        /// Check if Rx interrupt flag is set. If so, try reading the received byte and clear the flag.
+        /// Check if Rx interrupt flag is set. If so, try reading the received byte and clear the flag
+        /// (reading UCAxRXBUF clears UCRXIFG, SLAU445I 22.3.15.2, p. 591).
         /// Otherwise return `WouldBlock`. May return errors caused by data corruption or
         /// buffer overruns.
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
@@ -1089,7 +1146,8 @@ mod ehal_nb1 {
         fn flush(&mut self) -> nb::Result<(), Self::Error> { self.flush() }
 
         #[inline]
-        /// Check if Tx interrupt flag is set. If so, write a byte into the Tx buffer. Otherwise return `WouldBlock`
+        /// Check if Tx interrupt flag is set (UCTXIFG, set when the Tx buffer is empty, SLAU445I Table 22-18,
+        /// p. 601). If so, write a byte into the Tx buffer. Otherwise return `WouldBlock`
         fn write(&mut self, data: u8) -> nb::Result<(), Self::Error> { self.send(data) }
     }
 }
@@ -1107,7 +1165,8 @@ mod ehal02 {
         type Error = RecvError;
 
         #[inline]
-        /// Check if Rx interrupt flag is set. If so, try reading the received byte and clear the flag.
+        /// Check if Rx interrupt flag is set. If so, try reading the received byte and clear the flag
+        /// (reading UCAxRXBUF clears UCRXIFG, SLAU445I 22.3.15.2, p. 591).
         /// Otherwise return `WouldBlock`. May return errors caused by data corruption or
         /// buffer overruns.
         fn read(&mut self) -> nb::Result<u8, Self::Error> { self.recv() }
@@ -1131,7 +1190,8 @@ mod ehal02 {
         }
 
         #[inline]
-        /// Check if Tx interrupt flag is set. If so, write a byte into the Tx buffer. Otherwise return `WouldBlock`
+        /// Check if Tx interrupt flag is set (UCTXIFG, set when the Tx buffer is empty, SLAU445I Table 22-18,
+        /// p. 601). If so, write a byte into the Tx buffer. Otherwise return `WouldBlock`
         fn write(&mut self, data: u8) -> nb::Result<(), Self::Error> {
             self.send(data).map_err(|_| nb::Error::WouldBlock)
         }
