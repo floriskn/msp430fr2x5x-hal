@@ -129,6 +129,14 @@ where
         Self { usci, ctlw0, prescaler: 0, _phantom: PhantomData }
     }
     /// This device will act as a slave on the SPI bus.
+    ///
+    /// On the MSP430FR2x5x, MSP430FR2433 and MSP430FR25x2, a slave with UCCKPH = 1
+    /// (`CaptureOnFirstTransition`) sends wrong data, and an eUSCI_A receives nothing, if SCLK isn't at its
+    /// idle level when the eUSCI leaves reset (SLAZ695J USCI47, SLAZ664S USCI47, SLAZ705H USCI47). The
+    /// erratum's workarounds: "Use clock phase mode UCCKPH = 0 for MSP SPI slave if allowed by the
+    /// application", or "The SPI master must set the clock pin at the appropriate idle level (low for
+    /// UCCKPL = 0, high for UCCKPL = 1) before SPI slave is reset (UCSWRST bit is cleared)", that is,
+    /// before this slave is configured.
     pub fn to_slave(mut self) -> SpiConfig<USCI, Slave, M> {
         self.ctlw0.ucmst = false;
         // UCSSEL is 'don't care' in slave mode
