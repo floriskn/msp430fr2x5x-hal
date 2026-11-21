@@ -398,6 +398,11 @@ mod timer {
         timer::*,
     };
 
+    // TA0 and TA1 have CCR0 to CCR2, TA2 and TA3 CCR0 and CCR1 (SLASE59F 6.10.8, p. 50 to p. 51; register
+    // tables: SLASE59F Tables 6-35 to 6-38, p. 65). Registers: TAxCTL with TASSEL, TAIE, TAIFG and TACLR
+    // (SLAU445I Table 13-4, p. 384), TAxR (SLAU445I Table 13-5, p. 385), TAxCCTLn (SLAU445I Table 13-6,
+    // p. 386), TAxCCRn and TAxIV (SLAU445I Tables 13-7 and 13-8, p. 388), TAxEX0 with TAIDEX (SLAU445I
+    // Table 13-9, p. 389).
     timer_a_impl!(
         Timer0A3,
         ta0,
@@ -464,13 +469,16 @@ mod timer {
         [CCR1, ta3cctl1, ta3ccr1]
     );
 
+    // The external clock inputs TAxCLK, P1SELx = 10 with P1DIR = 0 (SLASE59F Table 6-11, p. 50, and
+    // SLASE59F Table 6-12, p. 51; SLASE59F Table 6-17, p. 55), which TASSEL = 00b selects (SLAU445I
+    // Table 13-4, p. 384; SLASE59F Table 6-7, p. 46)
     impl TimerPeriph for Timer0A3 {
-        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>;
+        type Tbxclk = Pin<P1, Pin0, Alternate2<Input<Floating>>>; // TA0CLK on P1.0: P1SELx = 10, P1DIR = 0
     }
     impl CapCmpTimer3 for Timer0A3 {}
 
     impl TimerPeriph for Timer1A3 {
-        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
+        type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>; // TA1CLK on P1.6: P1SELx = 10, P1DIR = 0
     }
     impl CapCmpTimer3 for Timer1A3 {}
 

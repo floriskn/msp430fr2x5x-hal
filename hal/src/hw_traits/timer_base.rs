@@ -1,7 +1,9 @@
-// Functionality common to both TimerA and TimerB
+// Functionality common to both TimerA and TimerB (Timer_B is identical to Timer_A apart from the
+// differences in SLAU445I 14.1.1, p. 391)
 
 use super::Steal;
 
+// TASSEL/TBSSEL values (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
 pub enum Tbssel {
     Tbxclk,
     Aclk,
@@ -9,7 +11,7 @@ pub enum Tbssel {
     Inclk,
 }
 
-/// Timer clock divider
+/// Timer clock divider (ID: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
 pub enum TimerDiv {
     /// No division
     _1,
@@ -21,7 +23,8 @@ pub enum TimerDiv {
     _8,
 }
 
-/// Timer expansion clock divider, applied on top of the normal clock divider
+/// Timer expansion clock divider, applied on top of the normal clock divider (TAIDEX/TBIDEX: SLAU445I
+/// 13.2.1.1, p. 370; SLAU445I Table 13-9, p. 389; SLAU445I Table 14-11, p. 414)
 pub enum TimerExDiv {
     /// No division
     _1,
@@ -41,6 +44,7 @@ pub enum TimerExDiv {
     _8,
 }
 
+// OUTMOD values (SLAU445I Table 13-2, p. 376; SLAU445I Table 14-4, p. 401)
 pub enum Outmod {
     Out,
     Set,
@@ -52,6 +56,7 @@ pub enum Outmod {
     ResetSet,
 }
 
+// CM values (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
 pub enum Cm {
     NoCap,
     RisingEdge,
@@ -59,6 +64,7 @@ pub enum Cm {
     BothEdges,
 }
 
+// CCIS values (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
 pub enum Ccis {
     InputA,
     InputB,
@@ -66,10 +72,16 @@ pub enum Ccis {
     Vcc,
 }
 
+// Accessors of a timer's TAxCTL/TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409 to
+// p. 410), TAxR/TBxR (SLAU445I Table 13-5, p. 385; SLAU445I Table 14-7, p. 410), TAxIV/TBxIV (SLAU445I
+// Table 13-8, p. 388; SLAU445I Table 14-10, p. 414) and TAxEX0/TBxEX0 (SLAU445I Table 13-9, p. 389;
+// SLAU445I Table 14-11, p. 414)
 pub trait TimerBase: Steal {
-    /// Reset timer countdown
+    /// Reset timer countdown (TBCLR: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn reset(&self);
 
+    // The three mode functions write MC, set TBCLR and clear TBIFG (SLAU445I Table 13-4, p. 384; SLAU445I
+    // Table 14-6, p. 409 to p. 410)
     /// Set to upmode, reset timer, and clear interrupts
     fn upmode(&self);
     /// Set to continuous mode, reset timer, and clear interrupts
@@ -85,37 +97,47 @@ pub trait TimerBase: Steal {
     /// none (SLAU445I Table 14-6, p. 409; SLAU445I Table 14-3, p. 400).
     fn set_tbclgrp(&self, tbclgrp: u8);
 
-    /// Apply clock select settings
+    /// Apply clock select settings (TBSSEL and ID: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn config_clock(&self, tbssel: Tbssel, div: TimerDiv);
 
-    /// Check if timer is stopped
+    /// Check if timer is stopped (MC = 0 in TBxCTL: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     fn is_stopped(&self) -> bool;
 
-    /// Stop timer
+    /// Stop timer (MC = 0: SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394)
     fn stop(&self);
 
     /// Resume a *stopped* timer. Assumes the previous mode was 'stop'.
-    /// Atomic, fast.
+    /// Atomic, fast. It sets MC in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409).
     fn resume(&self, mode: RunningMode);
 
-    /// Change a timer's mode. Non-atomic, slower.
+    /// Change a timer's mode. Non-atomic, slower. To go from one mode to another the user's guide stops the
+    /// timer first (MC = 0) (SLAU445I 13.2.3, p. 371; 14.2.3, p. 394). It writes MC in TBxCTL (SLAU445I
+    /// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409).
     fn change_mode(&self, mode: Mode);
 
-    /// Set expansion register clock divider settings
+    /// Set expansion register clock divider settings (TBIDEX: SLAU445I Table 13-9, p. 389; SLAU445I
+    /// Table 14-11, p. 414)
     fn set_tbidex(&self, tbidex: TimerExDiv);
 
+    // TAIFG/TBIFG, the timer overflow flag in TAxCTL/TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I
+    // Table 14-6, p. 410)
     fn tbifg_rd(&self) -> bool;
     fn tbifg_clr(&self);
 
+    // TAIE/TBIE, its interrupt enable in TAxCTL/TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    // p. 410)
     fn tbie_set(&self);
     fn tbie_clr(&self);
 
+    // TAxIV/TBxIV; a read clears the highest pending flag (SLAU445I Table 13-8, p. 388; SLAU445I
+    // Table 14-10, p. 414; SLAU445I 13.2.6.2, p. 380)
     fn tbxiv_rd(&self) -> u16;
 
-    /// Get the current timer value.
+    /// Get the current timer value (TBxR: SLAU445I Table 13-5, p. 385; SLAU445I Table 14-7, p. 410).
     fn get_tbxr(&self) -> u16;
 }
 
+// MC values (SLAU445I Table 13-1, p. 371; SLAU445I Table 14-1, p. 394)
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RunningMode {
@@ -131,19 +153,28 @@ pub enum Mode {
     UpDown = 0b11,
 }
 
+// Accessors of one capture/compare block: its TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I
+// Table 14-9, p. 413) and TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386 to p. 387; SLAU445I Table 14-8,
+// p. 411 to p. 412)
 pub trait CCRn<C>: Steal {
+    // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
     fn set_ccrn(&self, count: u16);
     fn get_ccrn(&self) -> u16;
 
+    // TAxCCTLn/TBxCCTLn, for compare mode with an output mode or for capture mode (SLAU445I Table 13-6,
+    // p. 386; SLAU445I Table 14-8, p. 411)
     fn config_outmod(&self, outmod: Outmod);
     fn config_cap_mode(&self, cm: Cm, ccis: Ccis);
 
+    // CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
     fn ccifg_rd(&self) -> bool;
     fn ccifg_clr(&self);
 
+    // CCIE in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     fn ccie_set(&self);
     fn ccie_clr(&self);
 
+    // COV and CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
     fn cov_ccifg_rd(&self) -> (bool, bool);
     fn cov_ccifg_clr(&self);
     fn cov_clr(&self);
@@ -169,6 +200,8 @@ pub trait CCRn<C>: Steal {
     fn clld_rd(&self) -> u8;
 }
 
+// The capture/compare registers TAxCCR0 to TAxCCR6 and TBxCCR0 to TBxCCR6 (SLAU445I Table 13-3, p. 383;
+// SLAU445I Table 14-5, p. 408). How many a timer has depends on the device, see the CapCmpTimer traits.
 /// Label for capture-compare register 0
 pub struct CCR0;
 /// Label for capture-compare register 1
@@ -256,6 +289,7 @@ macro_rules! ccrn_impl {
                 });
             }
 
+            // TAxCCRn/TBxCCRn (SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
             #[inline(always)]
             fn get_ccrn(&self) -> u16 { self.$tbxccrn().read().bits() }
 
@@ -271,6 +305,10 @@ macro_rules! ccrn_impl {
 
             #[inline(always)]
             fn config_cap_mode(&self, cm: Cm, ccis: Ccis) {
+                // A write of TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411).
+                // CAP = 1 selects capture mode (SLAU445I 13.2.4.1, p. 374). SCS synchronizes the capture with
+                // the timer clock, which the user's guide recommends (SLAU445I 13.2.4.1, p. 375; SLAU445I
+                // 14.2.4.1, p. 398).
                 self.$tbxcctln().write(|w| unsafe { w
                     .cap().set_bit()
                     .scs().set_bit()
@@ -279,20 +317,25 @@ macro_rules! ccrn_impl {
                 });
             }
 
+            // CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
             #[inline(always)]
             fn ccifg_rd(&self) -> bool { self.$tbxcctln().read().ccifg().bit() }
 
+            // CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
             #[inline(always)]
             fn ccifg_clr(&self) {
                 unsafe { self.$tbxcctln().clear_bits(|w| w.ccifg().clear_bit()) };
             }
 
+            // CCIE in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
             #[inline(always)]
             fn ccie_set(&self) { unsafe { self.$tbxcctln().set_bits(|w| w.ccie().set_bit()) }; }
 
+            // CCIE in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
             #[inline(always)]
             fn ccie_clr(&self) { unsafe { self.$tbxcctln().clear_bits(|w| w.ccie().clear_bit()) }; }
 
+            // COV and CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
             #[inline(always)]
             fn cov_ccifg_rd(&self) -> (bool, bool) {
                 let cctl = self.$tbxcctln().read();
@@ -306,6 +349,7 @@ macro_rules! ccrn_impl {
                 unsafe { self.$tbxcctln().clear_bits(|w| w.cov().clear_bit()) };
             }
 
+            // COV and CCIFG in TAxCCTLn/TBxCCTLn (SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
             #[inline(always)]
             fn cov_ccifg_clr(&self) {
                 unsafe {
@@ -354,6 +398,11 @@ macro_rules! ccrn_impl {
 }
 pub(crate) use ccrn_impl;
 
+// Implements the traits on a Timer_A or Timer_B. The registers are TAxCTL/TBxCTL, TAxEX0/TBxEX0, TAxIV/TBxIV,
+// TAxR/TBxR and the TAxCCTLn/TBxCCTLn and TAxCCRn/TBxCCRn pairs (SLAU445I Table 13-3, p. 383; SLAU445I
+// Table 14-5, p. 408). The field names differ: TACLR/TBCLR, TAIFG/TBIFG, TAIDEX/TBIDEX, TAIE/TBIE and
+// TASSEL/TBSSEL (SLAU445I Table 13-4, p. 384; SLAU445I Table 13-9, p. 389; SLAU445I Table 14-6, p. 409 to
+// p. 410; SLAU445I Table 14-11, p. 414).
 macro_rules! timer_base_impl {
     (
         $kind:ident, // A for Timer_A, B for Timer_B
@@ -369,11 +418,16 @@ macro_rules! timer_base_impl {
         }
 
         impl TimerBase for $TBx {
+            // TBCLR clears the count, the clock divider logic and the count direction (SLAU445I Table 13-4,
+            // p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn reset(&self) {
                 unsafe { self.$tbxctl().set_bits(|w| w.$txclr().set_bit()) };
             }
 
+            // The three mode functions set TBCLR along with MC, which also restarts the divider logic as a
+            // TBIDEX change needs (SLAU445I 13.3.6, p. 389; SLAU445I 14.3.6, p. 414). MC values: SLAU445I
+            // Table 13-1, p. 371; SLAU445I Table 14-1, p. 394.
             #[inline(always)]
             fn upmode(&self) {
                 self.$tbxctl().modify(|r, w| {
@@ -385,6 +439,7 @@ macro_rules! timer_base_impl {
                 });
             }
 
+            // TBxCTL: TBCLR, TBIFG and MC = 10b (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn continuous(&self) {
                 self.$tbxctl().modify(|r, w| {
@@ -426,6 +481,10 @@ macro_rules! timer_base_impl {
                 $crate::hw_traits::timer_base::timer_b_field!($kind, self.$tbxctl(), tbclgrp, tbclgrp);
             }
 
+            // A write of TBSSEL and ID in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409),
+            // so MC = 0 and the timer stops: the clock source and the dividers are only to be
+            // changed while it's stopped (SLAU445I 13.2.1.1, p. 370, note "Timer_A dividers"; 13.2.7,
+            // p. 382; 14.2.1.2, p. 393; 14.2.7, p. 407)
             #[inline(always)]
             fn config_clock(&self, tbssel: Tbssel, div: TimerDiv) {
                 self.$tbxctl()
@@ -435,56 +494,68 @@ macro_rules! timer_base_impl {
                     });
             }
 
+            // MC = 0 is stop mode (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn is_stopped(&self) -> bool {
                 self.$tbxctl().read().mc().bits() == (Mode::Stop as u8)
             }
 
+            // Clears MC in TBxCTL: stop mode (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn stop(&self) {
                 unsafe { self.$tbxctl().clear_bits(|w| w.mc().bits(Mode::Stop as u8)) };
             }
 
+            // Writes MC in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn change_mode(&self, mode: Mode) {
                 self.$tbxctl().modify(|_,w| unsafe{ w.mc().bits(mode as u8) });
             }
 
+            // Sets MC in TBxCTL from 00b (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
             #[inline(always)]
             fn resume(&self, mode: RunningMode) {
                 unsafe { self.$tbxctl().set_bits(|w| w.mc().bits(mode as u8)) };
             }
 
+            // TBIDEX in TBxEX0 (SLAU445I Table 13-9, p. 389; SLAU445I Table 14-11, p. 414)
             #[inline(always)]
             fn set_tbidex(&self, tbidex: TimerExDiv) {
                 self.$tbxex().write(|w| unsafe { w.$txidex().bits(tbidex as u8) });
             }
 
+            // TBIFG in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 410)
             #[inline(always)]
             fn tbifg_rd(&self) -> bool {
                 self.$tbxctl().read().$txifg().bit()
             }
 
+            // TBIFG in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 410)
             #[inline(always)]
             fn tbifg_clr(&self) {
                 unsafe { self.$tbxctl().clear_bits(|w| w.$txifg().clear_bit()) };
             }
 
+            // TBIE in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 410)
             #[inline(always)]
             fn tbie_set(&self) {
                 unsafe { self.$tbxctl().set_bits(|w| w.$txie().set_bit()) };
             }
 
+            // TBIE in TBxCTL (SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6, p. 410)
             #[inline(always)]
             fn tbie_clr(&self) {
                 unsafe { self.$tbxctl().clear_bits(|w| w.$txie().clear_bit()) };
             }
 
+            // TBxIV (SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414). Reading it clears the
+            // highest pending flag (SLAU445I 13.2.6.2, p. 380; 14.2.6.2, p. 405)
             #[inline(always)]
             fn tbxiv_rd(&self) -> u16 {
                 self.$tbxiv().read().bits()
             }
 
+            // TBxR (SLAU445I Table 13-5, p. 385; SLAU445I Table 14-7, p. 410)
             #[inline(always)]
             fn get_tbxr(&self) -> u16 {
                 self.$tbxr().read().bits()

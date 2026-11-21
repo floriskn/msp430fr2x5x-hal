@@ -2,7 +2,8 @@
 //!
 //! Configures the board's TimerB peripherals into periodic countdown timers. Each peripheral
 //! consists of a main timer and multiple "sub-timers". Sub-timers have their own thresholds and
-//! interrupts but share their countdowns with their main timer.
+//! interrupts but share their countdowns with their main timer: they are its capture/compare blocks
+//! (SLAU445I 13.2.4, p. 374; 14.2.4, p. 398).
 //!
 //! This module also contains traits used by other HAL modules that depend on TimerB, such as
 //! `Capture` and `Pwm`.
@@ -53,11 +54,16 @@ pub enum NoTbxclkPin {}
 /// Trait indicating that the peripheral has 2 capture compare registers: TA2 and TA3 on the MSP430FR2433
 /// (SLASE59F 6.10.8, p. 51: "two capture/compare registers each")
 pub trait CapCmpTimer2<M: PinMap = DefaultMapping>: TimerPeriph<M> + CapCmp<CCR1> {}
-/// Trait indicating that the peripheral has 3 capture compare registers
+/// Trait indicating that the peripheral has 3 capture compare registers ("three capture/compare registers
+/// each"): TB0 to TB2 on the MSP430FR2x5x (SLASEC4D 6.10.9, p. 73), TA0 and TA1 on the MSP430FR2433
+/// (SLASE59F 6.10.8, p. 50), TA0 to TA3 on the MSP430FR247x (SLASEO7C 9.10.8, p. 55), and TA0 and TA1 on
+/// the MSP430FR25x2 (SLASEE4C 6.10.8, p. 54)
 pub trait CapCmpTimer3<M: PinMap = DefaultMapping>:
     TimerPeriph<M> + CapCmp<CCR1> + CapCmp<CCR2>
 {}
-/// Trait indicating that the peripheral has 7 capture compare registers
+/// Trait indicating that the peripheral has 7 capture compare registers: TB3 on the MSP430FR2x5x
+/// (SLASEC4D 6.10.9, p. 73: "seven capture/compare registers") and TB0 on the MSP430FR247x (SLASEO7C
+/// Table 9-15, p. 59, CCR0 to CCR6)
 pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     TimerPeriph<M>
     + CapCmp<CCR1>
@@ -274,19 +280,23 @@ where
         }
     }
 
-    /// Configure timer clock source to ACLK
+    /// Configure timer clock source to ACLK (TASSEL/TBSSEL = 01b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409)
     #[inline]
     pub fn aclk(_aclk: &Aclk) -> Self { Self::with_clock(Tbssel::Aclk) }
 
-    /// Configure timer clock source to SMCLK
+    /// Configure timer clock source to SMCLK (TASSEL/TBSSEL = 10b: SLAU445I Table 13-4, p. 384; SLAU445I
+    /// Table 14-6, p. 409)
     #[inline]
     pub fn smclk(_smclk: &Smclk) -> Self { Self::with_clock(Tbssel::Smclk) }
 
-    /// Configure timer clock source to TBCLK
+    /// Configure timer clock source to TBCLK, the timer's clock pin (TASSEL/TBSSEL = 00b: SLAU445I
+    /// Table 13-4, p. 384; SLAU445I Table 14-6, p. 409)
     #[inline]
     pub fn tbclk(_pin: T::Tbxclk) -> Self { Self::with_clock(Tbssel::Tbxclk) }
 
-    /// Configure the normal clock divider and expansion clock divider settings
+    /// Configure the normal clock divider and expansion clock divider settings (ID and TAIDEX/TBIDEX:
+    /// SLAU445I 13.2.1.1, p. 370; 14.2.1.2, p. 393)
     #[inline]
     pub fn clk_div(self, div: TimerDiv, ex_div: TimerExDiv) -> Self {
         TimerConfig { div, ex_div, ..self }
@@ -295,6 +305,10 @@ where
     #[inline]
     pub(crate) fn write_regs(self, timer: &T) {
         T::configure_pin_mapping();
+        // TBCLR, then TBIDEX, then TBxCTL with MC = 0, as for starting a timer (SLAU445I 13.2.2,
+        // p. 370; 14.2.2, p. 393). The functions that start the timer set TBCLR again, which a TBIDEX
+        // change needs (SLAU445I 13.3.6, p. 389; 14.3.6, p. 414: "After programming TBIDEX bits and
+        // configuring the timer, set TBCLR bit").
         timer.reset();
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
@@ -423,6 +437,12 @@ where
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
+///
+/// The timers with 3 capture/compare registers, by device: TB0 to TB2 on the MSP430FR2x5x (SLASEC4D
+/// Table 6-16, p. 73; SLASEC4D Table 6-17, p. 74; SLASEC4D Table 6-18, p. 74), TA0 and TA1 on the
+/// MSP430FR2433 (SLASE59F Table 6-11, p. 50; SLASE59F Table 6-12, p. 51), TA0 to TA3 on the MSP430FR247x
+/// (SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-13, p. 56; SLASEO7C Table 9-14, p. 58), and TA0 and TA1
+/// on the MSP430FR25x2 (SLASEE4C Figure 6-2, p. 54).
 pub struct TimerParts3<T, M = DefaultMapping>
 where
     T: CapCmpTimer3<M>,
@@ -430,11 +450,11 @@ where
 {
     /// Main timer
     pub timer: Timer<T, M>,
-    /// Timer interrupt vector
+    /// Timer interrupt vector (TAxIV/TBxIV: SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T>,
-    /// Sub-timer 1 (derived from CCR1 register)
+    /// Sub-timer 1 (derived from CCR1 register: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
     pub subtimer1: SubTimer<T, CCR1>,
-    /// Sub-timer 2 (derived from CCR2 register)
+    /// Sub-timer 2 (derived from CCR2 register: SLAU445I Table 13-7, p. 388; SLAU445I Table 14-9, p. 413)
     pub subtimer2: SubTimer<T, CCR2>,
 }
 
@@ -457,6 +477,9 @@ where
 }
 
 /// Main timer and sub-timers for timer peripherals with 7 capture-compare registers
+///
+/// The timers with 7 capture/compare registers are TB3 on the MSP430FR2x5x (SLASEC4D Table 6-19, p. 75)
+/// and TB0 on the MSP430FR247x (SLASEO7C Table 9-15, p. 59). Both are Timer_B.
 pub struct TimerParts7<T, M = DefaultMapping>
 where
     T: CapCmpTimer7<M>,
@@ -464,19 +487,19 @@ where
 {
     /// Main timer
     pub timer: Timer<T, M>,
-    /// Timer interrupt vector
+    /// Timer interrupt vector (TBxIV: SLAU445I Table 14-10, p. 414)
     pub tbxiv: TBxIV<T>,
-    /// Sub-timer 1 (derived from CCR1 register)
+    /// Sub-timer 1 (derived from CCR1 register, TBxCCR1: SLAU445I Table 14-9, p. 413)
     pub subtimer1: SubTimer<T, CCR1>,
-    /// Sub-timer 2 (derived from CCR2 register)
+    /// Sub-timer 2 (derived from CCR2 register, TBxCCR2: SLAU445I Table 14-9, p. 413)
     pub subtimer2: SubTimer<T, CCR2>,
-    /// Sub-timer 3 (derived from CCR3 register)
+    /// Sub-timer 3 (derived from CCR3 register, TBxCCR3: SLAU445I Table 14-9, p. 413)
     pub subtimer3: SubTimer<T, CCR3>,
-    /// Sub-timer 4 (derived from CCR4 register)
+    /// Sub-timer 4 (derived from CCR4 register, TBxCCR4: SLAU445I Table 14-9, p. 413)
     pub subtimer4: SubTimer<T, CCR4>,
-    /// Sub-timer 5 (derived from CCR5 register)
+    /// Sub-timer 5 (derived from CCR5 register, TBxCCR5: SLAU445I Table 14-9, p. 413)
     pub subtimer5: SubTimer<T, CCR5>,
-    /// Sub-timer 6 (derived from CCR6 register)
+    /// Sub-timer 6 (derived from CCR6 register, TBxCCR6: SLAU445I Table 14-9, p. 413)
     pub subtimer6: SubTimer<T, CCR6>,
 }
 
@@ -521,14 +544,17 @@ where
 /// Sub-timer associated with a main timer
 ///
 /// Each sub-timer has its own interrupt mechanism and threshold, but shares its countdown value
-/// with its main timer.
+/// with its main timer (a capture/compare block: SLAU445I 13.2.4, p. 374; 14.2.4, p. 398).
 pub struct SubTimer<T: CapCmp<C>, C>(PhantomData<T>, PhantomData<C>);
 
 impl<T: CapCmp<C>, C> SubTimer<T, C> {
     fn new() -> Self { Self(PhantomData, PhantomData) }
 }
 
-/// Indicates which sub/main timer caused the interrupt to fire
+/// Indicates which sub/main timer caused the interrupt to fire: the TAxIV/TBxIV values 00h to 0Eh, from
+/// no interrupt through CCR1 to CCR6 to the timer overflow (SLAU445I Table 13-8, p. 388; SLAU445I
+/// Table 14-10, p. 414). CCR0 has its own interrupt vector and isn't in this list (SLAU445I 13.2.6.1,
+/// p. 380; 14.2.6.1, p. 405).
 pub enum TimerVector {
     /// No pending interrupt
     NoInterrupt,
@@ -550,6 +576,7 @@ pub enum TimerVector {
 
 #[inline]
 pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector {
+    // TBxIV only takes these values (SLAU445I Table 13-8, p. 388; SLAU445I Table 14-10, p. 414)
     match timer.tbxiv_rd() {
         0 => TimerVector::NoInterrupt,
         2 => TimerVector::SubTimer1,
@@ -563,12 +590,14 @@ pub(crate) fn read_tbxiv<T: TimerBase>(timer: &T) -> TimerVector {
     }
 }
 
-/// Interrupt vector register for determining which timer caused an ISR
+/// Interrupt vector register for determining which timer caused an ISR (TAxIV/TBxIV: SLAU445I Table 13-8,
+/// p. 388; SLAU445I Table 14-10, p. 414)
 pub struct TBxIV<T>(PhantomData<T>);
 
 impl<T: TimerBase> TBxIV<T> {
     #[inline]
-    /// Read the timer interrupt vector. Automatically resets corresponding interrupt flag.
+    /// Read the timer interrupt vector. Automatically resets corresponding interrupt flag (SLAU445I
+    /// 13.2.6.2, p. 380; 14.2.6.2, p. 405).
     pub fn interrupt_vector(&mut self) -> TimerVector {
         let timer = unsafe { T::steal() };
         read_tbxiv(&timer)
@@ -580,14 +609,16 @@ where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    /// Enable timer countdown expiration interrupts
+    /// Enable timer countdown expiration interrupts (TBIE: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    /// p. 410)
     #[inline(always)]
     pub fn enable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.tbie_set();
     }
 
-    /// Disable timer countdown expiration interrupts
+    /// Disable timer countdown expiration interrupts (TBIE: SLAU445I Table 13-4, p. 384; SLAU445I Table 14-6,
+    /// p. 410)
     #[inline(always)]
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
@@ -595,9 +626,11 @@ where
     }
 
     #[inline]
-    /// Clears the timer, sets the count, and starts the timer in upcounting mode.
+    /// Clears the timer, sets the count, and starts the timer in upcounting mode (up mode: SLAU445I
+    /// 13.2.3.1, p. 371; 14.2.3.1, p. 394).
     pub fn start(&mut self, count: u16) {
         let timer = unsafe { T::steal() };
+        // CCR0 is updated while the timer is stopped (SLAU445I 13.2.3.1.1, p. 371)
         timer.stop();
         timer.set_ccrn(count);
         timer.upmode();
@@ -635,7 +668,8 @@ where
     }
 
     #[inline]
-    /// Pause the timer at the current value
+    /// Pause the timer at the current value (MC = 0, "The timer is halted": SLAU445I Table 13-1, p. 371;
+    /// SLAU445I Table 14-1, p. 394)
     pub fn pause(&mut self) {
         let timer = unsafe { T::steal() };
         timer.stop();
@@ -684,7 +718,7 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     }
 
     #[inline]
-    /// Wait for the sub-timer to fire
+    /// Wait for the sub-timer to fire (its CCIFG: SLAU445I Table 13-6, p. 387; SLAU445I Table 14-8, p. 412)
     pub fn wait(&mut self) -> nb::Result<(), Infallible> {
         let timer = unsafe { T::steal() };
         if timer.ccifg_rd() {
@@ -696,14 +730,14 @@ impl<T: CapCmp<C>, C> SubTimer<T, C> {
     }
 
     #[inline(always)]
-    /// Enable the sub-timer interrupts
+    /// Enable the sub-timer interrupts (CCIE: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     pub fn enable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_set();
     }
 
     #[inline(always)]
-    /// Disable the sub-timer interrupts
+    /// Disable the sub-timer interrupts (CCIE: SLAU445I Table 13-6, p. 386; SLAU445I Table 14-8, p. 411)
     pub fn disable_interrupts(&mut self) {
         let timer = unsafe { T::steal() };
         timer.ccie_clr();
