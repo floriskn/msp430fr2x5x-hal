@@ -329,10 +329,17 @@ where
     }
 
     #[inline]
-    /// Get the current timer value
+    /// Get the current timer value.
+    ///
+    /// A timer clocked asynchronously to MCLK (from ACLK, for example) can return a wrong value
+    /// when read while it counts, so this takes the median of three reads, as the user's guide
+    /// suggests (SLAU445I 13.2.1, p. 370; 14.2.1, p. 393, notes "Accessing TAxR" and "Accessing TBxR":
+    /// "TBxR can be read multiple times while the timer is running, and a majority vote taken in
+    /// software").
     pub fn count(&mut self) -> u16 {
         let timer = unsafe { T::steal() };
-        timer.get_tbxr()
+        let (a, b, c) = (timer.get_tbxr(), timer.get_tbxr(), timer.get_tbxr());
+        a.min(b).max(a.max(b).min(c))
     }
 }
 
