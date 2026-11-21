@@ -26,7 +26,9 @@
 //! [`Read::read_exact`](embedded_io::Read::read_exact) methods are useful.
 //!
 
-use crate::clock::{Aclk, Clock, Smclk};
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::Aclk;
+use crate::clock::{Clock, Smclk};
 use crate::hw_traits::eusci::{EUsciUart, UartUcxStatw, UcaCtlw0, Ucssel};
 use crate::pin_mapping::*;
 use core::convert::Infallible;

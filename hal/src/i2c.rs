@@ -69,7 +69,9 @@
 
 use core::convert::Infallible;
 
-use crate::clock::{Aclk, Smclk};
+#[cfg(feature = "eusci_aclk")]
+use crate::clock::Aclk;
+use crate::clock::Smclk;
 use crate::hw_traits::eusci::{
     EUsciI2C, I2CUcbIfgOut, UcbCtlw0, UcbCtlw1, UcbI2coa, Ucmode, Ucssel,
 };
