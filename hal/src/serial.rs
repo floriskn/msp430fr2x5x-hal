@@ -2,6 +2,12 @@
 //!
 //! The peripherals E_USCI_A0 and E_USCI_A1 can be used as serial UARTs.
 //!
+//! On the MSP430FR2x5x, eUSCI_A1's pins in alternate function 2 (`to_alternate2()`) invert the polarity of
+//! TXD and RXD, and a rising edge then starts a character (SLASEC4D 6.10.8, p. 73; SLASEC4D Table 6-15,
+//! p. 73, "eUSCI_A1 UART Polarity Configurations"; SLASEC4D Table 6-66, p. 102: P4SELx = 10b). SLASEC4D
+//! Table 6-15, p. 73 names P4.4 for RXD, but UCA1RXD is on P4.2 (SLASEC4D Table 6-14, p. 72 and SLASEC4D
+//! Table 6-66, p. 102); the HAL follows the pin function table, where P4.4 is UCB1STE.
+//!
 //! Begin configuration by calling [`SerialConfig::new()`]. After configuration, [`Rx`] and/or [`Tx`] structs are produced by
 //! providing the corresponding GPIO pins.
 //!
@@ -148,11 +154,17 @@ pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     fn configure_pin_mapping() {}
 }
 
+// The pin's alternate function defaults to Alternate1 (PxSEL = 01b, the UCAxTXD, UCAxRXD and UCAxCLK
+// function in the port pin function tables, for example SLASEC4D Table 6-63, p. 96; SLASE59F Table 6-17,
+// p. 55; SLASEO7C Table 9-23, p. 65; SLASEE4C Table 6-15, p. 58)
 macro_rules! impl_serial_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
-        impl<DIR> From<Pin<$port, $pin, Alternate1<DIR>>> for $struct_name {
+        impl_serial_pin!($struct_name, $port, $pin, Alternate1);
+    };
+    ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
             #[inline(always)]
-            fn from(_val: Pin<$port, $pin, Alternate1<DIR>>) -> Self { $struct_name }
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
         }
     };
 }

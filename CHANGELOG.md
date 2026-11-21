@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - A pin in an alternate function can switch directly to another one with `to_alternate1()`, `to_alternate2()` and `to_alternate3()`, without passing through GPIO. Before, these methods existed but couldn't be called on a single pin.
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
+- Fixed on the MSP430FR25x2: the remapped eUSCI_B0 pins use alternate function 2. Added the eUSCI_A1 SPI STE pin (P3.1) on the MSP430FR2433, and the inverted eUSCI_A1 UART pins (P4.2 and P4.3 in alternate function 2) on the MSP430FR2x5x.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

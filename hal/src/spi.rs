@@ -65,11 +65,16 @@ pub trait SpiUsci<M: PinMap = DefaultMapping>: EusciSPI {
 }
 
 // Allows a GPIO pin to be converted into an SPI object
+// The pin's alternate function defaults to Alternate1: PxSEL = 01b, the primary module function
+// (SLAU445I Table 8-3, p. 314). The device_specific files cite each pin's function in its data sheet.
 macro_rules! impl_spi_pin {
     ($struct_name: ident, $port: ty, $pin: ty) => {
-        impl<DIR> From<Pin<$port, $pin, Alternate1<DIR>>> for $struct_name {
+        impl_spi_pin!($struct_name, $port, $pin, Alternate1);
+    };
+    ($struct_name: ident, $port: ty, $pin: ty, $alt: ident) => {
+        impl<DIR> From<Pin<$port, $pin, $alt<DIR>>> for $struct_name {
             #[inline(always)]
-            fn from(_val: Pin<$port, $pin, Alternate1<DIR>>) -> Self { $struct_name }
+            fn from(_val: Pin<$port, $pin, $alt<DIR>>) -> Self { $struct_name }
         }
     };
 }

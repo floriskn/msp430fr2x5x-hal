@@ -369,8 +369,10 @@ mod spi {
     /// SPI SCLK pin for eUSCI A1 (P2.4)
     pub struct UsciA1SCLKPin;
     impl_spi_pin!(UsciA1SCLKPin, P2, Pin4);
-    /// SPI STE pin for eUSCI A1. This pin does not exist for the MSP430FR2433.
+    /// SPI STE pin for eUSCI A1 (P3.1, UCA1STE, P3SELx = 01: SLASE59F Table 6-20, p. 59; not in the
+    /// DSBGA package: SLASE59F Table 4-1, p. 11)
     pub struct UsciA1STEPin;
+    impl_spi_pin!(UsciA1STEPin, P3, Pin1);
 
     /// SPI MISO pin for eUSCI B0 (P1.3)
     pub struct UsciB0MISOPin;

@@ -566,13 +566,21 @@ mod serial {
     pub struct UsciA1ClockPin;
     impl_serial_pin!(UsciA1ClockPin, P4, Pin1);
 
-    /// Tx pin for E_USCI_A1
+    /// Tx pin for E_USCI_A1: P4.3, UCA1TXD (P4SELx = 01), or inverted (P4SELx = 10) (SLASEC4D
+    /// Table 6-66, p. 102)
     pub struct UsciA1TxPin;
     impl_serial_pin!(UsciA1TxPin, P4, Pin3);
+    // Alternate function 2 inverts the polarity of TXD and RXD (SLASEC4D 6.10.8, p. 73: "When PSEL = 10b,
+    // the inverted UART mode is enabled"; SLASEC4D Table 6-66, p. 102: inverted UCA1TXD on P4.3 and
+    // inverted UCA1RXD on P4.2 with P4SELx = 10. SLASEC4D Table 6-15, p. 73 gives RXD as P4.4, but
+    // SLASEC4D Table 6-14, p. 72 and SLASEC4D Table 6-66, p. 102 put UCA1RXD on P4.2.)
+    impl_serial_pin!(UsciA1TxPin, P4, Pin3, Alternate2);
 
-    /// Rx pin for E_USCI_A1
+    /// Rx pin for E_USCI_A1: P4.2, UCA1RXD (P4SELx = 01), or inverted (P4SELx = 10) (SLASEC4D
+    /// Table 6-66, p. 102)
     pub struct UsciA1RxPin;
     impl_serial_pin!(UsciA1RxPin, P4, Pin2);
+    impl_serial_pin!(UsciA1RxPin, P4, Pin2, Alternate2); // 10: UCA1RXD, inverted
 }
 
 /* SPI */
