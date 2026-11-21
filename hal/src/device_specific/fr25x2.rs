@@ -267,6 +267,7 @@ mod serial {
         uca0statw,
         uca0rxbuf,
         uca0txbuf,
+        uca0abctl,
         uca0ie,
         uca0ifg,
         uca0iv,

@@ -112,6 +112,9 @@ pub struct UcaCtlw0 {
     pub ucmsb: bool,
     pub uc7bit: bool,
     pub ucspb: bool,
+    /// UART mode: 0 UART, 1 idle-line multiprocessor, 2 address-bit multiprocessor, 3 automatic baud rate
+    /// (UCMODEx, SLAU445I Table 22-8, p. 593)
+    pub ucmode: u8,
     pub ucssel: Ucssel,
     pub ucrxeie: bool,
     pub ucbrkie: bool,
@@ -216,6 +219,25 @@ pub trait EUsciUart: Steal {
 
     /// UCGLITx in UCAxCTLW1, the deglitch time (SLAU445I Table 22-9, p. 594)
     fn ctl1_settings(&self, ucglit: u8);
+
+    // UCMODEx = 11b, automatic baud-rate detection (SLAU445I Table 22-8, p. 593)
+    fn auto_baud_mode(&self) -> bool;
+
+    // Set UCTXADDR or UCTXBRK, which mark the next character written to UCAxTXBUF (SLAU445I Table 22-8,
+    // p. 594)
+    fn txaddr_set(&self);
+    fn txbrk_set(&self);
+
+    // UCDORM (SLAU445I Table 22-8, p. 594)
+    fn dormant(&self, dormant: bool);
+
+    /// UCABDEN and UCDELIMx in UCAxABCTL (automatic baud rate, SLAU445I Table 22-15, p. 598). Write it only
+    /// while UCSWRST = 1 (SLAU445I Figure 22-19, p. 598).
+    fn abctl_settings(&self, ucabden: bool, ucdelim: u8);
+
+    // UCBTOE and UCSTOE in UCAxABCTL (SLAU445I Table 22-15, p. 598)
+    fn btoe_rd(&self) -> bool;
+    fn stoe_rd(&self) -> bool;
 }
 
 pub trait EUsciI2C: Steal {
@@ -345,6 +367,7 @@ pub trait UartUcxStatw {
     fn ucpe(&self) -> bool;
     fn ucbrk(&self) -> bool;
     fn ucbusy(&self) -> bool;
+    fn ucaddr_ucidle(&self) -> bool;
 }
 
 pub trait SpiStatw {
@@ -495,10 +518,21 @@ macro_rules! eusci_spi_impl {
 }
 pub(crate) use eusci_spi_impl;
 
+pub(crate) const UCADDR_UCIDLE: u8 = 1 << 1;
+
+/// Whether any bit of `mask` is set in a register value of either 8 or 16 bits
+#[inline(always)]
+pub(crate) fn flag_set<T>(value: T, mask: u8) -> bool
+where
+    T: From<u8> + core::ops::BitAnd<Output = T> + PartialEq,
+{
+    value & T::from(mask) != T::from(0)
+}
+
 macro_rules! eusci_uart_impl {
     ($EUsci:ident, $ucaxctlw0:ident, $ucaxctlw1:ident, $ucaxbrw:ident,
-     $ucaxmctlw:ident, $ucaxstatw:ident, $ucaxrxbuf:ident, $ucaxtxbuf:ident, $ucaxie:ident,
-     $ucaxifg:ident, $ucaxiv:ident, $Statw:ty) => {
+     $ucaxmctlw:ident, $ucaxstatw:ident, $ucaxrxbuf:ident, $ucaxtxbuf:ident, $ucaxabctl:ident,
+     $ucaxie:ident, $ucaxifg:ident, $ucaxiv:ident, $Statw:ty) => {
         impl EUsciUart for $EUsci {
             type Statw = $Statw;
 
@@ -512,6 +546,7 @@ macro_rules! eusci_uart_impl {
                     .ucmsb().bit(reg.ucmsb)
                     .uc7bit().bit(reg.uc7bit)
                     .ucspb().bit(reg.ucspb)
+                    .ucmode().bits(reg.ucmode)
                     .ucssel().bits(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
                     .ucbrkie().bit(reg.ucbrkie)
@@ -585,6 +620,38 @@ macro_rules! eusci_uart_impl {
             // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
             #[inline(always)]
             fn ctl1_settings(&self, ucglit: u8) { self.$ucaxctlw1().write(|w| unsafe { w.ucglit().bits(ucglit) }); }
+
+            // UCMODEx in UCAxCTLW0 (SLAU445I Table 22-8, p. 593)
+            #[inline(always)]
+            fn auto_baud_mode(&self) -> bool { self.$ucaxctlw0().read().ucmode().bits() == 0b11 }
+
+            // UCTXADDR, UCTXBRK and UCDORM in UCAxCTLW0 (SLAU445I Table 22-8, p. 594)
+            #[inline(always)]
+            fn txaddr_set(&self) { unsafe { self.$ucaxctlw0().set_bits(|w| w.uctxaddr().set_bit()) }; }
+
+            #[inline(always)]
+            fn txbrk_set(&self) { unsafe { self.$ucaxctlw0().set_bits(|w| w.uctxbrk().set_bit()) }; }
+
+            #[inline(always)]
+            fn dormant(&self, dormant: bool) {
+                if dormant {
+                    unsafe { self.$ucaxctlw0().set_bits(|w| w.ucdorm().set_bit()) };
+                } else {
+                    unsafe { self.$ucaxctlw0().clear_bits(|w| w.ucdorm().clear_bit()) };
+                }
+            }
+
+            // UCAxABCTL (SLAU445I Table 22-15, p. 598)
+            #[inline(always)]
+            fn abctl_settings(&self, ucabden: bool, ucdelim: u8) {
+                self.$ucaxabctl().write(|w| unsafe { w.bits((ucabden as u8 | (ucdelim << 4)).into()) });
+            }
+
+            #[inline(always)]
+            fn btoe_rd(&self) -> bool { self.$ucaxabctl().read().ucbtoe().bit() }
+
+            #[inline(always)]
+            fn stoe_rd(&self) -> bool { self.$ucaxabctl().read().ucstoe().bit() }
         }
 
         impl UartUcxStatw for $Statw {
@@ -602,6 +669,9 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn ucbusy(&self) -> bool { self.ucbusy().bit() }
+
+            #[inline(always)]
+            fn ucaddr_ucidle(&self) -> bool { $crate::hw_traits::eusci::flag_set(self.bits(), $crate::hw_traits::eusci::UCADDR_UCIDLE) }
         }
     };
 }

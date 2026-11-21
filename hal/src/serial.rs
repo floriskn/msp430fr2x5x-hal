@@ -25,6 +25,11 @@
 //! For writing multiple bytes, embedded_io's [`Write::write_all`](embedded_io::Write::write_all) and
 //! [`Read::read_exact`](embedded_io::Read::read_exact) methods are useful.
 //!
+//! Besides plain UART, [`SerialConfig::mode`] selects the multiprocessor formats, which mark address characters
+//! ([`Tx::send_address`], [`Rx::set_dormant`]; SLAU445I 22.3.3, p. 577 to p. 579), and automatic baud-rate
+//! detection from a LIN break and synch field (SLAU445I 22.3.4, p. 580). [`SerialConfig::deglitch`] sets how
+//! short a pulse on RXD is ignored (SLAU445I 22.3.7.1, p. 583).
+//!
 
 #[cfg(feature = "eusci_aclk")]
 use crate::clock::Aclk;
@@ -159,6 +164,57 @@ pub enum UartDeglitch {
     _200ns = 3,
 }
 
+/// The length of the break delimiter sent before the synch field in automatic baud-rate mode (UCDELIM,
+/// SLAU445I 22.3.4.1, p. 581 and SLAU445I Table 22-15, p. 598)
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum BreakDelimiter {
+    /// 1 bit time
+    #[default]
+    _1Bit = 0,
+    /// 2 bit times
+    _2Bits = 1,
+    /// 3 bit times
+    _3Bits = 2,
+    /// 4 bit times
+    _4Bits = 3,
+}
+
+/// The UART mode (UCMODE, SLAU445I Table 22-8, p. 593; SLAU445I 22.3.3, p. 577; SLAU445I 22.3.4, p. 580)
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum UartMode {
+    /// Plain UART
+    #[default]
+    Uart,
+    /// Idle-line multiprocessor format: the first character after an idle line of 10 or more bits is an
+    /// address (SLAU445I 22.3.3.1, p. 577)
+    IdleLineMultiprocessor,
+    /// Address-bit multiprocessor format: each character has an extra bit that marks addresses (SLAU445I
+    /// 22.3.3.2, p. 579)
+    AddressBitMultiprocessor,
+    /// Automatic baud-rate detection, as in LIN: a received break and synch field (0x55) set the baud rate.
+    /// For LIN, use 8 data bits, LSB first, no parity and one stop bit. The receiver measures with the
+    /// transmitter's baud-rate generator, so it can't measure a break and synch field it sends itself, in
+    /// loopback for example (SLAU445I 22.3.4, p. 580: "The transmit baud-rate generator is used for the
+    /// measurement", "The eUSCI_A cannot transmit data while receiving the break/sync field").
+    AutoBaud {
+        /// The length of the break delimiter [`Tx::send_break`] sends
+        delimiter: BreakDelimiter,
+    },
+}
+
+impl UartMode {
+    // UCMODEx (SLAU445I Table 22-8, p. 593)
+    #[inline(always)]
+    fn ucmode(self) -> u8 {
+        match self {
+            UartMode::Uart => 0b00,
+            UartMode::IdleLineMultiprocessor => 0b01,
+            UartMode::AddressBitMultiprocessor => 0b10,
+            UartMode::AutoBaud { .. } => 0b11,
+        }
+    }
+}
+
 /// Marks a USCI type that can be used as a serial UART
 pub trait SerialUsci<M: PinMap = DefaultMapping>: EUsciUart {
     /// Pin used for serial UCLK
@@ -213,6 +269,7 @@ where USCI: SerialUsci<M>
     stopbits: StopBits,
     parity: Parity,
     loopback: Loopback,
+    mode: UartMode,
     deglitch: UartDeglitch,
     break_interrupts: bool,
     state: S,
@@ -228,6 +285,7 @@ macro_rules! serial_config {
             stopbits: $conf.stopbits,
             parity: $conf.parity,
             loopback: $conf.loopback,
+            mode: $conf.mode,
             deglitch: $conf.deglitch,
             break_interrupts: $conf.break_interrupts,
             state: $state,
@@ -241,6 +299,14 @@ where
     USCI: SerialUsci<M>,
     M: PinMap,
 {
+    /// Select the UART mode: plain UART, a multiprocessor format or automatic baud-rate detection (UCMODEx,
+    /// SLAU445I Table 22-8, p. 593).
+    #[inline]
+    pub fn mode(mut self, mode: UartMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /// Set how short a pulse on RXD the receiver ignores. After reset that's about 200 ns (UCGLITx = 3,
     /// SLAU445I Table 22-9, p. 594; see [`UartDeglitch`] for the data sheets' times).
     #[inline]
@@ -283,6 +349,9 @@ where
             parity,
             loopback,
             usci,
+            // The reset values: UCMODEx = 00b and UCGLITx = 11b (SLAU445I Table 22-8, p. 593; SLAU445I
+            // Table 22-9, p. 594)
+            mode: UartMode::Uart,
             deglitch: UartDeglitch::_200ns,
             break_interrupts: false,
             state: NoClockSet { baudrate: NonZeroU32::new(baudrate).unwrap_or(ONE) },
@@ -480,6 +549,11 @@ where
         usci.loopback(self.loopback.to_bool());
         // UCGLITx in UCAxCTLW1 (SLAU445I Table 22-9, p. 594)
         usci.ctl1_settings(self.deglitch as u8);
+        // UCABDEN and UCDELIMx in UCAxABCTL (SLAU445I Table 22-15, p. 598)
+        match self.mode {
+            UartMode::AutoBaud { delimiter } => usci.abctl_settings(true, delimiter as u8),
+            _ => usci.abctl_settings(false, 0),
+        }
         // UCAxCTLW0, with UCSWRST still set (SLAU445I Table 22-8, p. 593 to p. 594)
         usci.ctl0_settings(UcaCtlw0 {
             ucpen: self.parity.ucpen(),
@@ -487,6 +561,7 @@ where
             ucmsb: self.order.to_bool(),
             uc7bit: self.cnt.to_bool(),
             ucspb: self.stopbits.to_bool(),
+            ucmode: self.mode.ucmode(),
             ucssel: clksel,
             // We want erroneous bytes to trigger RXIFG so all errors can be caught
             ucrxeie: true,
@@ -552,6 +627,40 @@ where
         usci.txie_clear();
     }
 
+    /// Send an address character, in the multiprocessor modes (UCTXADDR): preceded by an idle line in the
+    /// idle-line format, with the address bit set in the address-bit format (SLAU445I 22.3.3.1.1, p. 578 and
+    /// SLAU445I 22.3.3.2, p. 579). Returns `WouldBlock` until the Tx buffer is free.
+    #[inline]
+    pub fn send_address(&mut self, address: u8) -> nb::Result<(), Infallible> {
+        let usci = unsafe { USCI::steal() };
+        if !usci.txifg_rd() {
+            return Err(nb::Error::WouldBlock);
+        }
+        // "Set UCTXADDR, then write the address character to UCAxTXBUF. UCAxTXBUF must be ready for new data
+        // (UCTXIFG = 1)." (SLAU445I 22.3.3.1.1, p. 578)
+        usci.txaddr_set();
+        usci.tx_wr(address);
+        Ok(())
+    }
+
+    /// Send a break: all bits low for a character time, or in automatic baud-rate mode a 13-bit break, the
+    /// break delimiter and the synch field 0x55, as LIN needs (UCTXBRK; SLAU445I 22.3.3.2.1, p. 579 and
+    /// SLAU445I 22.3.4.1, p. 581). Returns `WouldBlock` until the Tx buffer is free.
+    #[inline]
+    pub fn send_break(&mut self) -> nb::Result<(), Infallible> {
+        let usci = unsafe { USCI::steal() };
+        if !usci.txifg_rd() {
+            return Err(nb::Error::WouldBlock);
+        }
+        // UCMODEx (bits 10-9) = 11b: automatic baud-rate mode, which needs 055h instead of 0h in UCAxTXBUF
+        // (SLAU445I Table 22-8, p. 593 to p. 594). Set UCTXBRK, then write UCAxTXBUF, which must be ready for
+        // new data, UCTXIFG = 1 (SLAU445I 22.3.3.2.1, p. 579 and SLAU445I 22.3.4.1, p. 581).
+        let auto_baud = usci.auto_baud_mode();
+        usci.txbrk_set();
+        usci.tx_wr(if auto_baud { 0x55 } else { 0x00 });
+        Ok(())
+    }
+
     // Internal flush function: done once the Tx buffer is empty and the last character has left the
     // shift register. UCBUSY also covers a character being received, so this can wait for that too
     // (UCTXIFG, UCBUSY: SLAU445I Table 22-18, p. 601 and SLAU445I Table 22-12, p. 596).
@@ -612,6 +721,37 @@ where
     pub fn disable_rx_interrupts(&mut self) {
         let usci = unsafe { USCI::steal() };
         usci.rxie_clear();
+    }
+
+    /// In the multiprocessor and automatic baud-rate modes, receive only address characters, or the character
+    /// after a break and synch field, while dormant (UCDORM, SLAU445I Table 22-8, p. 594). After receiving
+    /// one that's for this device, leave the dormant state to receive the data that follows (SLAU445I
+    /// 22.3.3.1, p. 578; SLAU445I 22.3.3.2, p. 579; SLAU445I 22.3.4, p. 580: "user software must reset UCDORM
+    /// to continue receiving data").
+    #[inline(always)]
+    pub fn set_dormant(&mut self, dormant: bool) {
+        let usci = unsafe { USCI::steal() };
+        usci.dormant(dormant);
+    }
+
+    /// Like reading a character, but also returns whether it's an address character, in the multiprocessor
+    /// modes (UCADDR, UCIDLE, SLAU445I Table 22-12, p. 596).
+    #[inline]
+    pub fn read_with_address_flag(&mut self) -> nb::Result<(u8, bool), RecvError> {
+        let usci = unsafe { USCI::steal() };
+        // The flag is cleared when the character is read, so read it first (SLAU445I Table 22-13, p. 597)
+        let address = usci.statw_rd().ucaddr_ucidle();
+        self.recv().map(|data| (data, address))
+    }
+
+    /// In automatic baud-rate mode: whether a break was longer than 22 bit times (UCBTOE), and whether a
+    /// synch field was too long to measure (UCSTOE). See SLAU445I Table 22-15, p. 598; the text in SLAU445I
+    /// 22.3.4, p. 580 says UCBTOE is set when the break "exceeds 21 bit times". This follows the register
+    /// table, which describes the flag itself.
+    #[inline]
+    pub fn auto_baud_errors(&self) -> (bool, bool) {
+        let usci = unsafe { USCI::steal() };
+        (usci.btoe_rd(), usci.stoe_rd())
     }
 
     /// Reads raw value from Rx buffer with no checks for validity
