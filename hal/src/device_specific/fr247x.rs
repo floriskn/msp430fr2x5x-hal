@@ -1052,4 +1052,9 @@ mod timer {
         type Tbxclk = Pin<P6, Pin1, Alternate1<Input<Floating>>>;
     }
     impl CapCmpTimer7 for Tb0 {}
+
+    // INCLK is the VLO on TA0 and TA2, and the CCR2 output of TA0 on TA1 and of TA2 on TA3. It
+    // isn't connected on TB0. (SLASEO7C Tables 9-12 to 9-15, p. 55 to p. 59)
+    impl VloclkTimer for Ta0 {}
+    impl VloclkTimer for Ta2 {}
 }

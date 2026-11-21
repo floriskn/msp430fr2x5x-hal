@@ -473,4 +473,8 @@ mod timer {
         type Tbxclk = Pin<P1, Pin6, Alternate2<Input<Floating>>>;
     }
     impl CapCmpTimer3 for Timer1A3 {}
+
+    // INCLK isn't connected on any timer, so there are no VLOCLK or cascaded timers (SLASE59F Tables
+    // 6-11 to 6-14, p. 50 to p. 52, list no INCLK input. SLAU445I Figure 1-8, p. 50, still draws INCLK on
+    // the TA0 and TA1 clock selects, TA0's "from CapTouchIO", which SLASE59F doesn't list.)
 }

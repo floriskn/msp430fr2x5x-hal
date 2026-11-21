@@ -43,10 +43,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - A pin in an alternate function can switch directly to another one with `to_alternate1()`, `to_alternate2()` and `to_alternate3()`, without passing through GPIO. Before, these methods existed but couldn't be called on a single pin.
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
+- Add `TimerConfig::vloclk()`, for the timers that can be clocked from the VLO: TA0 and TA2 on the MSP430FR247x, and TA0 on the MSP430FR25x2.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
 - Fixed timer registers being written while the timer runs: a timer now stops while its output mode (OUTMOD) changes, and a Timer_A also while a new compare value (TAxCCRn) is written, as the user's guide recommends. A Timer_B keeps running, since its compare latches buffer the new TBxCCRn values.
-- Add the `timer_external_clock` example for the MSP430FR2476.
+- Add the `timer_external_clock` and `timer_vloclk` examples for the MSP430FR2476 and the `timer_vloclk` example for the MSP430FR2522.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

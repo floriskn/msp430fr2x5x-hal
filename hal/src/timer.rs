@@ -49,6 +49,20 @@ pub trait CapCmpTimer7<M: PinMap = DefaultMapping>:
     + CapCmp<CCR6>
 {}
 
+// Traits effectively sealed by TimerBase
+/// Trait indicating that the timer can be clocked from VLOCLK, see [`TimerConfig::vloclk`]
+///
+/// A timer's fourth clock input, INCLK (TASSEL/TBSSEL = 11b: SLAU445I Table 13-4, p. 384; SLAU445I
+/// Table 14-6, p. 409), is wired differently on each device and each timer. These timers have the VLO on
+/// it (data sheets, timer signal connections and clock distribution):
+///
+/// | Device                     | Timers   | Reference                                              |
+/// |----------------------------|----------|--------------------------------------------------------|
+/// | MSP430FR2475, MSP430FR2476 | TA0, TA2 | SLASEO7C Table 9-12, p. 55; SLASEO7C Table 9-14, p. 58 |
+/// | MSP430FR2512, MSP430FR2522 | TA0      | SLASEE4C Figure 6-2, p. 54; SLASEE4C Table 6-8, p. 49  |
+/// | Other devices              | None     | SLASEC4D Table 6-9, p. 68; SLASE59F Table 6-7, p. 46   |
+pub trait VloclkTimer: TimerBase {}
+
 /// Configuration object for the TimerB peripheral
 ///
 /// Used to configure `Timer`, `Capture`, and `Pwm`, which all use the TimerB peripheral.
@@ -69,52 +83,33 @@ where
     T: TimerPeriph<M>,
     M: PinMap,
 {
-    /// Configure timer clock source to ACLK
     #[inline]
-    pub fn aclk(_aclk: &Aclk) -> Self {
+    fn with_clock(sel: Tbssel) -> Self {
         TimerConfig {
             _timer: PhantomData,
-            sel: Tbssel::Aclk,
+            sel,
             div: TimerDiv::_1,
             ex_div: TimerExDiv::_1,
             _pin_map: PhantomData,
         }
     }
+
+    /// Configure timer clock source to ACLK
+    #[inline]
+    pub fn aclk(_aclk: &Aclk) -> Self { Self::with_clock(Tbssel::Aclk) }
 
     /// Configure timer clock source to SMCLK
     #[inline]
-    pub fn smclk(_smclk: &Smclk) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: Tbssel::Smclk,
-            div: TimerDiv::_1,
-            ex_div: TimerExDiv::_1,
-            _pin_map: PhantomData,
-        }
-    }
+    pub fn smclk(_smclk: &Smclk) -> Self { Self::with_clock(Tbssel::Smclk) }
 
     /// Configure timer clock source to TBCLK
     #[inline]
-    pub fn tbclk(_pin: T::Tbxclk) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: Tbssel::Tbxclk,
-            div: TimerDiv::_1,
-            ex_div: TimerExDiv::_1,
-            _pin_map: PhantomData,
-        }
-    }
+    pub fn tbclk(_pin: T::Tbxclk) -> Self { Self::with_clock(Tbssel::Tbxclk) }
 
     /// Configure the normal clock divider and expansion clock divider settings
     #[inline]
     pub fn clk_div(self, div: TimerDiv, ex_div: TimerExDiv) -> Self {
-        TimerConfig {
-            _timer: PhantomData,
-            sel: self.sel,
-            div,
-            ex_div,
-            _pin_map: PhantomData,
-        }
+        TimerConfig { div, ex_div, ..self }
     }
 
     #[inline]
@@ -124,6 +119,19 @@ where
         timer.set_tbidex(self.ex_div);
         timer.config_clock(self.sel, self.div);
     }
+}
+
+impl<T, M> TimerConfig<T, M>
+where
+    T: TimerPeriph<M> + VloclkTimer,
+    M: PinMap,
+{
+    /// Configure timer clock source to VLOCLK, which runs at about 10 kHz but is only accurate to
+    /// ±50 % (VLOCLK "10 kHz ±50%": SLASEO7C Table 9-8, p. 50; SLASEE4C Table 6-8, p. 49). Only some
+    /// timers have this option, see [`VloclkTimer`]. It selects INCLK (TASSEL = 11b: SLAU445I Table 13-4,
+    /// p. 384).
+    #[inline]
+    pub fn vloclk() -> Self { Self::with_clock(Tbssel::Inclk) }
 }
 
 /// Main timer and sub-timers for timer peripherals with 3 capture-compare registers
