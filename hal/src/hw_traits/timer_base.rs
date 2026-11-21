@@ -211,6 +211,7 @@ pub(crate) use ccrn_impl;
 
 macro_rules! timer_base_impl {
     (
+        $kind:ident, // A for Timer_A, B for Timer_B
         $TBx:ident, $tbx:ident, $tbxctl:ident, $tbxex:ident, $tbxiv:ident, $tbxr:ident, // Timer registers
         $txclr:ident, $txifg:ident, $txidex:ident, $txie:ident, $txssel:ident, // Register field names (differ between TimerA and TimerB)
         $([$CCRn:ident, $tbxcctln:ident, $tbxccrn:ident]),* // CCR registers
@@ -315,7 +316,7 @@ macro_rules! timer_base_impl {
             }
         }
 
-        $(ccrn_impl!($TBx, $CCRn, $tbxcctln, $tbxccrn);)*
+        $($crate::hw_traits::timer_base::ccrn_impl!($TBx, $CCRn, $tbxcctln, $tbxccrn);)*
     };
 }
 pub(crate) use timer_base_impl;

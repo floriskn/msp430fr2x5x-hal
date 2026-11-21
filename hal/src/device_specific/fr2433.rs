@@ -394,7 +394,7 @@ mod timer {
     use crate::{
         gpio::*,
         hw_traits::{timer_a::*, Steal},
-        pac::{self, *},
+        pac::*,
         timer::*,
     };
 
