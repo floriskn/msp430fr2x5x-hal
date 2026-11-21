@@ -47,12 +47,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed UART `flush()` returning while the last character was still being sent. It now waits until the eUSCI is idle.
 - Fixed UART reads missing an overrun between the status and buffer reads. They now check UCOE again after reading UCAxRXBUF and report `RecvError::Overrun`.
 - The UART and I2C configuration now panics on clock settings the eUSCI can't run: a UART baud rate above a third of the clock in low-frequency mode (the divider was clamped to 1 before), and an I2C master clock divider below 4, or 8 with several masters.
+- Add `SpiConfig::seven_bit_characters()`, and `SpiConfig::single_slave_bus()`, where the eUSCI drives the slave's enable signal on STE.
 - Fixed `I2cRoleSlave::poll()` panicking when the start flag had been cleared, by reading the interrupt vector say, while a received byte was still unread and the master had started reading. It now reports `OverrunWrite`.
 - Fixed I2C zero-byte writes, which now set START and STOP together, as the user's guide does to send only the address, and `schedule_stop()` clearing the receive flag, so that a byte already received, such as the last one of a master receive, can still be read.
 - Breaking: `send_nack()` moved from `I2cRoleCommon` to `I2cRoleSlave`, since only a slave receiver can send a NACK.
 - Fixed on the MSP430FR25x2: the remapped eUSCI_B0 pins use alternate function 2. Added the eUSCI_A1 SPI STE pin (P3.1) on the MSP430FR2433, and the inverted eUSCI_A1 UART pins (P4.2 and P4.3 in alternate function 2) on the MSP430FR2x5x.
 - Fixed the eUSCI pin remapping: the UART, SPI and I2C drivers now set it while the eUSCI is in reset, as the user's guide initializes an eUSCI, and on the MSP430FR247x it no longer clears the other bits of SYSCFG2 and SYSCFG3, such as the remap bit of another eUSCI.
 - Fixed the MSP430FR2355 `spi_slave_interrupt` example for erratum USCI47: it sets up the SPI master before the slave, so that SCLK is idle when the slave leaves reset. `SpiConfig::to_slave()` documents the erratum.
+- Add the `spi_single_slave` example for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
