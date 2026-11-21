@@ -221,6 +221,7 @@ pub trait EUsciI2C: Steal {
     fn transmit_nack(&self);
     fn transmit_start(&self);
     fn transmit_stop(&self);
+    fn transmit_start_stop(&self);
 
     fn uctxstt_rd(&self) -> bool;
     fn uctxstp_rd(&self) -> bool;
@@ -288,6 +289,7 @@ pub trait EUsciI2C: Steal {
     fn ifg_rd(&self) -> Self::IfgOut;
     fn ifg_wr(&self, reg: u16);
     fn ifg_rst(&self);
+    fn ifg_clr_except_rx(&self);
 
     fn iv_rd(&self) -> u16;
 }
@@ -638,6 +640,12 @@ macro_rules! eusci_i2c_impl {
                 unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxstp().set_bit()) }
             }
 
+            // Both at once sends only the address (SLAU445I 24.3.8.2, p. 644)
+            #[inline(always)]
+            fn transmit_start_stop(&self) {
+                unsafe { self.$ucbxctlw0().set_bits(|w| w.uctxstt().set_bit().uctxstp().set_bit()) }
+            }
+
             #[inline(always)]
             fn uctxstt_rd(&self) -> bool { self.$ucbxctlw0().read().uctxstt().bit() }
 
@@ -822,6 +830,19 @@ macro_rules! eusci_i2c_impl {
 
             #[inline(always)]
             fn ifg_rst(&self) { self.$ucbxifg().reset(); }
+
+            // Every UCBxIFG flag but UCRXIFG0 to UCRXIFG3 (SLAU445I Table 24-19, p. 662 to p. 663). The PAC's
+            // clear_bits ANDs the register with the value, so that has only the receive flags set.
+            #[inline(always)]
+            fn ifg_clr_except_rx(&self) {
+                unsafe {
+                    self.$ucbxifg().clear_bits(|w| w.bits(0)
+                        .ucrxifg0().set_bit()
+                        .ucrxifg1().set_bit()
+                        .ucrxifg2().set_bit()
+                        .ucrxifg3().set_bit())
+                };
+            }
 
             #[inline(always)]
             fn iv_rd(&self) -> u16 { self.$ucbxiv().read().bits() }

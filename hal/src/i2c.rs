@@ -584,9 +584,14 @@ mod sealed {
         }
 
         fn zero_byte_write(&mut self) -> Result<(), Self::ErrorType> {
-            self.usci().transmit_start();
-            self.usci().transmit_stop();
-            self.usci().uctxbuf_wr(0); // Bus stalls if nothing in Tx, even if a stop is scheduled
+            // To send only the address, set UCTXSTT and UCTXSTP at the same time (user's guide:
+            // SLAU445I 24.3.8.2, p. 644)
+            self.usci().transmit_start_stop();
+            // An earlier note said "Bus stalls if nothing in Tx, even if a stop is scheduled", but
+            // SLAU445I 24.3.5.2.1, p. 637 says a STOP set while the eUSCI waits for data comes "even if no
+            // data was transmitted", and with UCTXSTP set before the data starts "only the address is
+            // transmitted", so this byte isn't sent.
+            self.usci().uctxbuf_wr(0);
             while self.usci().uctxstt_rd() || self.usci().uctxstp_rd() {
                 self.handle_errs(&self.usci().ifg_rd(), 0)?;
             }
@@ -733,12 +738,6 @@ use sealed::*;
 pub trait I2cRoleCommon<M>: I2cRoleBase<M>
 where M: PinMap
 {
-    /// Queue a NACK to be sent on the I2C bus. If this is called in response to a packet being received the NACK will be sent on the following byte.
-    ///
-    /// Used as part of the non-blocking / interrupt-based interface. Only use during a receive operation.
-    #[inline(always)]
-    fn send_nack(&mut self) { self.usci().transmit_nack(); }
-
     /// Get the number of bytes received/transmitted since the last Start or Repeated Start condition.
     #[inline(always)]
     fn byte_count(&mut self) -> u8 { self.usci().byte_count() }
@@ -785,7 +784,11 @@ where M: PinMap
     #[inline(always)]
     fn schedule_stop(&mut self) {
         self.usci().transmit_stop();
-        self.usci().ifg_rst(); // For some reason the TXIFG flag needs to be cleared between transactions
+        // For some reason the TXIFG flag needs to be cleared between transactions (the flags aren't cleared
+        // automatically: SLAU445I 24.3.11, p. 645). Every flag is cleared except the receive flags
+        // UCRXIFG0 to UCRXIFG3 (SLAU445I Table 24-19, p. 662 to p. 663): a byte already in UCBxRXBUF, the
+        // last one of a master receive say, must stay readable.
+        self.usci().ifg_clr_except_rx();
     }
 
     /// Checks whether a slave with the specified address is present on the I2C bus.
@@ -853,6 +856,15 @@ where M: PinMap
     fn is_being_addressed(&mut self) -> bool {
         !self.usci().is_master() && self.usci().ifg_rd().ucsttifg()
     }
+
+    /// Queue a NACK to be sent on the I2C bus. If this is called in response to a packet being received the NACK will be sent on the following byte.
+    /// (SLAU445I 24.3.5.1.2, p. 634: "during the next acknowledgment cycle".)
+    ///
+    /// Used as part of the non-blocking / interrupt-based interface. NACKs can only be sent as a slave receiver (user's
+    /// guide, UCTXNACK: SLAU445I Table 24-4, p. 650), so only use this while receiving as a slave.
+    #[inline(always)]
+    fn send_nack(&mut self) { self.usci().transmit_nack(); }
+
 }
 
 /// Common methods available to all multi-master-aware I2C roles.
