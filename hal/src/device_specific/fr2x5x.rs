@@ -107,7 +107,16 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // External reference inputs and the VREF+ output, each in its P1SELx = 11 function (SLASEC4D
+    // Table 6-63, p. 96; SLASEC4D Table 4-2, p. 22 to p. 23)
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {} // 11: Veref+, "ADC positive reference"
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {} // 11: Veref-, "ADC negative reference"
+    // 11: VREF+, the 1.2 V reference output: "When A7 is used, the PMM 1.2-V reference voltage can be
+    // output to this pin" (SLASEC4D Table 6-21, note 1, p. 77). The 1.5 V, 2.0 V and 2.5 V references
+    // "cannot be output to the VREF+ pin" (SLASEC4D Table 5-10, p. 41).
+    impl<DIR> VrefOutputPin for Pin<P1, Pin7, Alternate3<DIR>> {}
 
     // The 12 external inputs A0 to A11 with their ADCINCHx value (SLASEC4D 6.10.12 and Table 6-21,
     // p. 77), each in its PxSELx = 11 function (SLASEC4D Table 6-63, p. 96; SLASEC4D Table 6-67,

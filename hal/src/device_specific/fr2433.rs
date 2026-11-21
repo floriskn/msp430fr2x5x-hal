@@ -64,7 +64,17 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // External reference inputs and the VREF+ output, each selected with its ADCPCTLx bit (SLASE59F
+    // Table 6-15, p. 53; SLASE59F Table 6-17, p. 55). ADCSREFx picks VEREF+ and VEREF- as references
+    // (SLAU445I Table 21-8, p. 567). The 1.2-V reference goes out on P1.4 when EXTREFEN = 1 (SLASE59F
+    // 6.10.1, p. 45; SLAU445I 1.12.2.3, p. 51). SLASE59F 6.10.1, p. 45 puts EXTREFEN "in the PMMCTL1
+    // register", but SLAU445I 2.2.8, p. 89 and SLAU445I Table 2-4, p. 94 put it in PMMCTL2, as does the
+    // FR2433 PAC; the HAL writes PMMCTL2.
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, AdcMode<DIR>> {} // Veref+, with A0: ADCPCTL0 = 1
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, AdcMode<DIR>> {} // Veref-, with A2: ADCPCTL2 = 1
+    impl<DIR> VrefOutputPin for Pin<P1, Pin4, AdcMode<DIR>> {} // VREF+, with A4: ADCPCTL4 = 1
 
     // Inputs A0 to A7 on P1.0 to P1.7 are ADCINCHx = 0 to 7 (SLASE59F Table 6-15, p. 53; ADCINCHx is in
     // ADCMCTL0, SLAU445I Table 21-8, p. 567), each selected

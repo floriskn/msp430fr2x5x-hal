@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - A pin in an alternate function can switch directly to another one with `to_alternate1()`, `to_alternate2()` and `to_alternate3()`, without passing through GPIO. Before, these methods existed but couldn't be called on a single pin.
 - Fixed `to_alternate1()`, `to_alternate2()` and `to_alternate3()` not being callable on a pin in an alternate function when its `ToAlternateN` impl only exists for one direction, such as MCLK on P1.3 of the MSP430FR247x. The pin switches directly to the other function, without passing through GPIO.
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
+- Add ADC reference selection: `Adc::with_reference()` measures against the internal reference or external references on the VeREF+ and VeREF- pins instead of AVCC and AVSS.
 - The MSP430FR2433 and MSP430FR25x2 ADC examples sample long enough for their data sheets, and the MSP430FR2476 ADC examples moved off P1.1, which the LaunchPad's temperature sensor drives.
 - Fixed `Adc::read_count()` returning the result of another pin when it was called for a second pin while the first pin's conversion was still pending.
 - Breaking: `Adc::adc_get_result()` and `Adc::adc_is_busy()` are renamed to `get_result()` and `is_busy()`.
+- Add the `adc_reference` and `vref_output` examples for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.

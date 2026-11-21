@@ -113,7 +113,17 @@ pub mod gpio {
 
 /* ADC */
 mod adc {
-    use crate::{adc::*, gpio::*};
+    use crate::{adc::*, gpio::*, pmm::VrefOutputPin};
+
+    // External reference inputs and the VREF+ output, each in its P1SELx = 11 function
+    // (SLASEO7C Table 9-23, p. 65; ADC channel connections: SLASEO7C Table 9-19, p. 62;
+    // Veref+ and Veref-: SLASEO7C Table 7-2, p. 15; VREF+: SLASEO7C Table 7-2, p. 17).
+    // VREF+ outputs the PMM's 1.2 V reference with EXTREFEN = 1 (SLASEO7C Table 9-19 note 1, p. 62;
+    // SLASEO7C 8.12.5.1, p. 33); the 1.5 V, 2.0 V and 2.5 V references "cannot be output to the
+    // VREF+ pin" (SLASEO7C 8.12.5.1, p. 33).
+    impl<DIR> VeRefPlusPin for Pin<P1, Pin0, Alternate3<DIR>> {}  // 11: Veref+ (A0), ADC positive reference
+    impl<DIR> VeRefMinusPin for Pin<P1, Pin2, Alternate3<DIR>> {} // 11: Veref- (A2), ADC negative reference
+    impl<DIR> VrefOutputPin for Pin<P1, Pin4, Alternate3<DIR>> {} // 11: VREF+ (A4), reference output
 
     // The 12 external inputs with their ADCINCHx value (SLASEO7C 9.10.12, p. 62;
     // SLASEO7C Table 9-19, p. 62), each in its PxSELx = 11 function (SLASEO7C Table 9-23, p. 65;

@@ -11,7 +11,10 @@
 //! As a convenience, [`read_voltage_mv()`](Adc::read_voltage_mv()) combines [`read_count()`](Adc::read_count()) and
 //! [`count_to_mv()`](Adc::count_to_mv()).
 //!
-//! Currently the only supported ADC voltage reference is `AVCC`, the operating voltage of the MSP430.
+//! The ADC measures against AVCC, the operating voltage of the MSP430, unless
+//! [`with_reference()`](Adc::with_reference()) selects the internal shared reference or an external one on the
+//! VeREF+ (P1.0) and VeREF- (P1.2) pins (ADCSREFx, reset to AVCC and AVSS: SLAU445I Table 21-8, p. 567; the
+//! pins are A0/Veref+ and A2/Veref- in the ADC channel tables listed below).
 //!
 //! [`read_count()`](Adc::read_count()) takes a reference to the GPIO pin corresponding to the relevant ADC channel
 //! to ensure it's been correctly configured. The ADC inputs are (data sheets, pin function tables):
@@ -47,9 +50,9 @@
 use crate::_pac;
 use crate::{
     clock::{Aclk, Smclk},
-    pmm::{InternalTempSensor, InternalVRef},
+    pmm::{InternalTempSensor, InternalVRef, VrefOutput},
 };
-use core::convert::Infallible;
+use core::{convert::Infallible, marker::PhantomData};
 
 #[cfg(feature = "embedded-hal-02")]
 pub use embedded_hal_02::adc::Channel;
@@ -285,6 +288,15 @@ macro_rules! impl_adc_channel_extra {
 impl_adc_channel_extra!(InternalTempSensor<'_>, 12);
 impl_adc_channel_extra!(InternalVRef, 13);
 
+// The VREF+ output is measured through its pin's channel (SLASEC4D 6.10.1, p. 67: "ADC channel 7 can also be
+// selected to monitor this voltage"; SLASEO7C Table 9-19 note 1, p. 62; SLASE59F 6.10.1, p. 45; SLASEE4C
+// 6.10.1, p. 49)
+impl<PIN: Channel<Adc, ID = u8>> Channel<Adc> for VrefOutput<PIN> {
+    type ID = u8;
+
+    fn channel() -> Self::ID { PIN::channel() }
+}
+
 // Users needn't deal with the structs themselves so it just adds noise to the docs. We instead document the functions below.
 #[doc(hidden)]
 pub struct AdcVssChannel;
@@ -308,8 +320,6 @@ pub struct NoClockSet;
 pub struct ClockSet(ClockSource);
 
 /// Configuration object for an ADC.
-///
-/// Currently the only supported voltage reference is AVCC.
 ///
 /// The default configuration is based on the default register values (SLAU445I Table 21-3, p. 561 to
 /// p. 562; SLAU445I Table 21-4, p. 563 to p. 564; SLAU445I Table 21-5, p. 565):
@@ -417,6 +427,9 @@ impl AdcConfig<ClockSet> {
 
         let adcsht = self.sample_time.adcsht();
         adc_reg.adcctl0().write(|w| unsafe { w.adcsht().bits(adcsht) });
+        // AVCC and AVSS as reference, as the returned `Adc` says, and channel 0 (ADCSREFx = 000b,
+        // ADCINCHx = 0: SLAU445I Table 21-8, p. 567)
+        adc_reg.adcmctl0().write(|w| unsafe { w.bits(0) });
 
         let adcssel = self.state.0.adcssel();
         let adcdiv = self.clock_divider.adcdiv();
@@ -436,18 +449,59 @@ impl AdcConfig<ClockSet> {
             .adcsr().bit(adcsr) 
         }});
 
-        Adc { adc_reg, pending: None }
+        Adc { adc_reg, pending: None, reference: PhantomData }
     }
 }
 
+/// Typestate for an ADC that measures against AVCC and AVSS, as after reset (ADCSREFx: SLAU445I Table 21-8,
+/// p. 567)
+pub struct AvccReference;
+/// Typestate for an ADC with a reference selected by [`Adc::with_reference()`], which borrows the
+/// internal reference or the VeREF pins for `'a`
+pub struct SelectedReference<'a>(PhantomData<&'a ()>);
+
+/// Marker trait for the VeREF+ pin (P1.0) in its analog mode, which supplies an external positive reference
+/// (A0/Veref+: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C
+/// Table 6-13, p. 55)
+pub trait VeRefPlusPin {}
+/// Marker trait for the VeREF- pin (P1.2) in its analog mode, which supplies an external negative reference
+/// (A2/Veref-: SLASEC4D Table 6-21, p. 77; SLASEO7C Table 9-19, p. 62; SLASE59F Table 6-15, p. 53; SLASEE4C
+/// Table 6-13, p. 55)
+pub trait VeRefMinusPin {}
+
+/// The positive reference of the ADC, VR+: an input at or above it converts to the full-scale count (ADCSREF,
+/// SLAU445I 21.2.1, p. 541, SLAU445I 21.2.3, p. 542, and SLAU445I Table 21-8, p. 567)
+pub enum PositiveReference<'a> {
+    /// AVCC, as after reset
+    Avcc,
+    /// The internal shared reference, see [`Pmm::enable_internal_reference()`](crate::pmm::Pmm::enable_internal_reference)
+    Internal(&'a InternalVRef),
+    /// An external reference on the VeREF+ pin, through the ADC's reference buffer
+    ExternalBuffered(&'a dyn VeRefPlusPin),
+    /// An external reference on the VeREF+ pin, unbuffered
+    External(&'a dyn VeRefPlusPin),
+}
+
+/// The negative reference of the ADC, VR-: an input at or below it converts to 0 (ADCSREF, SLAU445I 21.2.1,
+/// p. 541, SLAU445I 21.2.3, p. 542, and SLAU445I Table 21-8, p. 567)
+pub enum NegativeReference<'a> {
+    /// AVSS, as after reset
+    Avss,
+    /// An external reference on the VeREF- pin
+    External(&'a dyn VeRefMinusPin),
+}
+
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
-pub struct Adc {
+///
+/// `REF` tracks the reference selected with [`Adc::with_reference()`].
+pub struct Adc<REF = AvccReference> {
     adc_reg: _pac::Adc,
     /// Channel of the conversion that was started but not read yet
     pending: Option<u8>,
+    reference: PhantomData<REF>,
 }
 
-impl Adc {
+impl<REF> Adc<REF> {
     /// Whether the ADC is currently sampling or converting (ADCBUSY: SLAU445I Table 21-4, p. 564).
     pub fn is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
@@ -469,7 +523,7 @@ impl Adc {
 
     /// Selects which pin to sample (ADCINCHx: SLAU445I Table 21-8, p. 567).
     fn set_pin<PIN>(&mut self, _pin: &PIN)
-    where PIN: Channel<Self, ID = u8> {
+    where PIN: Channel<Adc, ID = u8> {
         self.adc_reg.adcmctl0().modify(|_, w|
             unsafe { w.adcinch().bits(PIN::channel()) }
         );
@@ -492,7 +546,7 @@ impl Adc {
     /// A conversion that is still pending for another channel is finished first and its result
     /// discarded.
     pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
-    where PIN: Channel<Self, ID = u8> {
+    where PIN: Channel<Adc, ID = u8> {
         if let Some(pending) = self.pending {
             if self.is_busy() {
                 return Err(nb::Error::WouldBlock);
@@ -514,7 +568,8 @@ impl Adc {
     /// Convert an ADC count to a voltage value in millivolts.
     ///
     /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. As in the conversion formula of
-    /// SLAU445I 21.2.1, p. 541, the reference voltage corresponds to a count of 256, 1024 or 4096.
+    /// SLAU445I 21.2.1, p. 541, the reference voltage corresponds to a count of 256, 1024 or 4096. With an
+    /// external negative reference, the result is the voltage above VR-.
     pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
         let resolution = match self.adc_reg.adcctl2().read().adcres().variant() {
@@ -531,12 +586,45 @@ impl Adc {
     /// If the result is ready it is returned as a voltage in millivolts based on `ref_voltage_mv`, otherwise returns `WouldBlock`.
     ///
     /// If you instead want a raw count you should use the `.read_count()` method.
-    pub fn read_voltage_mv<PIN: Channel<Self, ID = u8>>(
+    pub fn read_voltage_mv<PIN: Channel<Adc, ID = u8>>(
         &mut self,
         pin: &mut PIN,
         ref_voltage_mv: u16,
     ) -> nb::Result<u16, Infallible> {
         self.read_count(pin).map(|count| self.count_to_mv(count, ref_voltage_mv))
+    }
+
+    /// Select the reference voltages the ADC measures against (ADCSREF: SLAU445I Table 21-8, p. 567). An
+    /// input at or below the negative reference converts to 0, one at or above the positive reference to the
+    /// full-scale count (SLAU445I 21.2.1, p. 541).
+    ///
+    /// The internal reference must stay enabled, and the VeREF pins in their analog mode, while the ADC
+    /// uses them, so the returned ADC borrows them (SLAU445I 21.2.3.1, p. 542: "The on-chip reference from
+    /// the PMM module must be enabled by software"). Waits for a conversion in progress to finish.
+    pub fn with_reference<'a>(
+        mut self,
+        positive: PositiveReference<'a>,
+        negative: NegativeReference<'a>,
+    ) -> Adc<SelectedReference<'a>> {
+        // ADCSREFx: bits 1-0 of the field select VR+, bit 2 selects VEREF- as VR- (SLAU445I Table 21-8,
+        // p. 567)
+        let vr_plus: u8 = match positive {
+            PositiveReference::Avcc => 0b00,
+            PositiveReference::Internal(_) => 0b01,
+            PositiveReference::ExternalBuffered(_) => 0b10,
+            PositiveReference::External(_) => 0b11,
+        };
+        let vr_minus: u8 = match negative {
+            NegativeReference::Avss => 0,
+            NegativeReference::External(_) => 1,
+        };
+        // "It is not recommended to change this setting while a conversion is ongoing" (SLAU445I Table 21-8,
+        // p. 567)
+        while self.is_busy() {}
+        self.disable();
+        self.pending = None;
+        self.adc_reg.adcmctl0().modify(|_, w| w.adcsref().set(vr_minus << 2 | vr_plus));
+        Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData }
     }
 }
 
@@ -554,8 +642,8 @@ mod ehal02 {
     use super::*;
     use embedded_hal_02::adc::{Channel, OneShot};
 
-    impl<PIN> OneShot<Adc, u16, PIN> for Adc
-    where PIN: Channel<Self, ID = u8>
+    impl<REF, PIN> OneShot<Adc, u16, PIN> for Adc<REF>
+    where PIN: Channel<Adc, ID = u8>
     {
         type Error = Infallible; // Only returns WouldBlock
 
