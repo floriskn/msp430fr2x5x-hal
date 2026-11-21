@@ -404,12 +404,12 @@ where
         let ClockSet { baud_config, clksel } = self.state;
         let usci = self.usci;
 
-        USCI::configure_pin_mapping();
-
+        // Set UCSWRST, then initialize the registers (SLAU445I 22.3.1, p. 577, steps 1 and 2)
         usci.ctl0_reset();
         usci.brw_settings(baud_config.br);
         usci.mctlw_settings(baud_config.ucos16, baud_config.brs, baud_config.brf);
         usci.loopback(self.loopback.to_bool());
+        // UCAxCTLW0, with UCSWRST still set (SLAU445I Table 22-8, p. 593 to p. 594)
         usci.ctl0_settings(UcaCtlw0 {
             ucpen: self.parity.ucpen(),
             ucpar: self.parity.ucpar(),
@@ -420,6 +420,13 @@ where
             // We want erroneous bytes to trigger RXIFG so all errors can be caught
             ucrxeie: true,
         });
+        // Configure the ports (SLAU445I 22.3.1, p. 577, step 3): the caller passes the pins already in
+        // their eUSCI function, and the remapping bits are set here
+        USCI::configure_pin_mapping();
+        // Everything is configured while UCSWRST is set, then the eUSCI is released (SLAU445I 22.3.1,
+        // p. 577, step 4). Step 5, enabling interrupts, is left to Tx::enable_tx_interrupts and
+        // Rx::enable_rx_interrupts.
+        usci.ctl0_clear_rst();
     }
 
     /// Perform hardware configuration and split into Tx and Rx pins from appropriate GPIOs

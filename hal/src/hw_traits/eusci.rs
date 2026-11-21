@@ -183,7 +183,9 @@ pub struct UcxSpiCtw0, UcxSpiCtw0_rd, UcxSpiCtw0_wr{
 pub trait EUsciUart: Steal {
     type Statw: UartUcxStatw;
 
+    // Set and clear UCSWRST in UCAxCTLW0 (SLAU445I Table 22-8, p. 594)
     fn ctl0_reset(&self);
+    fn ctl0_clear_rst(&self);
 
     // only call while in reset state
     fn brw_settings(&self, ucbr: u16);
@@ -494,6 +496,8 @@ macro_rules! eusci_uart_impl {
         impl EUsciUart for $EUsci {
             type Statw = $Statw;
 
+            // UCSWRST stays set; the eUSCI_A is released afterwards (SLAU445I 22.3.1, p. 577)
+            // (UCAxCTLW0 fields: SLAU445I Table 22-8, p. 593 to p. 594)
             #[inline(always)]
             fn ctl0_settings(&self, reg: UcaCtlw0) {
                 self.$ucaxctlw0().write(|w| unsafe { w
@@ -504,6 +508,7 @@ macro_rules! eusci_uart_impl {
                     .ucspb().bit(reg.ucspb)
                     .ucssel().bits(reg.ucssel as u8)
                     .ucrxeie().bit(reg.ucrxeie)
+                    .ucswrst().set_bit()
                 });
             }
 
@@ -537,6 +542,11 @@ macro_rules! eusci_uart_impl {
 
             #[inline(always)]
             fn ctl0_reset(&self) { self.$ucaxctlw0().write(|w| w.ucswrst().set_bit()); }
+
+            #[inline(always)]
+            fn ctl0_clear_rst(&self) {
+                unsafe { self.$ucaxctlw0().clear_bits(|w| w.ucswrst().clear_bit()) };
+            }
 
             #[inline(always)]
             fn brw_settings(&self, ucbr: u16) {

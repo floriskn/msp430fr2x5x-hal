@@ -272,14 +272,22 @@ where
 {
     #[inline]
     fn configure_hw(&self) {
-        USCI::configure_pin_mapping();
-
+        // Initialization procedure of SLAU445I 23.3.1, p. 606: UCxCTLW0, UCxBRW and UCLISTEN are
+        // "Modify only when UCSWRST = 1" (SLAU445I 23.4.1 to 23.4.3, p. 613 to p. 615;
+        // SLAU445I 23.5.1 to 23.5.3, p. 620 to p. 622)
+        // 1. Set UCSWRST
         self.usci.ctw0_set_rst();
 
+        // 2. Initialize the registers
         self.usci.ctw0_wr(&self.ctlw0);
         self.usci.brw_wr(self.prescaler);
         self.usci.uclisten_clear();
 
+        // 3. Configure ports: the caller passes the pins already in their eUSCI function, and the
+        // remapping bits are set here
+        USCI::configure_pin_mapping();
+
+        // 4. Clear UCSWRST
         self.usci.ctw0_clear_rst();
 
         self.usci.clear_transmit_interrupt();

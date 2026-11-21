@@ -377,10 +377,12 @@ where
     /// Performs hardware configuration
     #[inline]
     fn configure_regs(&self) {
-        USCI::configure_pin_mapping();
-
+        // Initialization procedure of SLAU445I 24.3.1, p. 629: the registers are written with UCSWRST = 1
+        // ("Modify only when UCSWRST = 1": SLAU445I 24.4.1 to 24.4.13, p. 649 to p. 659)
+        // 1. Set UCSWRST
         self.usci.ctw0_set_rst();
 
+        // 2. Initialize the registers
         self.usci.ctw0_wr(&self.ctlw0);
         self.usci.ctw1_wr(&self.ctlw1);
         self.usci.i2coa_wr(0, &self.i2coa0);
@@ -393,6 +395,11 @@ where
         self.usci.brw_wr(self.divisor);
         self.usci.tbcnt_wr(0);
 
+        // 3. Configure ports: the caller passes the pins already in their eUSCI function, and the
+        // remapping bits are set here
+        USCI::configure_pin_mapping();
+
+        // 4. Clear UCSWRST
         self.usci.ctw0_clear_rst();
     }
 }

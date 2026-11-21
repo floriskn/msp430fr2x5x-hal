@@ -422,8 +422,9 @@ mod i2c {
         type ExternalClockPin = UsciB0UCLKIPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIB0RMP, SYSCFG2 bit 11, = 0: default pins (SLAU445I Table 1-31, p. 82)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB0 {
@@ -432,8 +433,9 @@ mod i2c {
         type ExternalClockPin = UsciB0UCLKIPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIB0RMP, SYSCFG2 bit 11, = 1: remapped pins (SLAU445I Table 1-31, p. 82)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
         }
     }
 
@@ -443,8 +445,9 @@ mod i2c {
         type ExternalClockPin = UsciB1UCLKIPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIB1RMP, SYSCFG3 bit 4, = 0: default pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
         }
     }
     impl I2cUsci<RemappedMapping> for EUsciB1 {
@@ -453,8 +456,9 @@ mod i2c {
         type ExternalClockPin = UsciB1UCLKIPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIB1RMP, SYSCFG3 bit 4, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
         }
     }
 }
@@ -586,8 +590,9 @@ mod serial {
         type RxPin = UsciA0RxPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIA0RMP, SYSCFG3 bit 0, = 0: default pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
         }
     }
     impl SerialUsci<RemappedMapping> for EUsciA0 {
@@ -596,8 +601,9 @@ mod serial {
         type RxPin = UsciA0RxPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIA0RMP, SYSCFG3 bit 0, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
         }
     }
 
@@ -718,8 +724,9 @@ mod spi {
         type STE = UsciA0STEPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIA0RMP, SYSCFG3 bit 0, = 0: default pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscia0rmp().clear_bit()) };
         }
     }
 
@@ -730,8 +737,9 @@ mod spi {
         type STE = UsciA0STEPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIA0RMP, SYSCFG3 bit 0, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscia0rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscia0rmp().set_bit()) };
         }
     }
 
@@ -749,8 +757,9 @@ mod spi {
         type STE = UsciB0STEPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIB0RMP, SYSCFG2 bit 11, = 0: default pins (SLAU445I Table 1-31, p. 82)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().clear_bit());
+            unsafe { sys.syscfg2().clear_bits(|w| w.uscib0rmp().clear_bit()) };
         }
     }
 
@@ -761,8 +770,9 @@ mod spi {
         type STE = UsciB0STEPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIB0RMP, SYSCFG2 bit 11, = 1: remapped pins (SLAU445I Table 1-31, p. 82)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg2().write(|w| w.uscib0rmp().set_bit());
+            unsafe { sys.syscfg2().set_bits(|w| w.uscib0rmp().set_bit()) };
         }
     }
 
@@ -773,8 +783,9 @@ mod spi {
         type STE = UsciB1STEPinDefault;
 
         fn configure_pin_mapping() {
+            // USCIB1RMP, SYSCFG3 bit 4, = 0: default pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().clear_bit());
+            unsafe { sys.syscfg3().clear_bits(|w| w.uscib1rmp().clear_bit()) };
         }
     }
 
@@ -785,8 +796,9 @@ mod spi {
         type STE = UsciB1STEPinRemapped;
 
         fn configure_pin_mapping() {
+            // USCIB1RMP, SYSCFG3 bit 4, = 1: remapped pins (SLAU445I Table 1-32, p. 83)
             let sys = unsafe { crate::_pac::Sys::steal() };
-            sys.syscfg3().write(|w| w.uscib1rmp().set_bit());
+            unsafe { sys.syscfg3().set_bits(|w| w.uscib1rmp().set_bit()) };
         }
     }
     /// SPI MISO pin for eUSCI A0 (P1.5) (default mapping)
