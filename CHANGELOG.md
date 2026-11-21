@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - `Timer::count()` takes the median of three reads, for timers clocked asynchronously to MCLK.
 - Fixed on the MSP430FR247x: remapping the TA2 or TA3 pins cleared the other remap bits of SYSCFG3, including the eUSCI_A0 and eUSCI_B1 remapping.
+- Add the `timer_external_clock` example for the MSP430FR2476.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
