@@ -4,6 +4,7 @@
 //! Once fully configured an [`Adc`] will be returned.
 //!
 //! [`Adc`] can read from a channel by calling [`read_count()`](Adc::read_count()) to return an ADC count.
+//! Counts are `u16`, or `i16` if [`AdcConfig::signed()`] selected signed results (see [`ResultFormat`]).
 //!
 //! The [`count_to_mv()`](Adc::count_to_mv()) method is available to convert an ADC count to a voltage in millivolts,
 //! given a reference voltage.
@@ -250,6 +251,67 @@ impl SamplingRate {
     }
 }
 
+/// The format of the conversion results (ADCDF: SLAU445I Table 21-5, p. 565): [`Unsigned`], the default,
+/// or [`Signed`], selected with [`AdcConfig::signed()`]. It is a type parameter of [`AdcConfig`] and
+/// [`Adc`], so the methods that return or take results use `u16` for unsigned results and `i16` for signed
+/// ones.
+pub trait ResultFormat: sealed::SealedResultFormat {
+    /// The type of a result: `u16` for [`Unsigned`], `i16` for [`Signed`]
+    type Count: Copy;
+    #[doc(hidden)]
+    const ADCDF: bool;
+    #[doc(hidden)]
+    fn from_bits(bits: u16) -> Self::Count;
+    #[doc(hidden)]
+    fn to_bits(count: Self::Count) -> u16;
+    /// The unsigned count of `count`, for results of `resolution` bits
+    #[doc(hidden)]
+    fn to_unsigned(count: Self::Count, resolution: u32) -> u16;
+}
+
+/// Typestate for unsigned, right-aligned results, as after reset: from 0 at VR- up to 255, 1023 or 4095
+/// at VR+ (SLAU445I 21.2.1, p. 541, and SLAU445I 21.3.4, p. 566)
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Unsigned;
+
+/// Typestate for signed results, two's complement and left-aligned in an `i16`: from -32768 at VR- up to
+/// just below 32768 at VR+. The low bits are 0: 8 bits for an 8-bit result, 6 for 10-bit and 4 for 12-bit
+/// (SLAU445I 21.3.5, p. 566; ADCDF in SLAU445I Table 21-5, p. 565: "-VREF results in 8000h, and ... +VREF
+/// results in 7FC0h").
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Signed;
+
+impl ResultFormat for Unsigned {
+    type Count = u16;
+    const ADCDF: bool = false;
+    #[inline(always)]
+    fn from_bits(bits: u16) -> u16 { bits }
+    #[inline(always)]
+    fn to_bits(count: u16) -> u16 { count }
+    #[inline(always)]
+    fn to_unsigned(count: u16, _resolution: u32) -> u16 { count }
+}
+
+impl ResultFormat for Signed {
+    type Count = i16;
+    const ADCDF: bool = true;
+    #[inline(always)]
+    fn from_bits(bits: u16) -> i16 { bits as i16 }
+    #[inline(always)]
+    fn to_bits(count: i16) -> u16 { count as u16 }
+    // Right-aligned again, and offset by half the range (SLAU445I 21.3.5, p. 566)
+    #[inline(always)]
+    fn to_unsigned(count: i16, resolution: u32) -> u16 {
+        ((count >> (16 - resolution)) + (1 << (resolution - 1))) as u16
+    }
+}
+
+mod sealed {
+    pub trait SealedResultFormat {}
+    impl SealedResultFormat for super::Unsigned {}
+    impl SealedResultFormat for super::Signed {}
+}
+
 // Pins corresponding to an ADC channel. Pin types can have `::channel()` called on them to get their ADC channel index.
 macro_rules! impl_adc_channel_pin {
     ($port: ty, $pin: ty, $mode:tt => $channel: literal ) => {
@@ -328,8 +390,9 @@ pub struct ClockSet(ClockSource);
 /// - 8 cycle sample time, the reset value of the 12-bit ADC (the 10-bit ADC of the MSP430FR2433 and
 ///   MSP430FR25x2 resets to 4 cycles: SLAU445I Table 21-3 note 1, p. 561)
 /// - Max 200 ksps sample rate
+/// - Unsigned results, see [`signed()`](AdcConfig::signed())
 #[derive(Clone, PartialEq, Eq)]
-pub struct AdcConfig<STATE> {
+pub struct AdcConfig<STATE, FMT = Unsigned> {
     state: STATE,
     /// How much the input clock is divided by, after the predivider (ADCDIVx: SLAU445I Table 21-4, p. 563).
     pub clock_divider: ClockDivider,
@@ -344,6 +407,7 @@ pub struct AdcConfig<STATE> {
     pub sampling_rate: SamplingRate,
     /// Determines the number of ADCCLK cycles the sampling time takes (ADCSHTx: SLAU445I Table 21-3, p. 561).
     pub sample_time: SampleTime,
+    format: PhantomData<FMT>,
 }
 
 // Only implement Default for NoClockSet
@@ -356,6 +420,7 @@ impl Default for AdcConfig<NoClockSet> {
             resolution: Default::default(),
             sampling_rate: Default::default(),
             sample_time: Default::default(),
+            format: PhantomData,
         }
     }
 }
@@ -376,10 +441,30 @@ impl AdcConfig<NoClockSet> {
             resolution,
             sampling_rate,
             sample_time,
+            format: PhantomData,
         }
     }
+}
+
+impl<STATE> AdcConfig<STATE> {
+    /// Return signed results, as `i16`, instead of unsigned ones (ADCDF: SLAU445I Table 21-5, p. 565). See
+    /// [`Signed`].
+    pub fn signed(self) -> AdcConfig<STATE, Signed> {
+        AdcConfig {
+            state: self.state,
+            clock_divider: self.clock_divider,
+            predivider: self.predivider,
+            resolution: self.resolution,
+            sampling_rate: self.sampling_rate,
+            sample_time: self.sample_time,
+            format: PhantomData,
+        }
+    }
+}
+
+impl<FMT> AdcConfig<NoClockSet, FMT> {
     /// Configure the ADC to use SMCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
-    pub fn use_smclk(self, _smclk: &Smclk) -> AdcConfig<ClockSet> {
+    pub fn use_smclk(self, _smclk: &Smclk) -> AdcConfig<ClockSet, FMT> {
         AdcConfig {
             state: ClockSet(ClockSource::SmClk),
             clock_divider: self.clock_divider,
@@ -387,6 +472,7 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            format: self.format,
         }
     }
     /// Configure the ADC to use ACLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
@@ -396,7 +482,7 @@ impl AdcConfig<NoClockSet> {
     /// sampling the on-chip temperature sensor, the ADC may generate erroneous conversion results". The
     /// erratum's workarounds are SMCLK or MODCLK as the ADC clock, with "A 100us sampling time" if the
     /// conversion is triggered from LPM3, or LPM0 or active mode (SLAZ664S ADC50; SLAZ705H ADC50).
-    pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet> {
+    pub fn use_aclk(self, _aclk: &Aclk) -> AdcConfig<ClockSet, FMT> {
         AdcConfig {
             state: ClockSet(ClockSource::AClk),
             clock_divider: self.clock_divider,
@@ -404,10 +490,11 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            format: self.format,
         }
     }
     /// Configure the ADC to use MODCLK (ADCSSELx: SLAU445I Table 21-4, p. 564)
-    pub fn use_modclk(self) -> AdcConfig<ClockSet> {
+    pub fn use_modclk(self) -> AdcConfig<ClockSet, FMT> {
         AdcConfig {
             state: ClockSet(ClockSource::ModClk),
             clock_divider: self.clock_divider,
@@ -415,12 +502,13 @@ impl AdcConfig<NoClockSet> {
             resolution: self.resolution,
             sampling_rate: self.sampling_rate,
             sample_time: self.sample_time,
+            format: self.format,
         }
     }
 }
-impl AdcConfig<ClockSet> {
+impl<FMT: ResultFormat> AdcConfig<ClockSet, FMT> {
     /// Applies this ADC configuration to hardware registers, and returns an ADC.
-    pub fn configure(self, mut adc_reg: _pac::Adc) -> Adc {
+    pub fn configure(self, mut adc_reg: _pac::Adc) -> Adc<AvccReference, FMT> {
         // Disable the ADC before we set the other bits. Some can only be set while the ADC is disabled.
         // (SLAU445I 21.2.1, p. 541: "the ADC control bits can be modified only when ADCENC = 0")
         disable_adc_reg(&mut adc_reg);
@@ -443,13 +531,15 @@ impl AdcConfig<ClockSet> {
         let adcpdiv = self.predivider.adcpdiv();
         let adcres = self.resolution.adcres();
         let adcsr = self.sampling_rate.adcsr();
+        // ADCDF as a bit: the PACs name its values differently, and the MSP430FR2433 PAC has no enum for it
         adc_reg.adcctl2().write(|w| { unsafe { w
             .adcpdiv().bits(adcpdiv)
             .adcres().bits(adcres)
-            .adcsr().bit(adcsr) 
+            .adcdf().bit(FMT::ADCDF)
+            .adcsr().bit(adcsr)
         }});
 
-        Adc { adc_reg, pending: None, reference: PhantomData }
+        Adc { adc_reg, pending: None, reference: PhantomData, format: PhantomData }
     }
 }
 
@@ -493,22 +583,23 @@ pub enum NegativeReference<'a> {
 
 /// Controls the onboard ADC. The `read()` method is available through the embedded_hal `OneShot` trait.
 ///
-/// `REF` tracks the reference selected with [`Adc::with_reference()`].
-pub struct Adc<REF = AvccReference> {
+/// `REF` tracks the reference selected with [`Adc::with_reference()`], and `FMT` the [`ResultFormat`].
+pub struct Adc<REF = AvccReference, FMT = Unsigned> {
     adc_reg: _pac::Adc,
     /// Channel of the conversion that was started but not read yet
     pending: Option<u8>,
     reference: PhantomData<REF>,
+    format: PhantomData<FMT>,
 }
 
-impl<REF> Adc<REF> {
+impl<REF, FMT: ResultFormat> Adc<REF, FMT> {
     /// Whether the ADC is currently sampling or converting (ADCBUSY: SLAU445I Table 21-4, p. 564).
     pub fn is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
     }
 
     /// Gets the latest ADC conversion result (ADCMEM0: SLAU445I 21.3.4, p. 566).
-    pub fn get_result(&self) -> u16 { self.adc_reg.adcmem0().read().bits() }
+    pub fn get_result(&self) -> FMT::Count { FMT::from_bits(self.adc_reg.adcmem0().read().bits()) }
 
     /// Enables this ADC, ready to start conversions (ADCON: SLAU445I Table 21-3, p. 561).
     pub fn enable(&mut self) {
@@ -545,7 +636,7 @@ impl<REF> Adc<REF> {
     ///
     /// A conversion that is still pending for another channel is finished first and its result
     /// discarded.
-    pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
+    pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<FMT::Count, Infallible>
     where PIN: Channel<Adc, ID = u8> {
         if let Some(pending) = self.pending {
             if self.is_busy() {
@@ -569,16 +660,18 @@ impl<REF> Adc<REF> {
     ///
     /// `ref_voltage_mv` is the reference voltage of the ADC in millivolts. As in the conversion formula of
     /// SLAU445I 21.2.1, p. 541, the reference voltage corresponds to a count of 256, 1024 or 4096. With an
-    /// external negative reference, the result is the voltage above VR-.
-    pub fn count_to_mv(&self, count: u16, ref_voltage_mv: u16) -> u16 {
+    /// external negative reference, the result is the voltage above VR-. [`Signed`] counts are converted
+    /// too.
+    pub fn count_to_mv(&self, count: FMT::Count, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
-        let resolution = match self.adc_reg.adcctl2().read().adcres().variant() {
-            Adcres::Adcres0 => 256,  //  8-bit
-            Adcres::Adcres1 => 1024, // 10-bit
-            Adcres::Adcres2 => 4096, // 12-bit
-            Adcres::Adcres3 => 4096, // Reserved, unreachable
+        let bits = match self.adc_reg.adcctl2().read().adcres().variant() {
+            Adcres::Adcres0 => 8,
+            Adcres::Adcres1 => 10,
+            Adcres::Adcres2 => 12,
+            Adcres::Adcres3 => 12, // Reserved, unreachable
         };
-        ((count as u32 * ref_voltage_mv as u32) / resolution) as u16
+        let count = FMT::to_unsigned(count, bits);
+        ((count as u32 * ref_voltage_mv as u32) >> bits) as u16
     }
 
     /// Begins a single ADC conversion if one isn't already underway, enabling the ADC in the process.
@@ -605,7 +698,7 @@ impl<REF> Adc<REF> {
         mut self,
         positive: PositiveReference<'a>,
         negative: NegativeReference<'a>,
-    ) -> Adc<SelectedReference<'a>> {
+    ) -> Adc<SelectedReference<'a>, FMT> {
         // ADCSREFx: bits 1-0 of the field select VR+, bit 2 selects VEREF- as VR- (SLAU445I Table 21-8,
         // p. 567)
         let vr_plus: u8 = match positive {
@@ -624,7 +717,7 @@ impl<REF> Adc<REF> {
         self.disable();
         self.pending = None;
         self.adc_reg.adcmctl0().modify(|_, w| w.adcsref().set(vr_minus << 2 | vr_plus));
-        Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData }
+        Adc { adc_reg: self.adc_reg, pending: None, reference: PhantomData, format: PhantomData }
     }
 }
 
@@ -642,7 +735,7 @@ mod ehal02 {
     use super::*;
     use embedded_hal_02::adc::{Channel, OneShot};
 
-    impl<REF, PIN> OneShot<Adc, u16, PIN> for Adc<REF>
+    impl<REF, FMT: ResultFormat, PIN> OneShot<Adc, FMT::Count, PIN> for Adc<REF, FMT>
     where PIN: Channel<Adc, ID = u8>
     {
         type Error = Infallible; // Only returns WouldBlock
@@ -651,6 +744,6 @@ mod ehal02 {
         ///
         /// If the result is ready it is returned as an ADC count, otherwise returns `WouldBlock`
         #[inline(always)]
-        fn read(&mut self, pin: &mut PIN) -> nb::Result<u16, Self::Error> { self.read_count(pin) }
+        fn read(&mut self, pin: &mut PIN) -> nb::Result<FMT::Count, Self::Error> { self.read_count(pin) }
     }
 }
