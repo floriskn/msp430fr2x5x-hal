@@ -449,12 +449,12 @@ pub struct Adc {
 
 impl Adc {
     /// Whether the ADC is currently sampling or converting (ADCBUSY: SLAU445I Table 21-4, p. 564).
-    pub fn adc_is_busy(&self) -> bool {
+    pub fn is_busy(&self) -> bool {
         self.adc_reg.adcctl1().read().adcbusy().bit_is_set()
     }
 
     /// Gets the latest ADC conversion result (ADCMEM0: SLAU445I 21.3.4, p. 566).
-    pub fn adc_get_result(&self) -> u16 { self.adc_reg.adcmem0().read().bits() }
+    pub fn get_result(&self) -> u16 { self.adc_reg.adcmem0().read().bits() }
 
     /// Enables this ADC, ready to start conversions (ADCON: SLAU445I Table 21-3, p. 561).
     pub fn enable(&mut self) {
@@ -494,12 +494,12 @@ impl Adc {
     pub fn read_count<PIN>(&mut self, pin: &mut PIN) -> nb::Result<u16, Infallible>
     where PIN: Channel<Self, ID = u8> {
         if let Some(pending) = self.pending {
-            if self.adc_is_busy() {
+            if self.is_busy() {
                 return Err(nb::Error::WouldBlock);
             }
             self.pending = None;
             if pending == PIN::channel() {
-                return Ok(self.adc_get_result());
+                return Ok(self.get_result());
             }
         }
         self.disable();

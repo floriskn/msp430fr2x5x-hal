@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Add the `gpio_alternate_switch` example for the MSP430FR2476.
 - The MSP430FR2433 and MSP430FR25x2 ADC examples sample long enough for their data sheets, and the MSP430FR2476 ADC examples moved off P1.1, which the LaunchPad's temperature sensor drives.
 - Fixed `Adc::read_count()` returning the result of another pin when it was called for a second pin while the first pin's conversion was still pending.
+- Breaking: `Adc::adc_get_result()` and `Adc::adc_is_busy()` are renamed to `get_result()` and `is_busy()`.
 
 ## [v0.8.0] - 2026-08-14
 - Changed name of project from `msp430fr2x5c-hal` to `msp430-hal` to better represent the scope of the project.
