@@ -274,7 +274,7 @@ pub trait ResultFormat: sealed::SealedResultFormat {
     fn to_bits(count: Self::Count) -> u16;
     /// The unsigned count of `count`, for results of `resolution` bits
     #[doc(hidden)]
-    fn to_unsigned(count: Self::Count, resolution: u32) -> u16;
+    fn to_unsigned(count: Self::Count, resolution: u8) -> u16;
 }
 
 /// Typestate for unsigned, right-aligned results, as after reset: from 0 at VR- up to 255, 1023 or 4095
@@ -297,7 +297,7 @@ impl ResultFormat for Unsigned {
     #[inline(always)]
     fn to_bits(count: u16) -> u16 { count }
     #[inline(always)]
-    fn to_unsigned(count: u16, _resolution: u32) -> u16 { count }
+    fn to_unsigned(count: u16, _resolution: u8) -> u16 { count }
 }
 
 impl ResultFormat for Signed {
@@ -309,7 +309,7 @@ impl ResultFormat for Signed {
     fn to_bits(count: i16) -> u16 { count as u16 }
     // Right-aligned again, and offset by half the range (SLAU445I 21.3.5, p. 566)
     #[inline(always)]
-    fn to_unsigned(count: i16, resolution: u32) -> u16 {
+    fn to_unsigned(count: i16, resolution: u8) -> u16 {
         ((count >> (16 - resolution)) + (1 << (resolution - 1))) as u16
     }
 }
@@ -817,7 +817,7 @@ impl<REF, FMT: ResultFormat> Adc<REF, FMT> {
     /// too.
     pub fn count_to_mv(&self, count: FMT::Count, ref_voltage_mv: u16) -> u16 {
         use crate::_pac::adc::adcctl2::Adcres;
-        let bits = match self.adc_reg.adcctl2().read().adcres().variant() {
+        let bits: u8 = match self.adc_reg.adcctl2().read().adcres().variant() {
             Adcres::Adcres0 => 8,
             Adcres::Adcres1 => 10,
             Adcres::Adcres2 => 12,
